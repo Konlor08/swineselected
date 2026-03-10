@@ -10,11 +10,39 @@ function clean(s) {
   return String(s ?? "").trim();
 }
 
+function todayYmd() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function escapeCsv(value) {
+  const s = String(value ?? "");
+  if (s.includes('"') || s.includes(",") || s.includes("\n")) {
+    return `"${s.replace(/"/g, '""')}"`;
+  }
+  return s;
+}
+
+function calcAgeDay(selectedDateValue, birthDateValue) {
+  if (!selectedDateValue || !birthDateValue) return "";
+
+  const d1 = new Date(`${selectedDateValue}T00:00:00`);
+  const d2 = new Date(`${birthDateValue}T00:00:00`);
+  const diffMs = d1.getTime() - d2.getTime();
+
+  if (!Number.isFinite(diffMs) || diffMs < 0) return "";
+  return Math.floor(diffMs / 86400000);
+}
+
 export default function UserHomePage() {
   const nav = useNavigate();
 
   const [msg, setMsg] = useState("");
   const [myRole, setMyRole] = useState("user");
+
+  const [selectedDate, setSelectedDate] = useState(todayYmd());
+  const [currentShipmentId, setCurrentShipmentId] = useState(null);
+  const [currentStatus, setCurrentStatus] = useState("draft");
+  const [exporting, setExporting] = useState(false);
 
   const [fromQ, setFromQ] = useState("");
   const [fromLoading, setFromLoading] = useState(false);
@@ -64,7 +92,6 @@ export default function UserHomePage() {
       setMsg("");
 
       try {
-        // ✅ เอาเฉพาะ swine_code ที่ยัง available
         const { data: availableRows, error: e1 } = await supabase
           .from("swine_master")
           .select("swine_code")
@@ -82,7 +109,6 @@ export default function UserHomePage() {
           return;
         }
 
-        // ✅ ดึงฟาร์มเฉพาะที่ยังมีหมู available
         const { data, error } = await supabase
           .from("swines")
           .select("farm_code, farm_name, branch_id, swine_code")
@@ -153,7 +179,6 @@ export default function UserHomePage() {
       setSwineLoading(true);
 
       try {
-        // ✅ เอาเฉพาะ swine_code ที่ยัง available
         const { data: availableRows, error: e1 } = await supabase
           .from("swine_master")
           .select("swine_code")
@@ -171,7 +196,6 @@ export default function UserHomePage() {
           return;
         }
 
-        // ✅ ดึงเฉพาะหมูของฟาร์มต้นทางที่ยัง available
         const { data, error } = await supabase
           .from("swines")
           .select("id, swine_code, farm_code")
@@ -230,8 +254,8 @@ export default function UserHomePage() {
   }
 
   const canSave = useMemo(() => {
-    return !!fromFarm?.farm_code && !!toFarmId && selectedSwineIds.size > 0;
-  }, [fromFarm, toFarmId, selectedSwineIds]);
+    return !!selectedDate && !!fromFarm?.farm_code && !!toFarmId && selectedSwineIds.size > 0;
+  }, [selectedDate, fromFarm, toFarmId, selectedSwineIds]);
 
   async function logout(e) {
     try {
@@ -255,7 +279,7 @@ export default function UserHomePage() {
 
   async function saveDraft() {
     if (!canSave) {
-      setMsg("กรุณาเลือกฟาร์มต้นทาง + ฟาร์มปลายทาง + หมูอย่างน้อย 1 ตัว");
+      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + หมูอย่างน้อย 1 ตัว");
       return;
     }
 
@@ -267,6 +291,7 @@ export default function UserHomePage() {
       const selectedCount = selectedIds.length;
 
       const header = {
+        selected_date: selectedDate || null,
         from_farm_code: fromFarm.farm_code,
         from_farm_name: fromFarm.farm_name || null,
         from_branch_id: fromFarm.branch_id || null,
@@ -278,12 +303,14 @@ export default function UserHomePage() {
       const res1 = await supabase
         .from("swine_shipments")
         .insert([header])
-        .select("id")
+        .select("id, status")
         .single();
 
       if (res1.error) throw res1.error;
 
       const sh = res1.data;
+      setCurrentShipmentId(sh.id);
+      setCurrentStatus(sh.status || "draft");
 
       const swineMap = new Map((swineOptions || []).map((s) => [s.id, s.swine_code]));
 
@@ -331,7 +358,6 @@ export default function UserHomePage() {
 
       if (res2.error) throw res2.error;
 
-      // ✅ เพิ่มเท่าที่จำเป็น: mark หมูที่เลือกแล้วไม่ให้ยังเป็น available
       const pickedCodes = (res2.data || [])
         .map((x) => x.swine_code)
         .filter(Boolean);
@@ -351,7 +377,6 @@ export default function UserHomePage() {
       setSelectedSwineIds(new Set());
       setSwineForm({});
 
-      // ✅ โหลดรายการหมูใหม่หลังบันทึก เพื่อไม่ให้ตัวที่ reserved แล้วยังแสดงอยู่
       setSwineLoading(true);
       try {
         const { data: availableRows, error: e1 } = await supabase
@@ -404,6 +429,169 @@ export default function UserHomePage() {
     }
   }
 
+  async function exportCsvAndSubmit() {
+    if (!currentShipmentId) {
+      setMsg("กรุณา Save Draft ก่อน แล้วจึง Export CSV");
+      return;
+    }
+
+    setExporting(true);
+    setMsg("");
+
+    try {
+      const { data: shipment, error: e1 } = await supabase
+        .from("swine_shipments")
+        .select(`
+          id,
+          shipment_no,
+          status,
+          selected_date,
+          from_farm_code,
+          from_farm_name,
+          to_farm_id,
+          remark
+        `)
+        .eq("id", currentShipmentId)
+        .single();
+
+      if (e1) throw e1;
+      if (!shipment) throw new Error("ไม่พบข้อมูล shipment");
+      if (shipment.status !== "draft") {
+        throw new Error("รายการนี้ไม่ใช่ draft หรือถูก export ไปแล้ว");
+      }
+
+      const { data: toFarm, error: e2 } = await supabase
+        .from("swine_farms")
+        .select("id, farm_code, farm_name")
+        .eq("id", shipment.to_farm_id)
+        .single();
+
+      if (e2) throw e2;
+
+      const { data: items, error: e3 } = await supabase
+        .from("swine_shipment_items")
+        .select(`
+          id,
+          swine_id,
+          swine_code,
+          teats_left,
+          teats_right,
+          backfat,
+          weight
+        `)
+        .eq("shipment_id", currentShipmentId)
+        .order("created_at", { ascending: true });
+
+      if (e3) throw e3;
+      if (!items || items.length === 0) {
+        throw new Error("ไม่มีรายการหมูใน shipment นี้");
+      }
+
+      const swineIds = items.map((x) => x.swine_id).filter(Boolean);
+
+      let birthMap = new Map();
+      if (swineIds.length) {
+        const { data: swineRows, error: e4 } = await supabase
+          .from("swines")
+          .select("id, birth_date")
+          .in("id", swineIds);
+
+        if (e4) throw e4;
+
+        birthMap = new Map((swineRows || []).map((x) => [x.id, x.birth_date]));
+      }
+
+      const headers = [
+        "shipment_id",
+        "shipment_no",
+        "status",
+        "selected_date",
+        "from_farm_code",
+        "from_farm_name",
+        "to_farm_id",
+        "to_farm_code",
+        "to_farm_name",
+        "swine_id",
+        "swine_code",
+        "birth_date",
+        "age_day",
+        "teats_left",
+        "teats_right",
+        "backfat",
+        "weight",
+        "remark",
+      ];
+
+      const rows = items.map((it) => {
+        const birthDate = birthMap.get(it.swine_id) || "";
+        const ageDay = calcAgeDay(shipment.selected_date, birthDate);
+
+        return [
+          shipment.id,
+          shipment.shipment_no || "",
+          "submitted",
+          shipment.selected_date || "",
+          shipment.from_farm_code || "",
+          shipment.from_farm_name || "",
+          shipment.to_farm_id || "",
+          toFarm?.farm_code || "",
+          toFarm?.farm_name || "",
+          it.swine_id || "",
+          it.swine_code || "",
+          birthDate || "",
+          ageDay,
+          it.teats_left ?? "",
+          it.teats_right ?? "",
+          it.backfat ?? "",
+          it.weight ?? "",
+          shipment.remark || "",
+        ];
+      });
+
+      const csvText = [
+        headers.map(escapeCsv).join(","),
+        ...rows.map((r) => r.map(escapeCsv).join(",")),
+      ].join("\n");
+
+      const filename = `shipment_${shipment.id}_${shipment.selected_date || "no-date"}.csv`;
+      const blob = new Blob(["\uFEFF" + csvText], {
+        type: "text/csv;charset=utf-8;",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      const { error: e5 } = await supabase
+        .from("swine_shipments")
+        .update({
+          status: "submitted",
+          submitted_at: new Date().toISOString(),
+        })
+        .eq("id", currentShipmentId)
+        .eq("status", "draft");
+
+      if (e5) throw e5;
+
+      setCurrentStatus("submitted");
+      setMsg("Export CSV สำเร็จ ✅ และเปลี่ยนสถานะเป็น submitted แล้ว");
+    } catch (e) {
+      console.error("exportCsvAndSubmit error:", e);
+      setMsg(
+        `${e?.message || "Export CSV ไม่สำเร็จ"}${
+          e?.details ? ` | details: ${e.details}` : ""
+        }${e?.hint ? ` | hint: ${e.hint}` : ""}`
+      );
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="page">
       <div
@@ -416,7 +604,7 @@ export default function UserHomePage() {
       >
         <div>
           <div style={{ fontSize: 18, fontWeight: 800 }}>User</div>
-          <div className="small">เลือกฟาร์มต้นทาง/ปลายทาง และเลือกหมู</div>
+          <div className="small">เลือกวันคัด ฟาร์มต้นทาง/ปลายทาง และเลือกหมู</div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -453,6 +641,25 @@ export default function UserHomePage() {
             </div>
           </div>
         ) : null}
+
+        <div className="card" style={{ display: "grid", gap: 8 }}>
+          <div style={{ fontWeight: 800 }}>วันคัด</div>
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 12,
+              border: "1px solid #ddd",
+            }}
+          />
+
+          <div className="small" style={{ color: "#444" }}>
+            Shipment ปัจจุบัน: <b>{currentShipmentId || "-"}</b> | สถานะ: <b>{currentStatus}</b>
+          </div>
+        </div>
 
         <div className="card" style={{ display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 800 }}>ฟาร์มต้นทาง (จากข้อมูลหมูใน swines)</div>
@@ -728,8 +935,17 @@ export default function UserHomePage() {
             flexWrap: "wrap",
           }}
         >
-          <button className="linkbtn" type="button" onClick={saveDraft} disabled={!canSave || saving}>
+          <button className="linkbtn" type="button" onClick={saveDraft} disabled={!canSave || saving || exporting}>
             {saving ? "Saving..." : "Save Draft"}
+          </button>
+
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={exportCsvAndSubmit}
+            disabled={!currentShipmentId || currentStatus !== "draft" || exporting || saving}
+          >
+            {exporting ? "Exporting..." : "Export CSV"}
           </button>
 
           <button
@@ -737,7 +953,11 @@ export default function UserHomePage() {
             type="button"
             onClick={() => {
               setSaving(false);
+              setExporting(false);
               setMsg("");
+              setSelectedDate(todayYmd());
+              setCurrentShipmentId(null);
+              setCurrentStatus("draft");
               setFromFarm(null);
               setToFarmId(null);
               setRemark("");
