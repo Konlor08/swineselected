@@ -46,15 +46,6 @@ function toISODateMaybe(x) {
   return null;
 }
 
-function withTimeout(promise, ms = 20000, label = "Request") {
-  let t;
-  const timeout = new Promise((_, rej) => {
-    t = setTimeout(() => rej(new Error(`${label} timeout (${ms}ms)`)), ms);
-  });
-
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
-}
-
 /** FarmText เช่น
  * Type A: "RE ลำไย วงศ์ตา 2006S56"
  * Type B: "2006FF9 RE กิตติศักดิ์ ..."
@@ -266,14 +257,10 @@ export default function AdminImportSwinesPage() {
       let farmMap = new Map();
 
       if (farmCodes.length) {
-        const { data: masters, error: e1 } = await withTimeout(
-          supabase
-            .from("master_farms")
-            .select("id,farm_code")
-            .in("farm_code", farmCodes),
-          20000,
-          "Load master_farms"
-        );
+        const { data: masters, error: e1 } = await supabase
+          .from("master_farms")
+          .select("id,farm_code")
+          .in("farm_code", farmCodes);
 
         if (e1) throw e1;
         farmMap = new Map((masters ?? []).map((m) => [m.farm_code, m.id]));
@@ -289,11 +276,9 @@ export default function AdminImportSwinesPage() {
         master_farm_id: x.farm_code ? farmMap.get(x.farm_code) ?? null : null,
       }));
 
-      const { error: e2 } = await withTimeout(
-        supabase.from("swines").upsert(payload, { onConflict: "swine_code" }),
-        30000,
-        "Upsert swines"
-      );
+      const { error: e2 } = await supabase
+        .from("swines")
+        .upsert(payload, { onConflict: "swine_code" });
 
       if (e2) throw e2;
 

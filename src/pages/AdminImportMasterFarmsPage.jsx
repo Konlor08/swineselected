@@ -46,18 +46,6 @@ function mapToRow(row) {
   };
 }
 
-async function withTimeout(promise, ms = 20000, label = "Request") {
-  let t;
-  const timeout = new Promise((_, rej) => {
-    t = setTimeout(() => rej(new Error(`${label} timeout (${ms}ms)`)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(t);
-  }
-}
-
 export default function AdminImportMasterFarmsPage() {
   const nav = useNavigate();
 
@@ -131,8 +119,10 @@ export default function AdminImportMasterFarmsPage() {
         is_active: true,
       }));
 
-      const p1 = supabase.from("master_farms").upsert(masterPayload, { onConflict: "farm_code" });
-      const { error: e1 } = await withTimeout(p1, 20000, "Upsert master_farms");
+      const { error: e1 } = await supabase
+        .from("master_farms")
+        .upsert(masterPayload, { onConflict: "farm_code" });
+
       if (e1) throw e1;
 
       const m = new Map();
@@ -152,8 +142,10 @@ export default function AdminImportMasterFarmsPage() {
       const branches = Array.from(m.values());
 
       if (branches.length) {
-        const p2 = supabase.from("swine_branches").upsert(branches, { onConflict: "branch_code" });
-        const { error: e2 } = await withTimeout(p2, 20000, "Upsert swine_branches");
+        const { error: e2 } = await supabase
+          .from("swine_branches")
+          .upsert(branches, { onConflict: "branch_code" });
+
         if (e2) throw e2;
       }
 

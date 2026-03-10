@@ -8,14 +8,9 @@ function clean(s) {
   return String(s ?? "").trim();
 }
 
-function withTimeout(promise, ms = 15000) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`TIMEOUT_${ms}ms`)), ms)),
-  ]);
-}
-
 export default function UserHomePage() {
+  const [msg, setMsg] = useState("");
+
   const [fromQ, setFromQ] = useState("");
   const [fromLoading, setFromLoading] = useState(false);
   const [fromOptions, setFromOptions] = useState([]);
@@ -37,16 +32,14 @@ export default function UserHomePage() {
 
     async function loadFromFarms() {
       setFromLoading(true);
+      setMsg("");
       try {
-        const { data, error } = await withTimeout(
-          supabase
-            .from("swines")
-            .select("farm_code, farm_name, branch_id")
-            .not("farm_code", "is", null)
-            .order("farm_code", { ascending: true })
-            .limit(2000),
-          15000
-        );
+        const { data, error } = await supabase
+          .from("swines")
+          .select("farm_code, farm_name, branch_id")
+          .not("farm_code", "is", null)
+          .order("farm_code", { ascending: true })
+          .limit(2000);
 
         if (error) throw error;
 
@@ -74,7 +67,7 @@ export default function UserHomePage() {
         console.error("loadFromFarms error:", e);
         if (alive) {
           setFromOptions([]);
-          alert(e?.message || "โหลดฟาร์มต้นทางจาก swines ไม่สำเร็จ (ตรวจ RLS ตาราง swines)");
+          setMsg(e?.message || "โหลดฟาร์มต้นทางจาก swines ไม่สำเร็จ");
         }
       } finally {
         if (alive) setFromLoading(false);
@@ -103,20 +96,18 @@ export default function UserHomePage() {
       setSelectedSwineIds(new Set());
       setSwineForm({});
       setSwineQ("");
+      setMsg("");
 
       if (!fromFarm?.farm_code) return;
 
       setSwineLoading(true);
       try {
-        const { data, error } = await withTimeout(
-          supabase
-            .from("swines")
-            .select("id, swine_code, farm_code")
-            .eq("farm_code", fromFarm.farm_code)
-            .order("swine_code", { ascending: true })
-            .limit(2000),
-          15000
-        );
+        const { data, error } = await supabase
+          .from("swines")
+          .select("id, swine_code, farm_code")
+          .eq("farm_code", fromFarm.farm_code)
+          .order("swine_code", { ascending: true })
+          .limit(2000);
 
         if (error) throw error;
 
@@ -125,7 +116,7 @@ export default function UserHomePage() {
         console.error("loadSwinesOfFarm error:", e);
         if (alive) {
           setSwineOptions([]);
-          alert(e?.message || "โหลดรายการหมูไม่สำเร็จ (ตรวจ RLS ตาราง swines)");
+          setMsg(e?.message || "โหลดรายการหมูไม่สำเร็จ");
         }
       } finally {
         if (alive) setSwineLoading(false);
@@ -173,11 +164,12 @@ export default function UserHomePage() {
 
   async function saveDraft() {
     if (!canSave) {
-      alert("กรุณาเลือกฟาร์มต้นทาง + ฟาร์มปลายทาง + หมูอย่างน้อย 1 ตัว");
+      setMsg("กรุณาเลือกฟาร์มต้นทาง + ฟาร์มปลายทาง + หมูอย่างน้อย 1 ตัว");
       return;
     }
 
     setSaving(true);
+    setMsg("");
     try {
       const header = {
         from_farm_code: fromFarm.farm_code,
@@ -188,10 +180,12 @@ export default function UserHomePage() {
         status: "draft",
       };
 
-      const res1 = await withTimeout(
-        supabase.from("swine_shipments").insert([header]).select("id").single(),
-        15000
-      );
+      const res1 = await supabase
+        .from("swine_shipments")
+        .insert([header])
+        .select("id")
+        .single();
+
       if (res1.error) throw res1.error;
 
       const sh = res1.data;
@@ -227,35 +221,20 @@ export default function UserHomePage() {
       });
 
       if (itemRows.some((r) => !r.swine_code)) {
-        throw new Error("MISSING_SWINE_CODE: บางตัวไม่มี swine_code (ตรวจข้อมูล swines)");
+        throw new Error("MISSING_SWINE_CODE: บางตัวไม่มี swine_code");
       }
 
-      const res2 = await withTimeout(
-        supabase.from("swine_shipment_items").insert(itemRows),
-        15000
-      );
+      const res2 = await supabase.from("swine_shipment_items").insert(itemRows);
       if (res2.error) throw res2.error;
 
-      alert(`Save Draft สำเร็จ ✅ (Shipment: ${sh.id}, หมู: ${selectedSwineIds.size} ตัว)`);
+      setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${sh.id}, หมู: ${selectedSwineIds.size} ตัว)`);
 
       setRemark("");
       setSelectedSwineIds(new Set());
       setSwineForm({});
     } catch (e) {
-      console.error("saveDraft error:", {
-        message: e?.message,
-        code: e?.code,
-        details: e?.details,
-        hint: e?.hint,
-        raw: e,
-      });
-
-      alert(
-        `บันทึกไม่สำเร็จ ❌\n` +
-          `${e?.message || "Unknown error"}\n` +
-          `${e?.details ? "details: " + e.details + "\n" : ""}` +
-          `${e?.hint ? "hint: " + e.hint + "\n" : ""}`
-      );
+      console.error("saveDraft error:", e);
+      setMsg(e?.message || "บันทึกไม่สำเร็จ");
     } finally {
       setSaving(false);
     }
@@ -288,13 +267,22 @@ export default function UserHomePage() {
           gap: 14,
         }}
       >
-        <div
-          className="card"
-          style={{
-            display: "grid",
-            gap: 8,
-          }}
-        >
+        {msg ? (
+          <div className="card" style={{ padding: 12 }}>
+            <div
+              className="small"
+              style={{
+                color: msg.includes("สำเร็จ") ? "#166534" : "#b91c1c",
+                fontWeight: 700,
+                lineHeight: 1.7,
+              }}
+            >
+              {msg}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="card" style={{ display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 800 }}>ฟาร์มต้นทาง (จากข้อมูลหมูใน swines)</div>
 
           <input
@@ -365,13 +353,7 @@ export default function UserHomePage() {
           />
         </div>
 
-        <div
-          className="card"
-          style={{
-            display: "grid",
-            gap: 8,
-          }}
-        >
+        <div className="card" style={{ display: "grid", gap: 8 }}>
           <div style={{ fontWeight: 800 }}>เลือกหมู (จาก swines ของฟาร์มต้นทาง)</div>
 
           {!fromFarm?.farm_code ? (
@@ -561,6 +543,7 @@ export default function UserHomePage() {
             type="button"
             onClick={() => {
               setSaving(false);
+              setMsg("");
               setFromFarm(null);
               setToFarmId(null);
               setRemark("");
