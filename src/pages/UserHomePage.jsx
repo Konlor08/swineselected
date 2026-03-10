@@ -219,6 +219,7 @@ export default function UserHomePage() {
 
     setSaving(true);
     setMsg("");
+
     try {
       const header = {
         from_farm_code: fromFarm.farm_code,
@@ -261,6 +262,7 @@ export default function UserHomePage() {
 
         return {
           shipment_id: sh.id,
+          swine_id, // ✅ สำคัญมาก
           swine_code,
           teats_left: toIntOrNull(f.teats_left),
           teats_right: toIntOrNull(f.teats_right),
@@ -273,7 +275,15 @@ export default function UserHomePage() {
         throw new Error("MISSING_SWINE_CODE: บางตัวไม่มี swine_code");
       }
 
-      const res2 = await supabase.from("swine_shipment_items").insert(itemRows);
+      if (itemRows.some((r) => !r.swine_id)) {
+        throw new Error("MISSING_SWINE_ID: บางตัวไม่มี swine_id");
+      }
+
+      const res2 = await supabase
+        .from("swine_shipment_items")
+        .insert(itemRows)
+        .select("id, swine_code");
+
       if (res2.error) throw res2.error;
 
       setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${sh.id}, หมู: ${selectedSwineIds.size} ตัว)`);
@@ -282,8 +292,19 @@ export default function UserHomePage() {
       setSelectedSwineIds(new Set());
       setSwineForm({});
     } catch (e) {
-      console.error("saveDraft error:", e);
-      setMsg(e?.message || "บันทึกไม่สำเร็จ");
+      console.error("saveDraft error:", {
+        message: e?.message,
+        code: e?.code,
+        details: e?.details,
+        hint: e?.hint,
+        raw: e,
+      });
+
+      setMsg(
+        `${e?.message || "บันทึกไม่สำเร็จ"}${
+          e?.details ? ` | details: ${e.details}` : ""
+        }${e?.hint ? ` | hint: ${e.hint}` : ""}`
+      );
     } finally {
       setSaving(false);
     }
