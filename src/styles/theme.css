@@ -1,0 +1,151 @@
+:root{
+  --bg:#f5f7f8;
+  --card:#ffffff;
+  --text:#1f2937;
+  --muted:#6b7280;
+  --border:#e5e7eb;
+  --green:#22c55e;
+  --green-dark:#16a34a;
+  --danger:#ef4444;
+}
+
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,"Segoe UI",Roboto,Arial;background:var(--bg);color:var(--text)}
+
+/* Center container for login */
+.container{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+
+/* ✅ FIX: ไม่ล็อก 420px เพื่อให้จอเล็ก/จอใหญ่ดูดีขึ้น */
+.card{
+  width:100%;
+  max-width:980px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:22px;
+  box-shadow:0 10px 30px rgba(17,24,39,.08)
+}
+
+.h1{font-size:22px;margin:0 0 6px}
+.p{margin:0 0 16px;color:var(--muted);font-size:14px}
+
+.label{font-size:13px;color:var(--muted);margin:12px 0 6px;display:block}
+.input{
+  width:100%;
+  padding:11px 12px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  outline:none;
+  font-size:14px;
+  background:#fff
+}
+.input:focus{border-color:rgba(34,197,94,.6);box-shadow:0 0 0 4px rgba(34,197,94,.15)}
+
+.btn{
+  width:100%;
+  margin-top:14px;
+  padding:11px 12px;
+  border:none;
+  border-radius:12px;
+  background:var(--green);
+  color:#fff;
+  font-weight:700;
+  cursor:pointer
+}
+.btn:hover{background:var(--green-dark)}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.err{margin-top:12px;color:var(--danger);font-size:13px}
+
+.page{min-height:100vh;padding:18px}
+.topbar{display:flex;gap:10px;justify-content:space-between;align-items:center}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(34,197,94,.12);color:var(--green-dark);font-size:12px;font-weight:700}
+.small{font-size:12px;color:var(--muted)}
+.linkbtn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:9px 12px;cursor:pointer}
+
+/* --- Auth responsive layout --- */
+.authWrap{
+  width:min(980px, 100%);
+  display:grid;
+  grid-template-columns:1fr 320px;
+  gap:14px;
+  align-items:start;
+}
+
+.sideCard{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 10px 30px rgba(17,24,39,.06);
+}
+
+.tabs{
+  display:flex;
+  gap:8px;
+  margin:10px 0 6px;
+}
+
+.tab{
+  flex:1;
+  border:1px solid var(--border);
+  background:#fff;
+  border-radius:12px;
+  padding:10px 12px;
+  cursor:pointer;
+  font-weight:700;
+  color:var(--muted);
+}
+
+.tab.active{
+  border-color:rgba(34,197,94,.5);
+  box-shadow:0 0 0 4px rgba(34,197,94,.12);
+  color:var(--green-dark);
+}
+
+.info{
+  margin-top:12px;
+  background:rgba(34,197,94,.10);
+  border:1px solid rgba(34,197,94,.25);
+  color:var(--green-dark);
+  padding:10px 12px;
+  border-radius:12px;
+  font-size:13px;
+}
+
+/* Mobile: ซ่อน side panel + card กว้างเต็ม */
+@media (max-width: 860px){
+  .authWrap{ grid-template-columns: 1fr; }
+  .sideCard{ display:none; }
+
+  /* ✅ touch-friendly */
+  .page{ padding:12px; }
+  .topbar{ align-items:flex-start; }
+  .input{ font-size:16px; } /* กัน iOS zoom */
+  .btn{ width:100%; }
+}
+
+/* dashboard layout */
+.grid{
+  margin-top:14px;
+  display:grid;
+  grid-template-columns:repeat(3, 1fr);
+  gap:12px;
+}
+.tile{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 10px 30px rgba(17,24,39,.06);
+  cursor:pointer;
+  transition:transform .08s ease, box-shadow .08s ease;
+}
+.tile:hover{
+  transform:translateY(-1px);
+  box-shadow:0 14px 36px rgba(17,24,39,.10);
+}
+.tileTitle{font-weight:900;margin-bottom:6px}
+.tile.disabled{opacity:.55;cursor:not-allowed}
+@media (max-width: 960px){
+  .grid{ grid-template-columns: 1fr; }
+}
