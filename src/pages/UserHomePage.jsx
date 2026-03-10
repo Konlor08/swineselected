@@ -263,6 +263,9 @@ export default function UserHomePage() {
     setMsg("");
 
     try {
+      const selectedIds = Array.from(selectedSwineIds);
+      const selectedCount = selectedIds.length;
+
       const header = {
         from_farm_code: fromFarm.farm_code,
         from_farm_name: fromFarm.farm_name || null,
@@ -298,7 +301,7 @@ export default function UserHomePage() {
         return Number.isFinite(n) ? n : null;
       };
 
-      const itemRows = Array.from(selectedSwineIds).map((swine_id) => {
+      const itemRows = selectedIds.map((swine_id) => {
         const f = swineForm[swine_id] || {};
         const swine_code = swineMap.get(swine_id) || null;
 
@@ -328,7 +331,21 @@ export default function UserHomePage() {
 
       if (res2.error) throw res2.error;
 
-      setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${sh.id}, หมู: ${selectedSwineIds.size} ตัว)`);
+      // ✅ เพิ่มเท่าที่จำเป็น: mark หมูที่เลือกแล้วไม่ให้ยังเป็น available
+      const pickedCodes = (res2.data || [])
+        .map((x) => x.swine_code)
+        .filter(Boolean);
+
+      if (pickedCodes.length) {
+        const { error: e3 } = await supabase
+          .from("swine_master")
+          .update({ delivery_state: "reserved" })
+          .in("swine_code", pickedCodes);
+
+        if (e3) throw e3;
+      }
+
+      setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${sh.id}, หมู: ${selectedCount} ตัว)`);
 
       setRemark("");
       setSelectedSwineIds(new Set());
@@ -570,7 +587,9 @@ export default function UserHomePage() {
                             onChange={() => toggleSwine(s.id)}
                             style={{ marginTop: 3 }}
                           />
-                          <div style={{ fontWeight: 800, wordBreak: "break-word" }}>{s.swine_code}</div>
+                          <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                            {s.swine_code}
+                          </div>
                         </label>
 
                         {checked && (
@@ -587,14 +606,24 @@ export default function UserHomePage() {
                                 onChange={(e) => setSwineField(s.id, "teats_left", e.target.value)}
                                 placeholder="L (เต้านมซ้าย) เช่น 7"
                                 inputMode="numeric"
-                                style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd", width: "100%" }}
+                                style={{
+                                  padding: 10,
+                                  borderRadius: 10,
+                                  border: "1px solid #ddd",
+                                  width: "100%",
+                                }}
                               />
                               <input
                                 value={f.teats_right ?? ""}
                                 onChange={(e) => setSwineField(s.id, "teats_right", e.target.value)}
                                 placeholder="R (เต้านมขวา) เช่น 7"
                                 inputMode="numeric"
-                                style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd", width: "100%" }}
+                                style={{
+                                  padding: 10,
+                                  borderRadius: 10,
+                                  border: "1px solid #ddd",
+                                  width: "100%",
+                                }}
                               />
                             </div>
 
@@ -610,14 +639,24 @@ export default function UserHomePage() {
                                 onChange={(e) => setSwineField(s.id, "backfat", e.target.value)}
                                 placeholder="Backfat เช่น 12.5"
                                 inputMode="decimal"
-                                style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd", width: "100%" }}
+                                style={{
+                                  padding: 10,
+                                  borderRadius: 10,
+                                  border: "1px solid #ddd",
+                                  width: "100%",
+                                }}
                               />
                               <input
                                 value={f.weight ?? ""}
                                 onChange={(e) => setSwineField(s.id, "weight", e.target.value)}
                                 placeholder="Weight เช่น 115.3"
                                 inputMode="decimal"
-                                style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd", width: "100%" }}
+                                style={{
+                                  padding: 10,
+                                  borderRadius: 10,
+                                  border: "1px solid #ddd",
+                                  width: "100%",
+                                }}
                               />
                             </div>
 
@@ -715,4 +754,4 @@ export default function UserHomePage() {
       </div>
     </div>
   );
-}  
+}
