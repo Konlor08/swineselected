@@ -85,6 +85,12 @@ export default function UserHomePage() {
   }, []);
 
   useEffect(() => {
+    if (myRole === "admin") {
+      nav("/admin", { replace: true });
+    }
+  }, [myRole, nav]);
+
+  useEffect(() => {
     let alive = true;
 
     async function loadFromFarms() {
@@ -607,6 +613,26 @@ export default function UserHomePage() {
     } finally {
       setExporting(false);
     }
+  }
+
+  if (myRole === "admin") {
+    return (
+      <div className="page">
+        <div
+          className="card"
+          style={{
+            maxWidth: 520,
+            margin: "60px auto",
+            textAlign: "center",
+          }}
+        >
+          <div style={{ fontSize: 22, fontWeight: 900 }}>Admin</div>
+          <div className="small" style={{ marginTop: 8 }}>
+            กำลังพาไปหน้า Admin...
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
