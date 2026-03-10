@@ -46,6 +46,15 @@ function toISODateMaybe(x) {
   return null;
 }
 
+function withTimeout(promise, ms = 20000, label = "Request") {
+  let t;
+  const timeout = new Promise((_, rej) => {
+    t = setTimeout(() => rej(new Error(`${label} timeout (${ms}ms)`)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(t));
+}
+
 /** FarmText เช่น
  * Type A: "RE ลำไย วงศ์ตา 2006S56"
  * Type B: "2006FF9 RE กิตติศักดิ์ ..."
@@ -219,7 +228,11 @@ export default function AdminImportSwinesPage() {
         if (!tr.swine_code) continue;
 
         if (!is10Digits(tr.swine_code)) {
-          invalid.push({ row: i + 2, swine_code: tr.swine_code, reason: "swine_code ต้องเป็นเลข 10 หลัก" });
+          invalid.push({
+            row: i + 2,
+            swine_code: tr.swine_code,
+            reason: "swine_code ต้องเป็นเลข 10 หลัก",
+          });
           continue;
         }
 
@@ -243,7 +256,7 @@ export default function AdminImportSwinesPage() {
   }
 
   async function onImport() {
-    if (!rows.length) return;
+    if (!rows.length || busy) return;
 
     setBusy(true);
     setMsg("");
@@ -253,10 +266,14 @@ export default function AdminImportSwinesPage() {
       let farmMap = new Map();
 
       if (farmCodes.length) {
-        const { data: masters, error: e1 } = await supabase
-          .from("master_farms")
-          .select("id,farm_code")
-          .in("farm_code", farmCodes);
+        const { data: masters, error: e1 } = await withTimeout(
+          supabase
+            .from("master_farms")
+            .select("id,farm_code")
+            .in("farm_code", farmCodes),
+          20000,
+          "Load master_farms"
+        );
 
         if (e1) throw e1;
         farmMap = new Map((masters ?? []).map((m) => [m.farm_code, m.id]));
@@ -272,11 +289,17 @@ export default function AdminImportSwinesPage() {
         master_farm_id: x.farm_code ? farmMap.get(x.farm_code) ?? null : null,
       }));
 
-      const { error: e2 } = await supabase.from("swines").upsert(payload, { onConflict: "swine_code" });
+      const { error: e2 } = await withTimeout(
+        supabase.from("swines").upsert(payload, { onConflict: "swine_code" }),
+        30000,
+        "Upsert swines"
+      );
+
       if (e2) throw e2;
 
       setMsg(`✅ Import สำเร็จ: ${payload.length} แถว (ไม่ทับค่าเดิมด้วยค่าว่าง/null)`);
     } catch (err) {
+      console.error("onImport error:", err);
       setMsg(`❌ Import ไม่สำเร็จ: ${err?.message || String(err)}`);
     } finally {
       setBusy(false);
@@ -427,17 +450,6 @@ export default function AdminImportSwinesPage() {
               </table>
             </div>
           )}
-        </div>
-
-        <div className="card">
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>Auto Mapping Rule</div>
-          <div className="small" style={{ lineHeight: 1.8 }}>
-            • ตรวจหัวคอลัมน์: ถ้ามี <b>Farm/House</b> → Type A, ถ้ามี <b>FarmFarm Code/HouseHouse No</b> → Type B <br />
-            • farm_code = token ยาว 7 ตัวจากข้อความ Farm <br />
-            • farm_name = ข้อความที่เหลือหลังตัด farm_code <br />
-            • house_no = token เลขล้วนจากข้อความ House (เช่น 1001) <br />
-            • birth_date = จากคอลัมน์ “Birth Date” ในไฟล์ AB เท่านั้น (เก็บเป็น YYYY-MM-DD)
-          </div>
         </div>
       </div>
     </div>
