@@ -258,11 +258,12 @@ export default function UserHomePage() {
   }, [selectedDate, fromFarm, toFarmId, selectedSwineIds]);
 
   async function logout(e) {
-    try {
-      e?.preventDefault?.();
-      e?.stopPropagation?.();
+    e?.preventDefault?.();
+    e?.stopPropagation?.();
 
-      await supabase.auth.signOut({ scope: "local" });
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
 
       try {
         for (const k of Object.keys(localStorage)) {
@@ -272,8 +273,10 @@ export default function UserHomePage() {
           if (k.startsWith("sb-")) sessionStorage.removeItem(k);
         }
       } catch {}
+    } catch (err) {
+      console.error("logout error:", err);
     } finally {
-      window.location.href = `${window.location.origin}/login`;
+      nav("/login", { replace: true });
     }
   }
 
