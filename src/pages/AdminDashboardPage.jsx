@@ -67,17 +67,6 @@ export default function AdminDashboardPage() {
           <div className="tileTitle">Users / Roles</div>
           <div className="small">จัดการผู้ใช้: role, team, branch, เปิด/ปิดการใช้งาน</div>
         </div>
-
-        <div
-          className="tile"
-          role="button"
-          tabIndex={0}
-          onClick={() => nav("/user-home")}
-          onKeyDown={(e) => e.key === "Enter" && nav("/user-home")}
-        >
-          <div className="tileTitle">บันทึกคัดหมูส่ง</div>
-          <div className="small">เปิดหน้าจอบันทึกจริง: draft → scan → save → submit / cancel</div>
-        </div>
       </div>
     </div>
   );
