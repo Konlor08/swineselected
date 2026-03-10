@@ -33,6 +33,15 @@ function calcAgeDay(selectedDateValue, birthDateValue) {
   return Math.floor(diffMs / 86400000);
 }
 
+function withTimeout(promise, ms = 15000, label = "request") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms)
+    ),
+  ]);
+}
+
 const fullInputStyle = {
   width: "100%",
   padding: 10,
@@ -306,13 +315,15 @@ export default function UserHomePage() {
     }
 
     setSaving(true);
-    setMsg("");
+    setMsg("กำลังเตรียมบันทึก...");
 
     try {
       const selectedIds = Array.from(selectedSwineIds);
       const selectedCount = selectedIds.length;
+      const shipmentId = crypto.randomUUID();
 
       const header = {
+        id: shipmentId,
         selected_date: selectedDate || null,
         from_farm_code: fromFarm.farm_code,
         from_farm_name: fromFarm.farm_name || null,
@@ -322,17 +333,13 @@ export default function UserHomePage() {
         status: "draft",
       };
 
-      const res1 = await supabase
-        .from("swine_shipments")
-        .insert([header])
-        .select("id, status")
-        .single();
-
+      setMsg("กำลังบันทึกหัวรายการ...");
+      const res1 = await withTimeout(
+        supabase.from("swine_shipments").insert([header]),
+        15000,
+        "insert swine_shipments"
+      );
       if (res1.error) throw res1.error;
-
-      const sh = res1.data;
-      setCurrentShipmentId(sh.id);
-      setCurrentStatus(sh.status || "draft");
 
       const swineMap = new Map((swineOptions || []).map((s) => [s.id, s.swine_code]));
 
@@ -355,7 +362,7 @@ export default function UserHomePage() {
         const swine_code = swineMap.get(swine_id) || null;
 
         return {
-          shipment_id: sh.id,
+          shipment_id: shipmentId,
           swine_id,
           swine_code,
           teats_left: toIntOrNull(f.teats_left),
@@ -373,27 +380,33 @@ export default function UserHomePage() {
         throw new Error("MISSING_SWINE_ID: บางตัวไม่มี swine_id");
       }
 
-      const res2 = await supabase
-        .from("swine_shipment_items")
-        .insert(itemRows)
-        .select("id, swine_code");
-
+      setMsg("กำลังบันทึกรายการหมู...");
+      const res2 = await withTimeout(
+        supabase.from("swine_shipment_items").insert(itemRows),
+        15000,
+        "insert swine_shipment_items"
+      );
       if (res2.error) throw res2.error;
 
-      const pickedCodes = (res2.data || [])
-        .map((x) => x.swine_code)
-        .filter(Boolean);
+      const pickedCodes = itemRows.map((x) => x.swine_code).filter(Boolean);
 
       if (pickedCodes.length) {
-        const { error: e3 } = await supabase
-          .from("swine_master")
-          .update({ delivery_state: "reserved" })
-          .in("swine_code", pickedCodes);
-
-        if (e3) throw e3;
+        setMsg("กำลังอัปเดตสถานะหมู...");
+        const res3 = await withTimeout(
+          supabase
+            .from("swine_master")
+            .update({ delivery_state: "reserved" })
+            .in("swine_code", pickedCodes),
+          15000,
+          "update swine_master"
+        );
+        if (res3.error) throw res3.error;
       }
 
-      setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${sh.id}, หมู: ${selectedCount} ตัว)`);
+      setCurrentShipmentId(shipmentId);
+      setCurrentStatus("draft");
+
+      setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${shipmentId}, หมู: ${selectedCount} ตัว)`);
 
       setRemark("");
       setSelectedSwineIds(new Set());
@@ -699,7 +712,12 @@ export default function UserHomePage() {
 
         <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>วันคัด</div>
-          <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} style={fullInputStyle} />
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+            style={fullInputStyle}
+          />
 
           <div className="small" style={{ color: "#444", wordBreak: "break-word" }}>
             Shipment ปัจจุบัน: <b>{currentShipmentId || "-"}</b> | สถานะ: <b>{currentStatus}</b>
