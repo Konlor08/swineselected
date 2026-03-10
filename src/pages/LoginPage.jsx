@@ -1,6 +1,6 @@
 // src/pages/LoginPage.jsx
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 
@@ -23,6 +23,37 @@ export default function LoginPage() {
 
   const [showPw, setShowPw] = useState(false);
   const [logoBroken, setLogoBroken] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function checkSession() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const session = data?.session;
+        if (!alive) return;
+
+        if (session?.user?.id) {
+          nav("/", { replace: true });
+        }
+      } catch (err) {
+        console.error("checkSession error:", err);
+      }
+    }
+
+    checkSession();
+
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user?.id) {
+        nav("/", { replace: true });
+      }
+    });
+
+    return () => {
+      alive = false;
+      sub?.subscription?.unsubscribe?.();
+    };
+  }, [nav]);
 
   const email = useMemo(() => {
     const u = clean(username);
