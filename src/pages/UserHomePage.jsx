@@ -33,6 +33,30 @@ function calcAgeDay(selectedDateValue, birthDateValue) {
   return Math.floor(diffMs / 86400000);
 }
 
+const fullInputStyle = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  boxSizing: "border-box",
+  minWidth: 0,
+};
+
+const smallInputStyle = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 10,
+  border: "1px solid #ddd",
+  boxSizing: "border-box",
+  minWidth: 0,
+};
+
+const cardStyle = {
+  width: "100%",
+  boxSizing: "border-box",
+  minWidth: 0,
+};
+
 export default function UserHomePage() {
   const nav = useNavigate();
 
@@ -59,6 +83,13 @@ export default function UserHomePage() {
   const [swineForm, setSwineForm] = useState({});
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const selectedToFarmId = useMemo(() => {
+    if (!toFarmId) return "";
+    if (typeof toFarmId === "string") return clean(toFarmId);
+    if (typeof toFarmId === "object") return clean(toFarmId?.id);
+    return "";
+  }, [toFarmId]);
 
   useEffect(() => {
     let alive = true;
@@ -98,7 +129,6 @@ export default function UserHomePage() {
       setMsg("");
 
       try {
-        // ✅ แก้ตรงนี้: ดึงฟาร์มจาก swines ทั้งหมดก่อน
         const { data, error } = await supabase
           .from("swines")
           .select("farm_code, farm_name, branch_id")
@@ -243,8 +273,8 @@ export default function UserHomePage() {
   }
 
   const canSave = useMemo(() => {
-    return !!selectedDate && !!fromFarm?.farm_code && !!toFarmId && selectedSwineIds.size > 0;
-  }, [selectedDate, fromFarm, toFarmId, selectedSwineIds]);
+    return !!selectedDate && !!fromFarm?.farm_code && !!selectedToFarmId && selectedSwineIds.size > 0;
+  }, [selectedDate, fromFarm, selectedToFarmId, selectedSwineIds]);
 
   async function logout(e) {
     e?.preventDefault?.();
@@ -287,7 +317,7 @@ export default function UserHomePage() {
         from_farm_code: fromFarm.farm_code,
         from_farm_name: fromFarm.farm_name || null,
         from_branch_id: fromFarm.branch_id || null,
-        to_farm_id: toFarmId,
+        to_farm_id: selectedToFarmId || null,
         remark: remark || null,
         status: "draft",
       };
@@ -586,13 +616,14 @@ export default function UserHomePage() {
 
   if (myRole === "admin") {
     return (
-      <div className="page">
+      <div className="page" style={{ overflowX: "hidden" }}>
         <div
           className="card"
           style={{
             maxWidth: 520,
             margin: "60px auto",
             textAlign: "center",
+            boxSizing: "border-box",
           }}
         >
           <div style={{ fontSize: 22, fontWeight: 900 }}>Admin</div>
@@ -605,7 +636,7 @@ export default function UserHomePage() {
   }
 
   return (
-    <div className="page">
+    <div className="page" style={{ overflowX: "hidden" }}>
       <div
         className="topbar"
         style={{
@@ -616,9 +647,11 @@ export default function UserHomePage() {
           zIndex: 20,
         }}
       >
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 18, fontWeight: 800 }}>User</div>
-          <div className="small">เลือกวันคัด ฟาร์มต้นทาง/ปลายทาง และเลือกหมู</div>
+          <div className="small" style={{ wordBreak: "break-word" }}>
+            เลือกวันคัด ฟาร์มต้นทาง/ปลายทาง และเลือกหมู
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "relative", zIndex: 21 }}>
@@ -638,20 +671,25 @@ export default function UserHomePage() {
 
       <div
         style={{
+          width: "100%",
           maxWidth: 1100,
           margin: "14px auto 0",
           display: "grid",
           gap: 14,
+          boxSizing: "border-box",
+          padding: "0 8px",
+          minWidth: 0,
         }}
       >
         {msg ? (
-          <div className="card" style={{ padding: 12 }}>
+          <div className="card" style={{ padding: 12, ...cardStyle }}>
             <div
               className="small"
               style={{
                 color: msg.includes("สำเร็จ") ? "#166534" : "#b91c1c",
                 fontWeight: 700,
                 lineHeight: 1.7,
+                wordBreak: "break-word",
               }}
             >
               {msg}
@@ -659,38 +697,23 @@ export default function UserHomePage() {
           </div>
         ) : null}
 
-        <div className="card" style={{ display: "grid", gap: 8 }}>
+        <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>วันคัด</div>
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 12,
-              border: "1px solid #ddd",
-            }}
-          />
+          <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} style={fullInputStyle} />
 
-          <div className="small" style={{ color: "#444" }}>
+          <div className="small" style={{ color: "#444", wordBreak: "break-word" }}>
             Shipment ปัจจุบัน: <b>{currentShipmentId || "-"}</b> | สถานะ: <b>{currentStatus}</b>
           </div>
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 8 }}>
+        <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>ฟาร์มต้นทาง (จากข้อมูลหมูใน swines)</div>
 
           <input
             value={fromQ}
             onChange={(e) => setFromQ(e.target.value)}
             placeholder="พิมพ์ค้นหา farm code / farm name…"
-            style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 12,
-              border: "1px solid #ddd",
-            }}
+            style={fullInputStyle}
           />
 
           <div
@@ -700,6 +723,7 @@ export default function UserHomePage() {
               overflow: "hidden",
               maxHeight: 260,
               overflowY: "auto",
+              minWidth: 0,
             }}
           >
             {fromLoading && <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>}
@@ -721,6 +745,7 @@ export default function UserHomePage() {
                       borderBottom: "1px solid #eee",
                       background: active ? "#f3f4f6" : "white",
                       cursor: "pointer",
+                      boxSizing: "border-box",
                     }}
                   >
                     <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
@@ -740,7 +765,7 @@ export default function UserHomePage() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" style={cardStyle}>
           <FarmPickerInlineAdd
             label="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
             value={toFarmId}
@@ -749,7 +774,7 @@ export default function UserHomePage() {
           />
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 8 }}>
+        <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>เลือกหมู (จาก swines ของฟาร์มต้นทาง)</div>
 
           {!fromFarm?.farm_code ? (
@@ -762,12 +787,7 @@ export default function UserHomePage() {
                 value={swineQ}
                 onChange={(e) => setSwineQ(e.target.value)}
                 placeholder="พิมพ์ค้นหา swine code…"
-                style={{
-                  width: "100%",
-                  padding: 10,
-                  borderRadius: 12,
-                  border: "1px solid #ddd",
-                }}
+                style={fullInputStyle}
               />
 
               <div
@@ -777,6 +797,7 @@ export default function UserHomePage() {
                   overflow: "hidden",
                   maxHeight: 500,
                   overflowY: "auto",
+                  minWidth: 0,
                 }}
               >
                 {swineLoading && (
@@ -795,6 +816,7 @@ export default function UserHomePage() {
                           padding: "10px 12px",
                           borderBottom: "1px solid #eee",
                           background: checked ? "#f3f4f6" : "white",
+                          boxSizing: "border-box",
                         }}
                       >
                         <label
@@ -803,26 +825,28 @@ export default function UserHomePage() {
                             alignItems: "flex-start",
                             gap: 10,
                             cursor: "pointer",
+                            minWidth: 0,
                           }}
                         >
                           <input
                             type="checkbox"
                             checked={checked}
                             onChange={() => toggleSwine(s.id)}
-                            style={{ marginTop: 3 }}
+                            style={{ marginTop: 3, flex: "0 0 auto" }}
                           />
-                          <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                          <div style={{ fontWeight: 800, wordBreak: "break-word", minWidth: 0 }}>
                             {s.swine_code}
                           </div>
                         </label>
 
                         {checked && (
-                          <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                          <div style={{ marginTop: 8, display: "grid", gap: 8, minWidth: 0 }}>
                             <div
                               style={{
                                 display: "grid",
-                                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                                 gap: 8,
+                                minWidth: 0,
                               }}
                             >
                               <input
@@ -830,32 +854,23 @@ export default function UserHomePage() {
                                 onChange={(e) => setSwineField(s.id, "teats_left", e.target.value)}
                                 placeholder="L (เต้านมซ้าย) เช่น 7"
                                 inputMode="numeric"
-                                style={{
-                                  padding: 10,
-                                  borderRadius: 10,
-                                  border: "1px solid #ddd",
-                                  width: "100%",
-                                }}
+                                style={smallInputStyle}
                               />
                               <input
                                 value={f.teats_right ?? ""}
                                 onChange={(e) => setSwineField(s.id, "teats_right", e.target.value)}
                                 placeholder="R (เต้านมขวา) เช่น 7"
                                 inputMode="numeric"
-                                style={{
-                                  padding: 10,
-                                  borderRadius: 10,
-                                  border: "1px solid #ddd",
-                                  width: "100%",
-                                }}
+                                style={smallInputStyle}
                               />
                             </div>
 
                             <div
                               style={{
                                 display: "grid",
-                                gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
                                 gap: 8,
+                                minWidth: 0,
                               }}
                             >
                               <input
@@ -863,28 +878,18 @@ export default function UserHomePage() {
                                 onChange={(e) => setSwineField(s.id, "backfat", e.target.value)}
                                 placeholder="Backfat เช่น 12.5"
                                 inputMode="decimal"
-                                style={{
-                                  padding: 10,
-                                  borderRadius: 10,
-                                  border: "1px solid #ddd",
-                                  width: "100%",
-                                }}
+                                style={smallInputStyle}
                               />
                               <input
                                 value={f.weight ?? ""}
                                 onChange={(e) => setSwineField(s.id, "weight", e.target.value)}
                                 placeholder="Weight เช่น 115.3"
                                 inputMode="decimal"
-                                style={{
-                                  padding: 10,
-                                  borderRadius: 10,
-                                  border: "1px solid #ddd",
-                                  width: "100%",
-                                }}
+                                style={smallInputStyle}
                               />
                             </div>
 
-                            <div style={{ fontSize: 12, color: "#666" }}>
+                            <div style={{ fontSize: 12, color: "#666", wordBreak: "break-word" }}>
                               เว้นว่างได้ — ถ้าว่างจะแสดงเป็น <b>-</b>
                             </div>
                           </div>
@@ -908,6 +913,7 @@ export default function UserHomePage() {
                   flexWrap: "wrap",
                   gap: 8,
                   alignItems: "center",
+                  minWidth: 0,
                 }}
               >
                 <span>
@@ -928,7 +934,7 @@ export default function UserHomePage() {
           )}
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 6 }}>
+        <div className="card" style={{ display: "grid", gap: 6, ...cardStyle }}>
           <div style={{ fontWeight: 700 }}>หมายเหตุ</div>
           <textarea
             value={remark}
@@ -936,10 +942,7 @@ export default function UserHomePage() {
             rows={3}
             placeholder="ใส่หมายเหตุ (ถ้ามี)"
             style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 12,
-              border: "1px solid #ddd",
+              ...fullInputStyle,
               resize: "vertical",
             }}
           />
@@ -950,9 +953,17 @@ export default function UserHomePage() {
             display: "flex",
             gap: 10,
             flexWrap: "wrap",
+            width: "100%",
+            minWidth: 0,
           }}
         >
-          <button className="linkbtn" type="button" onClick={saveDraft} disabled={!canSave || saving || exporting}>
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={saveDraft}
+            disabled={!canSave || saving || exporting}
+            style={{ flex: "1 1 140px", minWidth: 0 }}
+          >
             {saving ? "Saving..." : "Save Draft"}
           </button>
 
@@ -961,6 +972,7 @@ export default function UserHomePage() {
             type="button"
             onClick={exportCsvAndSubmit}
             disabled={!currentShipmentId || currentStatus !== "draft" || exporting || saving}
+            style={{ flex: "1 1 140px", minWidth: 0 }}
           >
             {exporting ? "Exporting..." : "Export CSV"}
           </button>
@@ -984,6 +996,7 @@ export default function UserHomePage() {
               setSelectedSwineIds(new Set());
               setSwineForm({});
             }}
+            style={{ flex: "1 1 140px", minWidth: 0 }}
           >
             Clear
           </button>
