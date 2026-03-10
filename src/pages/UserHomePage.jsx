@@ -62,13 +62,34 @@ export default function UserHomePage() {
     async function loadFromFarms() {
       setFromLoading(true);
       setMsg("");
+
       try {
+        // ✅ เอาเฉพาะ swine_code ที่ยัง available
+        const { data: availableRows, error: e1 } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .limit(5000);
+
+        if (e1) throw e1;
+
+        const availableCodes = (availableRows || [])
+          .map((x) => x.swine_code)
+          .filter(Boolean);
+
+        if (!availableCodes.length) {
+          if (alive) setFromOptions([]);
+          return;
+        }
+
+        // ✅ ดึงฟาร์มเฉพาะที่ยังมีหมู available
         const { data, error } = await supabase
           .from("swines")
-          .select("farm_code, farm_name, branch_id")
+          .select("farm_code, farm_name, branch_id, swine_code")
           .not("farm_code", "is", null)
+          .in("swine_code", availableCodes)
           .order("farm_code", { ascending: true })
-          .limit(2000);
+          .limit(5000);
 
         if (error) throw error;
 
@@ -130,7 +151,9 @@ export default function UserHomePage() {
       if (!fromFarm?.farm_code) return;
 
       setSwineLoading(true);
+
       try {
+        // ✅ เอาเฉพาะ swine_code ที่ยัง available
         const { data: availableRows, error: e1 } = await supabase
           .from("swine_master")
           .select("swine_code")
@@ -148,6 +171,7 @@ export default function UserHomePage() {
           return;
         }
 
+        // ✅ ดึงเฉพาะหมูของฟาร์มต้นทางที่ยัง available
         const { data, error } = await supabase
           .from("swines")
           .select("id, swine_code, farm_code")
@@ -309,6 +333,41 @@ export default function UserHomePage() {
       setRemark("");
       setSelectedSwineIds(new Set());
       setSwineForm({});
+
+      // ✅ โหลดรายการหมูใหม่หลังบันทึก เพื่อไม่ให้ตัวที่ reserved แล้วยังแสดงอยู่
+      setSwineLoading(true);
+      try {
+        const { data: availableRows, error: e1 } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .limit(5000);
+
+        if (e1) throw e1;
+
+        const availableCodes = (availableRows || [])
+          .map((x) => x.swine_code)
+          .filter(Boolean);
+
+        if (!availableCodes.length) {
+          setSwineOptions([]);
+        } else {
+          const { data, error } = await supabase
+            .from("swines")
+            .select("id, swine_code, farm_code")
+            .eq("farm_code", fromFarm.farm_code)
+            .in("swine_code", availableCodes)
+            .order("swine_code", { ascending: true })
+            .limit(2000);
+
+          if (error) throw error;
+          setSwineOptions(data || []);
+        }
+      } catch (e) {
+        console.error("reload swines after save error:", e);
+      } finally {
+        setSwineLoading(false);
+      }
     } catch (e) {
       console.error("saveDraft error:", {
         message: e?.message,
@@ -656,4 +715,4 @@ export default function UserHomePage() {
       </div>
     </div>
   );
-} 
+}  
