@@ -98,28 +98,11 @@ export default function UserHomePage() {
       setMsg("");
 
       try {
-        const { data: availableRows, error: e1 } = await supabase
-          .from("swine_master")
-          .select("swine_code")
-          .eq("delivery_state", "available")
-          .limit(5000);
-
-        if (e1) throw e1;
-
-        const availableCodes = (availableRows || [])
-          .map((x) => x.swine_code)
-          .filter(Boolean);
-
-        if (!availableCodes.length) {
-          if (alive) setFromOptions([]);
-          return;
-        }
-
+        // ✅ แก้ตรงนี้: ดึงฟาร์มจาก swines ทั้งหมดก่อน
         const { data, error } = await supabase
           .from("swines")
-          .select("farm_code, farm_name, branch_id, swine_code")
+          .select("farm_code, farm_name, branch_id")
           .not("farm_code", "is", null)
-          .in("swine_code", availableCodes)
           .order("farm_code", { ascending: true })
           .limit(5000);
 
