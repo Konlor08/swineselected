@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { fetchMyProfile } from "../lib/profile";
 import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
 
 function clean(s) {
@@ -13,6 +14,7 @@ export default function UserHomePage() {
   const nav = useNavigate();
 
   const [msg, setMsg] = useState("");
+  const [myRole, setMyRole] = useState("user");
 
   const [fromQ, setFromQ] = useState("");
   const [fromLoading, setFromLoading] = useState(false);
@@ -29,6 +31,30 @@ export default function UserHomePage() {
   const [swineForm, setSwineForm] = useState({});
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadMyRole() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const uid = data?.session?.user?.id;
+        if (!uid) return;
+
+        const profile = await fetchMyProfile(uid);
+        if (!alive) return;
+
+        setMyRole(String(profile?.role || "user").toLowerCase());
+      } catch (e) {
+        console.error("loadMyRole error:", e);
+      }
+    }
+
+    loadMyRole();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -282,9 +308,11 @@ export default function UserHomePage() {
           <button className="linkbtn" type="button" onClick={() => nav(-1)}>
             Back
           </button>
-          <button className="linkbtn" type="button" onClick={logout}>
-            Logout
-          </button>
+          {myRole !== "admin" ? (
+            <button className="linkbtn" type="button" onClick={logout}>
+              Logout
+            </button>
+          ) : null}
         </div>
       </div>
 
