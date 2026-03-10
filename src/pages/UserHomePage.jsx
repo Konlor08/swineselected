@@ -262,6 +262,8 @@ export default function UserHomePage() {
     e?.preventDefault?.();
     e?.stopPropagation?.();
 
+    setMsg("");
+
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
@@ -274,10 +276,21 @@ export default function UserHomePage() {
           if (k.startsWith("sb-")) sessionStorage.removeItem(k);
         }
       } catch {}
+
+      for (let i = 0; i < 10; i++) {
+        const { data } = await supabase.auth.getSession();
+        if (!data?.session) {
+          window.location.replace("/");
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+
+      console.warn("session still exists after signOut");
+      window.location.replace("/");
     } catch (err) {
       console.error("logout error:", err);
-    } finally {
-      window.location.replace("/login");
+      setMsg(err?.message || "Logout ไม่สำเร็จ");
     }
   }
 
