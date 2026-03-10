@@ -131,10 +131,28 @@ export default function UserHomePage() {
 
       setSwineLoading(true);
       try {
+        const { data: availableRows, error: e1 } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .limit(5000);
+
+        if (e1) throw e1;
+
+        const availableCodes = (availableRows || [])
+          .map((x) => x.swine_code)
+          .filter(Boolean);
+
+        if (!availableCodes.length) {
+          if (alive) setSwineOptions([]);
+          return;
+        }
+
         const { data, error } = await supabase
           .from("swines")
           .select("id, swine_code, farm_code")
           .eq("farm_code", fromFarm.farm_code)
+          .in("swine_code", availableCodes)
           .order("swine_code", { ascending: true })
           .limit(2000);
 
@@ -262,7 +280,7 @@ export default function UserHomePage() {
 
         return {
           shipment_id: sh.id,
-          swine_id, // ✅ สำคัญมาก
+          swine_id,
           swine_code,
           teats_left: toIntOrNull(f.teats_left),
           teats_right: toIntOrNull(f.teats_right),
@@ -638,4 +656,4 @@ export default function UserHomePage() {
       </div>
     </div>
   );
-}
+} 
