@@ -264,40 +264,26 @@ export default function UserHomePage() {
   }, [selectedDate, fromFarm, toFarmId, selectedSwineIds]);
 
   async function logout(e) {
-    console.log("logout clicked");
     e?.preventDefault?.();
     e?.stopPropagation?.();
-
     setMsg("");
 
     try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-
-      try {
-        for (const k of Object.keys(localStorage)) {
-          if (k.startsWith("sb-")) localStorage.removeItem(k);
-        }
-        for (const k of Object.keys(sessionStorage)) {
-          if (k.startsWith("sb-")) sessionStorage.removeItem(k);
-        }
-      } catch {}
-
-      for (let i = 0; i < 10; i++) {
-        const { data } = await supabase.auth.getSession();
-        if (!data?.session) {
-          window.location.replace("/");
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 150));
-      }
-
-      console.warn("session still exists after signOut");
-      window.location.replace("/");
+      await supabase.auth.signOut();
     } catch (err) {
       console.error("logout error:", err);
-      setMsg(err?.message || "Logout ไม่สำเร็จ");
     }
+
+    try {
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith("sb-")) localStorage.removeItem(k);
+      }
+      for (const k of Object.keys(sessionStorage)) {
+        if (k.startsWith("sb-")) sessionStorage.removeItem(k);
+      }
+    } catch {}
+
+    window.location.replace(`/login?logout=1&ts=${Date.now()}`);
   }
 
   async function saveDraft() {
@@ -656,16 +642,14 @@ export default function UserHomePage() {
           <button className="linkbtn" type="button" onClick={() => nav(-1)}>
             Back
           </button>
-          {myRole !== "admin" ? (
-            <button
-              className="linkbtn"
-              type="button"
-              onClick={logout}
-              style={{ position: "relative", zIndex: 22 }}
-            >
-              Logout
-            </button>
-          ) : null}
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={logout}
+            style={{ position: "relative", zIndex: 22 }}
+          >
+            Logout
+          </button>
         </div>
       </div>
 
