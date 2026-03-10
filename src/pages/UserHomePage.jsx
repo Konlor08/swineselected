@@ -258,6 +258,7 @@ export default function UserHomePage() {
   }, [selectedDate, fromFarm, toFarmId, selectedSwineIds]);
 
   async function logout(e) {
+    console.log("logout clicked");
     e?.preventDefault?.();
     e?.stopPropagation?.();
 
@@ -276,7 +277,7 @@ export default function UserHomePage() {
     } catch (err) {
       console.error("logout error:", err);
     } finally {
-      nav("/login", { replace: true });
+      window.location.replace("/login");
     }
   }
 
@@ -603,6 +604,8 @@ export default function UserHomePage() {
           flexWrap: "wrap",
           gap: 10,
           alignItems: "flex-start",
+          position: "relative",
+          zIndex: 20,
         }}
       >
         <div>
@@ -610,12 +613,17 @@ export default function UserHomePage() {
           <div className="small">เลือกวันคัด ฟาร์มต้นทาง/ปลายทาง และเลือกหมู</div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "relative", zIndex: 21 }}>
           <button className="linkbtn" type="button" onClick={() => nav(-1)}>
             Back
           </button>
           {myRole !== "admin" ? (
-            <button className="linkbtn" type="button" onClick={logout}>
+            <button
+              className="linkbtn"
+              type="button"
+              onClick={logout}
+              style={{ position: "relative", zIndex: 22 }}
+            >
               Logout
             </button>
           ) : null}
