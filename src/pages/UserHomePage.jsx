@@ -1,6 +1,7 @@
 // src/pages/UserHomePage.jsx
 
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
 
@@ -9,6 +10,8 @@ function clean(s) {
 }
 
 export default function UserHomePage() {
+  const nav = useNavigate();
+
   const [msg, setMsg] = useState("");
 
   const [fromQ, setFromQ] = useState("");
@@ -162,6 +165,26 @@ export default function UserHomePage() {
     return !!fromFarm?.farm_code && !!toFarmId && selectedSwineIds.size > 0;
   }, [fromFarm, toFarmId, selectedSwineIds]);
 
+  async function logout(e) {
+    try {
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+
+      await supabase.auth.signOut({ scope: "local" });
+
+      try {
+        for (const k of Object.keys(localStorage)) {
+          if (k.startsWith("sb-")) localStorage.removeItem(k);
+        }
+        for (const k of Object.keys(sessionStorage)) {
+          if (k.startsWith("sb-")) sessionStorage.removeItem(k);
+        }
+      } catch {}
+    } finally {
+      window.location.href = `${window.location.origin}/login`;
+    }
+  }
+
   async function saveDraft() {
     if (!canSave) {
       setMsg("กรุณาเลือกฟาร์มต้นทาง + ฟาร์มปลายทาง + หมูอย่างน้อย 1 ตัว");
@@ -254,9 +277,15 @@ export default function UserHomePage() {
           <div style={{ fontSize: 18, fontWeight: 800 }}>User</div>
           <div className="small">เลือกฟาร์มต้นทาง/ปลายทาง และเลือกหมู</div>
         </div>
-        <button className="linkbtn" type="button" onClick={() => supabase.auth.signOut()}>
-          Logout
-        </button>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="linkbtn" type="button" onClick={() => nav(-1)}>
+            Back
+          </button>
+          <button className="linkbtn" type="button" onClick={logout}>
+            Logout
+          </button>
+        </div>
       </div>
 
       <div
