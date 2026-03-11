@@ -42,6 +42,15 @@ function withTimeout(promise, ms = 15000, label = "request") {
   ]);
 }
 
+function qrUrl(text) {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(
+    text || ""
+  )}`;
+}
+
+const SELECTED_BG = "#fef9c3";
+const SELECTED_BORDER = "#fde68a";
+
 const fullInputStyle = {
   width: "100%",
   padding: 10,
@@ -537,16 +546,13 @@ export default function UserHomePage() {
       }
 
       const headers = [
-        "shipment_id",
-        "shipment_no",
-        "status",
+          
         "selected_date",
         "from_farm_code",
         "from_farm_name",
         "to_farm_id",
         "to_farm_code",
-        "to_farm_name",
-        "swine_id",
+        "to_farm_name",  
         "swine_code",
         "birth_date",
         "age_day",
@@ -761,7 +767,8 @@ export default function UserHomePage() {
                       padding: "10px 12px",
                       border: 0,
                       borderBottom: "1px solid #eee",
-                      background: active ? "#f3f4f6" : "white",
+                      background: active ? SELECTED_BG : "white",
+                      boxShadow: active ? `inset 0 0 0 1px ${SELECTED_BORDER}` : "none",
                       cursor: "pointer",
                       boxSizing: "border-box",
                     }}
@@ -778,7 +785,17 @@ export default function UserHomePage() {
             )}
           </div>
 
-          <div className="small" style={{ color: "#444", wordBreak: "break-word" }}>
+          <div
+            className="small"
+            style={{
+              color: "#444",
+              wordBreak: "break-word",
+              background: fromFarm ? SELECTED_BG : "transparent",
+              border: fromFarm ? `1px solid ${SELECTED_BORDER}` : "none",
+              borderRadius: 10,
+              padding: fromFarm ? "8px 10px" : 0,
+            }}
+          >
             เลือกอยู่: <b>{fromFarm ? `${fromFarm.farm_code} - ${fromFarm.farm_name}` : "-"}</b>
           </div>
         </div>
@@ -833,7 +850,8 @@ export default function UserHomePage() {
                         style={{
                           padding: "10px 12px",
                           borderBottom: "1px solid #eee",
-                          background: checked ? "#f3f4f6" : "white",
+                          background: checked ? SELECTED_BG : "white",
+                          boxShadow: checked ? `inset 0 0 0 1px ${SELECTED_BORDER}` : "none",
                           boxSizing: "border-box",
                         }}
                       >
@@ -858,7 +876,7 @@ export default function UserHomePage() {
                         </label>
 
                         {checked && (
-                          <div style={{ marginTop: 8, display: "grid", gap: 8, minWidth: 0 }}>
+                          <div style={{ marginTop: 10, display: "grid", gap: 10, minWidth: 0 }}>
                             <div
                               style={{
                                 display: "grid",
@@ -905,6 +923,52 @@ export default function UserHomePage() {
                                 inputMode="decimal"
                                 style={smallInputStyle}
                               />
+                            </div>
+
+                            <div
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 180px))",
+                                gap: 12,
+                                alignItems: "start",
+                              }}
+                            >
+                              <div
+                                style={{
+                                  background: "#fff",
+                                  border: "1px solid #e5e7eb",
+                                  borderRadius: 12,
+                                  padding: 10,
+                                  width: "fit-content",
+                                }}
+                              >
+                                <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 8 }}>
+                                  QR Code
+                                </div>
+                                <img
+                                  src={qrUrl(s.swine_code)}
+                                  alt={`QR ${s.swine_code}`}
+                                  loading="lazy"
+                                  style={{
+                                    width: 140,
+                                    height: 140,
+                                    display: "block",
+                                    borderRadius: 8,
+                                    background: "#fff",
+                                  }}
+                                />
+                                <div
+                                  style={{
+                                    marginTop: 8,
+                                    fontSize: 12,
+                                    color: "#555",
+                                    wordBreak: "break-word",
+                                    textAlign: "center",
+                                  }}
+                                >
+                                  {s.swine_code}
+                                </div>
+                              </div>
                             </div>
 
                             <div style={{ fontSize: 12, color: "#666", wordBreak: "break-word" }}>
