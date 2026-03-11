@@ -102,6 +102,19 @@ export default function AdminHomePage() {
             เปิดหน้าจอบันทึกจริง: draft → scan → save → submit / cancel
           </div>
         </div>
+
+        <div
+          style={tileStyle}
+          role="button"
+          tabIndex={0}
+          onClick={() => nav("/export-csv")}
+          onKeyDown={(e) => e.key === "Enter" && nav("/export-csv")}
+        >
+          <div style={{ fontSize: 18, fontWeight: 800 }}>Export CSV</div>
+          <div className="small" style={{ marginTop: 6 }}>
+            เลือกวันที่คัด ฟาร์มที่คัด และฟาร์มปลายทาง เพื่อ export รายการหมู
+          </div>
+        </div>
       </div>
     </div>
   );

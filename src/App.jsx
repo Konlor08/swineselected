@@ -14,6 +14,8 @@ import UserDashboardPage from "./pages/UserDashboardPage.jsx";
 import UserHomePage from "./pages/UserHomePage.jsx";
 import DisabledPage from "./pages/DisabledPage.jsx";
 import NoProfilePage from "./pages/NoProfilePage.jsx";
+import ExportCsvPage from "./pages/ExportCsvPage.jsx";
+import EditShipmentPage from "./pages/EditShipmentPage.jsx";
 
 function Splash() {
   return (
@@ -242,6 +244,24 @@ export default function App() {
           element={
             <RequireRole roleAllow={["user", "admin"]}>
               <UserDashboardPage />
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="/export-csv"
+          element={
+            <RequireRole roleAllow={["user", "admin"]}>
+              <ExportCsvPage />
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="/edit-shipment"
+          element={
+            <RequireRole roleAllow={["user", "admin"]}>
+              <EditShipmentPage />
             </RequireRole>
           }
         />

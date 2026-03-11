@@ -14,25 +14,6 @@ function todayYmd() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function escapeCsv(value) {
-  const s = String(value ?? "");
-  if (s.includes('"') || s.includes(",") || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
-  }
-  return s;
-}
-
-function calcAgeDay(selectedDateValue, birthDateValue) {
-  if (!selectedDateValue || !birthDateValue) return "";
-
-  const d1 = new Date(`${selectedDateValue}T00:00:00`);
-  const d2 = new Date(`${birthDateValue}T00:00:00`);
-  const diffMs = d1.getTime() - d2.getTime();
-
-  if (!Number.isFinite(diffMs) || diffMs < 0) return "";
-  return Math.floor(diffMs / 86400000);
-}
-
 function withTimeout(promise, ms = 15000, label = "request") {
   return Promise.race([
     promise,
@@ -84,7 +65,7 @@ export default function UserHomePage() {
   const [selectedDate, setSelectedDate] = useState(todayYmd());
   const [currentShipmentId, setCurrentShipmentId] = useState(null);
   const [currentStatus, setCurrentStatus] = useState("draft");
-  const [exporting, setExporting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const [fromQ, setFromQ] = useState("");
   const [fromLoading, setFromLoading] = useState(false);
@@ -93,6 +74,7 @@ export default function UserHomePage() {
 
   const [toFarmId, setToFarmId] = useState(null);
 
+  const [selectedHouse, setSelectedHouse] = useState("");
   const [swineQ, setSwineQ] = useState("");
   const [swineLoading, setSwineLoading] = useState(false);
   const [swineOptions, setSwineOptions] = useState([]);
@@ -206,6 +188,7 @@ export default function UserHomePage() {
 
     async function loadSwinesOfFarm() {
       setSwineOptions([]);
+      setSelectedHouse("");
       setSelectedSwineIds(new Set());
       setSwineForm({});
       setSwineQ("");
@@ -235,9 +218,10 @@ export default function UserHomePage() {
 
         const { data, error } = await supabase
           .from("swines")
-          .select("id, swine_code, farm_code")
+          .select("id, swine_code, farm_code, house_no")
           .eq("farm_code", fromFarm.farm_code)
           .in("swine_code", availableCodes)
+          .order("house_no", { ascending: true })
           .order("swine_code", { ascending: true })
           .limit(2000);
 
@@ -261,14 +245,60 @@ export default function UserHomePage() {
     };
   }, [fromFarm?.farm_code]);
 
+  const houseOptions = useMemo(() => {
+    const map = new Map();
+
+    for (const s of swineOptions || []) {
+      const raw = clean(s.house_no);
+      const value = raw || "__BLANK__";
+      const label = raw || "(ไม่ระบุ House)";
+      if (!map.has(value)) {
+        map.set(value, { value, label });
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) =>
+      String(a.label).localeCompare(String(b.label), "th")
+    );
+  }, [swineOptions]);
+
   const filteredSwines = useMemo(() => {
-    const q = clean(swineQ);
-    if (!q) return swineOptions.slice(0, 50);
-    const qq = q.toLowerCase();
+    if (!selectedHouse) return [];
+
+    const q = clean(swineQ).toLowerCase();
+
     return swineOptions
-      .filter((s) => String(s.swine_code || "").toLowerCase().includes(qq))
+      .filter((s) => {
+        const houseValue = clean(s.house_no);
+        if (selectedHouse === "__BLANK__") {
+          return !houseValue;
+        }
+        return houseValue === selectedHouse;
+      })
+      .filter((s) => {
+        if (!q) return true;
+        return String(s.swine_code || "").toLowerCase().includes(q);
+      })
       .slice(0, 50);
-  }, [swineOptions, swineQ]);
+  }, [swineOptions, selectedHouse, swineQ]);
+
+  function handleSelectFromFarm(farm) {
+    setFromFarm(farm);
+    setSelectedHouse("");
+    setSwineQ("");
+    setSwineOptions([]);
+    setSelectedSwineIds(new Set());
+    setSwineForm({});
+    setMsg("");
+  }
+
+  function handleHouseChange(value) {
+    setSelectedHouse(value);
+    setSwineQ("");
+    setSelectedSwineIds(new Set());
+    setSwineForm({});
+    setMsg("");
+  }
 
   function toggleSwine(id) {
     setSelectedSwineIds((prev) => {
@@ -291,8 +321,14 @@ export default function UserHomePage() {
   }
 
   const canSave = useMemo(() => {
-    return !!selectedDate && !!fromFarm?.farm_code && !!selectedToFarmId && selectedSwineIds.size > 0;
-  }, [selectedDate, fromFarm, selectedToFarmId, selectedSwineIds]);
+    return (
+      !!selectedDate &&
+      !!fromFarm?.farm_code &&
+      !!selectedToFarmId &&
+      !!selectedHouse &&
+      selectedSwineIds.size > 0
+    );
+  }, [selectedDate, fromFarm, selectedToFarmId, selectedHouse, selectedSwineIds]);
 
   async function logout(e) {
     e?.preventDefault?.();
@@ -319,7 +355,7 @@ export default function UserHomePage() {
 
   async function saveDraft() {
     if (!canSave) {
-      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + หมูอย่างน้อย 1 ตัว");
+      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + House + หมูอย่างน้อย 1 ตัว");
       return;
     }
 
@@ -327,12 +363,21 @@ export default function UserHomePage() {
     setMsg("กำลังเตรียมบันทึก...");
 
     try {
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+      if (!user?.id) throw new Error("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
+
       const selectedIds = Array.from(selectedSwineIds);
       const selectedCount = selectedIds.length;
       const shipmentId = crypto.randomUUID();
 
       const header = {
         id: shipmentId,
+        created_by: user.id,
         selected_date: selectedDate || null,
         from_farm_code: fromFarm.farm_code,
         from_farm_name: fromFarm.farm_name || null,
@@ -440,9 +485,10 @@ export default function UserHomePage() {
         } else {
           const { data, error } = await supabase
             .from("swines")
-            .select("id, swine_code, farm_code")
+            .select("id, swine_code, farm_code, house_no")
             .eq("farm_code", fromFarm.farm_code)
             .in("swine_code", availableCodes)
+            .order("house_no", { ascending: true })
             .order("swine_code", { ascending: true })
             .limit(2000);
 
@@ -473,163 +519,71 @@ export default function UserHomePage() {
     }
   }
 
-  async function exportCsvAndSubmit() {
+  async function submitShipment() {
     if (!currentShipmentId) {
-      setMsg("กรุณา Save Draft ก่อน แล้วจึง Export CSV");
+      setMsg("กรุณา Save Draft ก่อน แล้วจึง Submit");
       return;
     }
 
-    setExporting(true);
+    setSubmitting(true);
     setMsg("");
 
     try {
       const { data: shipment, error: e1 } = await supabase
         .from("swine_shipments")
-        .select(`
-          id,
-          shipment_no,
-          status,
-          selected_date,
-          from_farm_code,
-          from_farm_name,
-          to_farm_id,
-          remark
-        `)
+        .select("id, status")
         .eq("id", currentShipmentId)
         .single();
 
       if (e1) throw e1;
       if (!shipment) throw new Error("ไม่พบข้อมูล shipment");
       if (shipment.status !== "draft") {
-        throw new Error("รายการนี้ไม่ใช่ draft หรือถูก export ไปแล้ว");
+        throw new Error("รายการนี้ไม่ใช่ draft หรือถูก submit ไปแล้ว");
       }
 
-      const { data: toFarm, error: e2 } = await supabase
-        .from("swine_farms")
-        .select("id, farm_code, farm_name")
-        .eq("id", shipment.to_farm_id)
-        .single();
+      const { data: items, error: e2 } = await supabase
+        .from("swine_shipment_items")
+        .select("id")
+        .eq("shipment_id", currentShipmentId)
+        .limit(1);
 
       if (e2) throw e2;
-
-      const { data: items, error: e3 } = await supabase
-        .from("swine_shipment_items")
-        .select(`
-          id,
-          swine_id,
-          swine_code,
-          teats_left,
-          teats_right,
-          backfat,
-          weight
-        `)
-        .eq("shipment_id", currentShipmentId)
-        .order("created_at", { ascending: true });
-
-      if (e3) throw e3;
       if (!items || items.length === 0) {
         throw new Error("ไม่มีรายการหมูใน shipment นี้");
       }
 
-      const swineIds = items.map((x) => x.swine_id).filter(Boolean);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-      let birthMap = new Map();
-      if (swineIds.length) {
-        const { data: swineRows, error: e4 } = await supabase
-          .from("swines")
-          .select("id, birth_date")
-          .in("id", swineIds);
+      const payload = {
+        status: "submitted",
+        submitted_at: new Date().toISOString(),
+      };
 
-        if (e4) throw e4;
-
-        birthMap = new Map((swineRows || []).map((x) => [x.id, x.birth_date]));
+      if (user?.id) {
+        payload.submitted_by = user.id;
       }
 
-      const headers = [
-          
-        "selected_date",
-        "from_farm_code",
-        "from_farm_name",
-        "to_farm_id",
-        "to_farm_code",
-        "to_farm_name",  
-        "swine_code",
-        "birth_date",
-        "age_day",
-        "teats_left",
-        "teats_right",
-        "backfat",
-        "weight",
-        "remark",
-      ];
-
-      const rows = items.map((it) => {
-        const birthDate = birthMap.get(it.swine_id) || "";
-        const ageDay = calcAgeDay(shipment.selected_date, birthDate);
-
-        return [
-          shipment.id,
-          shipment.shipment_no || "",
-          "submitted",
-          shipment.selected_date || "",
-          shipment.from_farm_code || "",
-          shipment.from_farm_name || "",
-          shipment.to_farm_id || "",
-          toFarm?.farm_code || "",
-          toFarm?.farm_name || "",
-          it.swine_id || "",
-          it.swine_code || "",
-          birthDate || "",
-          ageDay,
-          it.teats_left ?? "",
-          it.teats_right ?? "",
-          it.backfat ?? "",
-          it.weight ?? "",
-          shipment.remark || "",
-        ];
-      });
-
-      const csvText = [
-        headers.map(escapeCsv).join(","),
-        ...rows.map((r) => r.map(escapeCsv).join(",")),
-      ].join("\n");
-
-      const filename = `shipment_${shipment.id}_${shipment.selected_date || "no-date"}.csv`;
-      const blob = new Blob(["\uFEFF" + csvText], {
-        type: "text/csv;charset=utf-8;",
-      });
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      const { error: e5 } = await supabase
+      const { error: e3 } = await supabase
         .from("swine_shipments")
-        .update({
-          status: "submitted",
-          submitted_at: new Date().toISOString(),
-        })
+        .update(payload)
         .eq("id", currentShipmentId)
         .eq("status", "draft");
 
-      if (e5) throw e5;
+      if (e3) throw e3;
 
       setCurrentStatus("submitted");
-      setMsg("Export CSV สำเร็จ ✅ และเปลี่ยนสถานะเป็น submitted แล้ว");
+      setMsg("Submit สำเร็จ ✅ และเปลี่ยนสถานะเป็น submitted แล้ว");
     } catch (e) {
-      console.error("exportCsvAndSubmit error:", e);
+      console.error("submitShipment error:", e);
       setMsg(
-        `${e?.message || "Export CSV ไม่สำเร็จ"}${
+        `${e?.message || "Submit ไม่สำเร็จ"}${
           e?.details ? ` | details: ${e.details}` : ""
         }${e?.hint ? ` | hint: ${e.hint}` : ""}`
       );
     } finally {
-      setExporting(false);
+      setSubmitting(false);
     }
   }
 
@@ -669,13 +623,28 @@ export default function UserHomePage() {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 18, fontWeight: 800 }}>User</div>
           <div className="small" style={{ wordBreak: "break-word" }}>
-            เลือกวันคัด ฟาร์มต้นทาง/ปลายทาง และเลือกหมู
+            เลือกวันคัด ฟาร์มต้นทาง/ปลายทาง House และเลือกหมู
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", position: "relative", zIndex: 21 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            position: "relative",
+            zIndex: 21,
+          }}
+        >
           <button className="linkbtn" type="button" onClick={() => nav(-1)}>
             Back
+          </button>
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => nav("/edit-shipment")}
+          >
+            จอแก้ไข
           </button>
           <button
             className="linkbtn"
@@ -726,7 +695,8 @@ export default function UserHomePage() {
           />
 
           <div className="small" style={{ color: "#444", wordBreak: "break-word" }}>
-            Shipment ปัจจุบัน: <b>{currentShipmentId || "-"}</b> | สถานะ: <b>{currentStatus}</b>
+            Shipment ปัจจุบัน: <b>{currentShipmentId || "-"}</b> | สถานะ:{" "}
+            <b>{currentStatus}</b>
           </div>
         </div>
 
@@ -760,7 +730,7 @@ export default function UserHomePage() {
                   <button
                     key={`${f.farm_code}__${f.farm_name}`}
                     type="button"
-                    onClick={() => setFromFarm(f)}
+                    onClick={() => handleSelectFromFarm(f)}
                     style={{
                       width: "100%",
                       textAlign: "left",
@@ -810,11 +780,46 @@ export default function UserHomePage() {
         </div>
 
         <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
+          <div style={{ fontWeight: 800 }}>House</div>
+
+          {!fromFarm?.farm_code ? (
+            <div className="small" style={{ color: "#666" }}>
+              * กรุณาเลือกฟาร์มต้นทางก่อน
+            </div>
+          ) : swineLoading ? (
+            <div className="small" style={{ color: "#666" }}>กำลังโหลด House...</div>
+          ) : (
+            <>
+              <select
+                value={selectedHouse}
+                onChange={(e) => handleHouseChange(e.target.value)}
+                style={fullInputStyle}
+              >
+                <option value="">เลือก House</option>
+                {houseOptions.map((h) => (
+                  <option key={h.value} value={h.value}>
+                    {h.label}
+                  </option>
+                ))}
+              </select>
+
+              <div className="small" style={{ color: "#444" }}>
+                House ที่มีหมูให้เลือก: <b>{houseOptions.length}</b> รายการ
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>เลือกหมู (จาก swines ของฟาร์มต้นทาง)</div>
 
           {!fromFarm?.farm_code ? (
             <div className="small" style={{ color: "#666" }}>
               * กรุณาเลือกฟาร์มต้นทางก่อน
+            </div>
+          ) : !selectedHouse ? (
+            <div className="small" style={{ color: "#666" }}>
+              * กรุณาเลือก House ก่อน เพื่อแสดงเบอร์หมู
             </div>
           ) : (
             <>
@@ -942,7 +947,14 @@ export default function UserHomePage() {
                                   width: "fit-content",
                                 }}
                               >
-                                <div style={{ fontSize: 12, fontWeight: 700, color: "#555", marginBottom: 8 }}>
+                                <div
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    color: "#555",
+                                    marginBottom: 8,
+                                  }}
+                                >
                                   QR Code
                                 </div>
                                 <img
@@ -980,9 +992,9 @@ export default function UserHomePage() {
                     );
                   })}
 
-                {!swineLoading && swineOptions.length === 0 && (
+                {!swineLoading && selectedHouse && filteredSwines.length === 0 && (
                   <div style={{ padding: 12, color: "#666" }}>
-                    ไม่พบหมูในฟาร์มนี้ หรือ RLS ไม่ให้เห็นข้อมูล
+                    ไม่พบหมูใน House นี้ หรือ RLS ไม่ให้เห็นข้อมูล
                   </div>
                 )}
               </div>
@@ -1043,7 +1055,7 @@ export default function UserHomePage() {
             className="linkbtn"
             type="button"
             onClick={saveDraft}
-            disabled={!canSave || saving || exporting}
+            disabled={!canSave || saving || submitting}
             style={{ flex: "1 1 140px", minWidth: 0 }}
           >
             {saving ? "Saving..." : "Save Draft"}
@@ -1052,11 +1064,11 @@ export default function UserHomePage() {
           <button
             className="linkbtn"
             type="button"
-            onClick={exportCsvAndSubmit}
-            disabled={!currentShipmentId || currentStatus !== "draft" || exporting || saving}
+            onClick={submitShipment}
+            disabled={!currentShipmentId || currentStatus !== "draft" || submitting || saving}
             style={{ flex: "1 1 140px", minWidth: 0 }}
           >
-            {exporting ? "Exporting..." : "Export CSV"}
+            {submitting ? "Submitting..." : "Submit"}
           </button>
 
           <button
@@ -1064,13 +1076,14 @@ export default function UserHomePage() {
             type="button"
             onClick={() => {
               setSaving(false);
-              setExporting(false);
+              setSubmitting(false);
               setMsg("");
               setSelectedDate(todayYmd());
               setCurrentShipmentId(null);
               setCurrentStatus("draft");
               setFromFarm(null);
               setToFarmId(null);
+              setSelectedHouse("");
               setRemark("");
               setFromQ("");
               setSwineQ("");
