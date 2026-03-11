@@ -29,6 +29,14 @@ function qrUrl(text) {
   )}`;
 }
 
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
 const SELECTED_BG = "#fef9c3";
 const SELECTED_BORDER = "#fde68a";
 
@@ -78,6 +86,7 @@ export default function UserHomePage() {
   const [swineQ, setSwineQ] = useState("");
   const [swineLoading, setSwineLoading] = useState(false);
   const [swineOptions, setSwineOptions] = useState([]);
+  const [availableSwineCodeSet, setAvailableSwineCodeSet] = useState(new Set());
   const [selectedSwineIds, setSelectedSwineIds] = useState(new Set());
 
   const [swineForm, setSwineForm] = useState({});
@@ -183,11 +192,51 @@ export default function UserHomePage() {
       .slice(0, 12);
   }, [fromOptions, fromQ]);
 
+  async function fetchFarmSwinesWithAvailability(farmCode) {
+    const { data: farmSwines, error: e1 } = await supabase
+      .from("swines")
+      .select("id, swine_code, farm_code, house_no")
+      .eq("farm_code", farmCode)
+      .order("house_no", { ascending: true })
+      .order("swine_code", { ascending: true })
+      .limit(5000);
+
+    if (e1) throw e1;
+
+    const swines = farmSwines || [];
+    const codes = swines.map((x) => x.swine_code).filter(Boolean);
+
+    const availableSet = new Set();
+
+    if (codes.length) {
+      const codeChunks = chunkArray(codes, 500);
+
+      for (const chunk of codeChunks) {
+        const { data: availableRows, error: e2 } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .in("swine_code", chunk);
+
+        if (e2) throw e2;
+
+        for (const row of availableRows || []) {
+          if (row?.swine_code) {
+            availableSet.add(row.swine_code);
+          }
+        }
+      }
+    }
+
+    return { swines, availableSet };
+  }
+
   useEffect(() => {
     let alive = true;
 
     async function loadSwinesOfFarm() {
       setSwineOptions([]);
+      setAvailableSwineCodeSet(new Set());
       setSelectedHouse("");
       setSelectedSwineIds(new Set());
       setSwineForm({});
@@ -199,39 +248,19 @@ export default function UserHomePage() {
       setSwineLoading(true);
 
       try {
-        const { data: availableRows, error: e1 } = await supabase
-          .from("swine_master")
-          .select("swine_code")
-          .eq("delivery_state", "available")
-          .limit(5000);
+        const { swines, availableSet } = await fetchFarmSwinesWithAvailability(
+          fromFarm.farm_code
+        );
 
-        if (e1) throw e1;
-
-        const availableCodes = (availableRows || [])
-          .map((x) => x.swine_code)
-          .filter(Boolean);
-
-        if (!availableCodes.length) {
-          if (alive) setSwineOptions([]);
-          return;
+        if (alive) {
+          setSwineOptions(swines);
+          setAvailableSwineCodeSet(availableSet);
         }
-
-        const { data, error } = await supabase
-          .from("swines")
-          .select("id, swine_code, farm_code, house_no")
-          .eq("farm_code", fromFarm.farm_code)
-          .in("swine_code", availableCodes)
-          .order("house_no", { ascending: true })
-          .order("swine_code", { ascending: true })
-          .limit(2000);
-
-        if (error) throw error;
-
-        if (alive) setSwineOptions(data || []);
       } catch (e) {
         console.error("loadSwinesOfFarm error:", e);
         if (alive) {
           setSwineOptions([]);
+          setAvailableSwineCodeSet(new Set());
           setMsg(e?.message || "โหลดรายการหมูไม่สำเร็จ");
         }
       } finally {
@@ -271,22 +300,26 @@ export default function UserHomePage() {
       .filter((s) => {
         const houseValue = clean(s.house_no);
         if (selectedHouse === "__BLANK__") {
-          return !houseValue;
+          if (houseValue) return false;
+        } else if (houseValue !== selectedHouse) {
+          return false;
         }
-        return houseValue === selectedHouse;
+
+        return availableSwineCodeSet.has(s.swine_code);
       })
       .filter((s) => {
         if (!q) return true;
         return String(s.swine_code || "").toLowerCase().includes(q);
       })
       .slice(0, 50);
-  }, [swineOptions, selectedHouse, swineQ]);
+  }, [swineOptions, selectedHouse, swineQ, availableSwineCodeSet]);
 
   function handleSelectFromFarm(farm) {
     setFromFarm(farm);
     setSelectedHouse("");
     setSwineQ("");
     setSwineOptions([]);
+    setAvailableSwineCodeSet(new Set());
     setSelectedSwineIds(new Set());
     setSwineForm({});
     setMsg("");
@@ -468,33 +501,11 @@ export default function UserHomePage() {
 
       setSwineLoading(true);
       try {
-        const { data: availableRows, error: e1 } = await supabase
-          .from("swine_master")
-          .select("swine_code")
-          .eq("delivery_state", "available")
-          .limit(5000);
-
-        if (e1) throw e1;
-
-        const availableCodes = (availableRows || [])
-          .map((x) => x.swine_code)
-          .filter(Boolean);
-
-        if (!availableCodes.length) {
-          setSwineOptions([]);
-        } else {
-          const { data, error } = await supabase
-            .from("swines")
-            .select("id, swine_code, farm_code, house_no")
-            .eq("farm_code", fromFarm.farm_code)
-            .in("swine_code", availableCodes)
-            .order("house_no", { ascending: true })
-            .order("swine_code", { ascending: true })
-            .limit(2000);
-
-          if (error) throw error;
-          setSwineOptions(data || []);
-        }
+        const { swines, availableSet } = await fetchFarmSwinesWithAvailability(
+          fromFarm.farm_code
+        );
+        setSwineOptions(swines);
+        setAvailableSwineCodeSet(availableSet);
       } catch (e) {
         console.error("reload swines after save error:", e);
       } finally {
@@ -994,7 +1005,7 @@ export default function UserHomePage() {
 
                 {!swineLoading && selectedHouse && filteredSwines.length === 0 && (
                   <div style={{ padding: 12, color: "#666" }}>
-                    ไม่พบหมูใน House นี้ หรือ RLS ไม่ให้เห็นข้อมูล
+                    ไม่พบหมู available ใน House นี้
                   </div>
                 )}
               </div>
@@ -1088,6 +1099,7 @@ export default function UserHomePage() {
               setFromQ("");
               setSwineQ("");
               setSwineOptions([]);
+              setAvailableSwineCodeSet(new Set());
               setSelectedSwineIds(new Set());
               setSwineForm({});
             }}
