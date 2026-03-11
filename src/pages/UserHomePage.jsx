@@ -650,6 +650,7 @@ export default function UserHomePage() {
           <button className="linkbtn" type="button" onClick={() => nav(-1)}>
             Back
           </button>
+
           <button
             className="linkbtn"
             type="button"
@@ -657,6 +658,15 @@ export default function UserHomePage() {
           >
             จอแก้ไข
           </button>
+
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => nav("/export-csv")}
+          >
+            Export CSV
+          </button>
+
           <button
             className="linkbtn"
             type="button"

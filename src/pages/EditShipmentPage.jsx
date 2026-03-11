@@ -50,6 +50,14 @@ function sortByLabel(a, b) {
   return String(a?.label || "").localeCompare(String(b?.label || ""), "th");
 }
 
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
 const fullInputStyle = {
   width: "100%",
   padding: 10,
@@ -407,34 +415,45 @@ export default function EditShipmentPage() {
     setAvailableLoading(true);
 
     try {
-      const { data: availableRows, error: e1 } = await supabase
-        .from("swine_master")
-        .select("swine_code")
-        .eq("delivery_state", "available")
+      const { data: farmSwines, error: e1 } = await supabase
+        .from("swines")
+        .select("id, swine_code, farm_code, house_no, flock, birth_date")
+        .eq("farm_code", fromFarmCode)
+        .order("house_no", { ascending: true })
+        .order("swine_code", { ascending: true })
         .limit(5000);
 
       if (e1) throw e1;
 
-      const availableCodes = (availableRows || [])
-        .map((x) => x.swine_code)
-        .filter(Boolean);
+      const swines = farmSwines || [];
+      const codes = swines.map((x) => x.swine_code).filter(Boolean);
 
-      if (!availableCodes.length) {
+      if (!codes.length) {
         setAvailableSwines([]);
         return;
       }
 
-      const { data, error } = await supabase
-        .from("swines")
-        .select("id, swine_code, farm_code, house_no, flock, birth_date")
-        .eq("farm_code", fromFarmCode)
-        .in("swine_code", availableCodes)
-        .order("house_no", { ascending: true })
-        .order("swine_code", { ascending: true })
-        .limit(3000);
+      const codeChunks = chunkArray(codes, 500);
+      const availableCodeSet = new Set();
 
-      if (error) throw error;
-      setAvailableSwines(data || []);
+      for (const chunk of codeChunks) {
+        const { data: availableRows, error: e2 } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .in("swine_code", chunk);
+
+        if (e2) throw e2;
+
+        for (const row of availableRows || []) {
+          if (row?.swine_code) {
+            availableCodeSet.add(row.swine_code);
+          }
+        }
+      }
+
+      const availableOnly = swines.filter((x) => availableCodeSet.has(x.swine_code));
+      setAvailableSwines(availableOnly);
     } catch (e) {
       console.error("loadAvailableSwinesOfFarm error:", e);
       setAvailableSwines([]);

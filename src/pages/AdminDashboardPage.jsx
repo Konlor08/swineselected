@@ -67,6 +67,28 @@ export default function AdminDashboardPage() {
           <div className="tileTitle">Users / Roles</div>
           <div className="small">จัดการผู้ใช้: role, team, branch, เปิด/ปิดการใช้งาน</div>
         </div>
+
+        <div
+          className="tile"
+          role="button"
+          tabIndex={0}
+          onClick={() => nav("/export-csv")}
+          onKeyDown={(e) => e.key === "Enter" && nav("/export-csv")}
+        >
+          <div className="tileTitle">Export CSV</div>
+          <div className="small">เลือกวันที่คัด ฟาร์มที่คัด และฟาร์มปลายทาง เพื่อ export รายการหมู</div>
+        </div>
+
+        <div
+          className="tile"
+          role="button"
+          tabIndex={0}
+          onClick={() => nav("/edit-shipment")}
+          onKeyDown={(e) => e.key === "Enter" && nav("/edit-shipment")}
+        >
+          <div className="tileTitle">Edit Shipment</div>
+          <div className="small">ค้นหาและแก้ไขรายการ shipment สถานะ draft</div>
+        </div>
       </div>
     </div>
   );
