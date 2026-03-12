@@ -231,47 +231,82 @@ export default function UserHomePage() {
     return { swines, availableSet };
   }
 
-  useEffect(() => {
-    let alive = true;
+  async function reloadSwinesOfFarm(farmCode, opts = {}) {
+    const {
+      preserveHouse = true,
+      clearPicked = true,
+      clearSearch = false,
+      clearMessage = true,
+    } = opts;
 
-    async function loadSwinesOfFarm() {
+    if (clearMessage) setMsg("");
+
+    if (!farmCode) {
       setSwineOptions([]);
       setAvailableSwineCodeSet(new Set());
       setSelectedHouse("");
       setSelectedSwineIds(new Set());
       setSwineForm({});
       setSwineQ("");
-      setMsg("");
-
-      if (!fromFarm?.farm_code) return;
-
-      setSwineLoading(true);
-
-      try {
-        const { swines, availableSet } = await fetchFarmSwinesWithAvailability(
-          fromFarm.farm_code
-        );
-
-        if (alive) {
-          setSwineOptions(swines);
-          setAvailableSwineCodeSet(availableSet);
-        }
-      } catch (e) {
-        console.error("loadSwinesOfFarm error:", e);
-        if (alive) {
-          setSwineOptions([]);
-          setAvailableSwineCodeSet(new Set());
-          setMsg(e?.message || "โหลดรายการหมูไม่สำเร็จ");
-        }
-      } finally {
-        if (alive) setSwineLoading(false);
-      }
+      return;
     }
 
-    loadSwinesOfFarm();
-    return () => {
-      alive = false;
-    };
+    setSwineLoading(true);
+
+    try {
+      const { swines, availableSet } = await fetchFarmSwinesWithAvailability(farmCode);
+
+      setSwineOptions(swines);
+      setAvailableSwineCodeSet(availableSet);
+
+      if (!preserveHouse) {
+        setSelectedHouse("");
+      } else {
+        const houseValueSet = new Set(
+          (swines || []).map((s) => clean(s.house_no) || "__BLANK__")
+        );
+
+        setSelectedHouse((prev) => {
+          if (!prev) return prev;
+          return houseValueSet.has(prev) ? prev : "";
+        });
+      }
+
+      if (clearPicked) {
+        setSelectedSwineIds(new Set());
+        setSwineForm({});
+      }
+
+      if (clearSearch) {
+        setSwineQ("");
+      }
+    } catch (e) {
+      console.error("reloadSwinesOfFarm error:", e);
+      setSwineOptions([]);
+      setAvailableSwineCodeSet(new Set());
+      setMsg(e?.message || "โหลดรายการหมูไม่สำเร็จ");
+    } finally {
+      setSwineLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!fromFarm?.farm_code) {
+      setSwineOptions([]);
+      setAvailableSwineCodeSet(new Set());
+      setSelectedHouse("");
+      setSelectedSwineIds(new Set());
+      setSwineForm({});
+      setSwineQ("");
+      return;
+    }
+
+    reloadSwinesOfFarm(fromFarm.farm_code, {
+      preserveHouse: false,
+      clearPicked: true,
+      clearSearch: true,
+      clearMessage: true,
+    });
   }, [fromFarm?.farm_code]);
 
   const houseOptions = useMemo(() => {
@@ -499,18 +534,12 @@ export default function UserHomePage() {
       setSelectedSwineIds(new Set());
       setSwineForm({});
 
-      setSwineLoading(true);
-      try {
-        const { swines, availableSet } = await fetchFarmSwinesWithAvailability(
-          fromFarm.farm_code
-        );
-        setSwineOptions(swines);
-        setAvailableSwineCodeSet(availableSet);
-      } catch (e) {
-        console.error("reload swines after save error:", e);
-      } finally {
-        setSwineLoading(false);
-      }
+      await reloadSwinesOfFarm(fromFarm.farm_code, {
+        preserveHouse: true,
+        clearPicked: true,
+        clearSearch: false,
+        clearMessage: false,
+      });
     } catch (e) {
       console.error("saveDraft error:", {
         message: e?.message,
@@ -801,7 +830,33 @@ export default function UserHomePage() {
         </div>
 
         <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
-          <div style={{ fontWeight: 800 }}>House</div>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ fontWeight: 800 }}>House</div>
+
+            <button
+              type="button"
+              className="linkbtn"
+              onClick={() =>
+                reloadSwinesOfFarm(fromFarm?.farm_code, {
+                  preserveHouse: true,
+                  clearPicked: true,
+                  clearSearch: false,
+                  clearMessage: true,
+                })
+              }
+              disabled={!fromFarm?.farm_code || swineLoading || saving || submitting}
+            >
+              {swineLoading ? "กำลังโหลด..." : "Reload หมู"}
+            </button>
+          </div>
 
           {!fromFarm?.farm_code ? (
             <div className="small" style={{ color: "#666" }}>
