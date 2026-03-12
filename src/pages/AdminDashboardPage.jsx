@@ -62,6 +62,9 @@ export default function AdminDashboardPage() {
           <div className="small">จัดการข้อมูล / นำเข้า Excel</div>
         </div>
 
+        <button className="linkbtn" type="button" onClick={logout} style={{ position: "relative", zIndex: 9999 }}>
+          Logout
+        </button>
       </div>
 
       <div className="grid">

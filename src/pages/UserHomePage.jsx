@@ -674,10 +674,7 @@ export default function UserHomePage() {
             zIndex: 21,
           }}
         >
-          <button className="linkbtn" type="button" onClick={() => nav(-1)}>
-            Back
-          </button>
-
+          
           <button
             className="linkbtn"
             type="button"
