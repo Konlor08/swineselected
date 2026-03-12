@@ -1,5 +1,3 @@
-// src/App.jsx
-
 import React, { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
@@ -16,6 +14,9 @@ import DisabledPage from "./pages/DisabledPage.jsx";
 import NoProfilePage from "./pages/NoProfilePage.jsx";
 import ExportCsvPage from "./pages/ExportCsvPage.jsx";
 import EditShipmentPage from "./pages/EditShipmentPage.jsx";
+
+const ROLE_ADMIN = ["admin"];
+const ROLE_USER_OR_ADMIN = ["user", "admin"];
 
 function Splash() {
   return (
@@ -40,7 +41,10 @@ function Splash() {
 function RequireRole({ roleAllow, children }) {
   const [loading, setLoading] = useState(true);
   const [ok, setOk] = useState(false);
-  const allowSet = useMemo(() => new Set(roleAllow.map((r) => String(r).toLowerCase())), [roleAllow]);
+
+  const allowSet = useMemo(() => {
+    return new Set(roleAllow.map((r) => String(r).toLowerCase()));
+  }, [roleAllow]);
 
   useEffect(() => {
     let alive = true;
@@ -51,9 +55,10 @@ function RequireRole({ roleAllow, children }) {
       running = true;
 
       try {
-        const { data } = await supabase.auth.getSession();
-        const session = data?.session;
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
 
+        const session = data?.session;
         if (!session?.user?.id) {
           if (alive) {
             setOk(false);
@@ -64,7 +69,7 @@ function RequireRole({ roleAllow, children }) {
 
         const profile = await fetchMyProfile(session.user.id);
 
-        if (!profile) {
+        if (!profile || profile.is_active === false) {
           if (alive) {
             setOk(false);
             setLoading(false);
@@ -72,20 +77,14 @@ function RequireRole({ roleAllow, children }) {
           return;
         }
 
-        if (profile.is_active === false) {
-          if (alive) {
-            setOk(false);
-            setLoading(false);
-          }
-          return;
-        }
+        const role = String(profile.role || "user").toLowerCase();
 
-        const r = String(profile.role || "user").toLowerCase();
         if (alive) {
-          setOk(allowSet.has(r));
+          setOk(allowSet.has(role));
           setLoading(false);
         }
-      } catch {
+      } catch (err) {
+        console.error("RequireRole error:", err);
         if (alive) {
           setOk(false);
           setLoading(false);
@@ -96,7 +95,10 @@ function RequireRole({ roleAllow, children }) {
     }
 
     run();
-    const { data: sub } = supabase.auth.onAuthStateChange(() => run());
+
+    const { data: sub } = supabase.auth.onAuthStateChange(() => {
+      run();
+    });
 
     return () => {
       alive = false;
@@ -118,7 +120,9 @@ function RootRedirect() {
 
     async function run() {
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
         const session = data?.session;
 
         if (!session?.user?.id) {
@@ -147,12 +151,14 @@ function RootRedirect() {
           return;
         }
 
-        const r = String(profile.role || "user").toLowerCase();
+        const role = String(profile.role || "user").toLowerCase();
+
         if (alive) {
-          setTo(r === "admin" ? "/admin" : "/user-home");
+          setTo(role === "admin" ? "/admin" : "/user-home");
           setLoading(false);
         }
-      } catch {
+      } catch (err) {
+        console.error("RootRedirect error:", err);
         if (alive) {
           setTo("/login");
           setLoading(false);
@@ -161,6 +167,7 @@ function RootRedirect() {
     }
 
     run();
+
     return () => {
       alive = false;
     };
@@ -183,7 +190,7 @@ export default function App() {
         <Route
           path="/admin"
           element={
-            <RequireRole roleAllow={["admin"]}>
+            <RequireRole roleAllow={ROLE_ADMIN}>
               <AdminDashboardPage />
             </RequireRole>
           }
@@ -191,7 +198,7 @@ export default function App() {
         <Route
           path="/admin/import-swines"
           element={
-            <RequireRole roleAllow={["admin"]}>
+            <RequireRole roleAllow={ROLE_ADMIN}>
               <AdminImportSwinesPage />
             </RequireRole>
           }
@@ -199,7 +206,7 @@ export default function App() {
         <Route
           path="/admin/import-master-farms"
           element={
-            <RequireRole roleAllow={["admin"]}>
+            <RequireRole roleAllow={ROLE_ADMIN}>
               <AdminImportMasterFarmsPage />
             </RequireRole>
           }
@@ -207,7 +214,7 @@ export default function App() {
         <Route
           path="/admin/users"
           element={
-            <RequireRole roleAllow={["admin"]}>
+            <RequireRole roleAllow={ROLE_ADMIN}>
               <AdminUsersPage />
             </RequireRole>
           }
@@ -216,7 +223,7 @@ export default function App() {
         <Route
           path="/user-home"
           element={
-            <RequireRole roleAllow={["user", "admin"]}>
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <UserHomePage />
             </RequireRole>
           }
@@ -225,7 +232,7 @@ export default function App() {
         <Route
           path="/user/home"
           element={
-            <RequireRole roleAllow={["user", "admin"]}>
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <Navigate to="/user-home" replace />
             </RequireRole>
           }
@@ -234,7 +241,7 @@ export default function App() {
         <Route
           path="/user"
           element={
-            <RequireRole roleAllow={["user", "admin"]}>
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <Navigate to="/user-home" replace />
             </RequireRole>
           }
@@ -243,7 +250,7 @@ export default function App() {
         <Route
           path="/user/dashboard"
           element={
-            <RequireRole roleAllow={["user", "admin"]}>
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <UserDashboardPage />
             </RequireRole>
           }
@@ -252,7 +259,7 @@ export default function App() {
         <Route
           path="/export-csv"
           element={
-            <RequireRole roleAllow={["user", "admin"]}>
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <ExportCsvPage />
             </RequireRole>
           }
@@ -261,7 +268,7 @@ export default function App() {
         <Route
           path="/edit-shipment"
           element={
-            <RequireRole roleAllow={["user", "admin"]}>
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <EditShipmentPage />
             </RequireRole>
           }
