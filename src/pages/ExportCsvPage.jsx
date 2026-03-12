@@ -79,16 +79,130 @@ function formatStatus(status) {
   return s || "-";
 }
 
-function statusBadgeClass(status) {
+function statusBadgeStyle(status) {
   const s = String(status || "").toLowerCase();
+
   if (s === "issued") {
-    return "bg-slate-100 text-slate-700 border-slate-200";
+    return {
+      display: "inline-flex",
+      padding: "4px 10px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 700,
+      border: "1px solid #cbd5e1",
+      background: "#f8fafc",
+      color: "#334155",
+      whiteSpace: "nowrap",
+    };
   }
-  if (s === "submitted") {
-    return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  }
-  return "bg-slate-100 text-slate-700 border-slate-200";
+
+  return {
+    display: "inline-flex",
+    padding: "4px 10px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    border: "1px solid #a7f3d0",
+    background: "#ecfdf5",
+    color: "#047857",
+    whiteSpace: "nowrap",
+  };
 }
+
+const pageWrapStyle = {
+  minHeight: "100vh",
+  background: "linear-gradient(180deg, #f0fdf4 0%, #f8fafc 45%, #ffffff 100%)",
+  padding: "16px",
+  boxSizing: "border-box",
+};
+
+const shellStyle = {
+  width: "100%",
+  maxWidth: 1280,
+  margin: "0 auto",
+  display: "grid",
+  gap: 16,
+};
+
+const topCardStyle = {
+  background: "#ffffff",
+  border: "1px solid #d1fae5",
+  borderRadius: 24,
+  overflow: "hidden",
+  boxShadow: "0 10px 30px rgba(16, 185, 129, 0.10)",
+};
+
+const topHeadStyle = {
+  background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
+  color: "#ffffff",
+  padding: 20,
+};
+
+const cardStyle = {
+  background: "#ffffff",
+  border: "1px solid #e5e7eb",
+  borderRadius: 22,
+  padding: 18,
+  boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
+  boxSizing: "border-box",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "11px 12px",
+  borderRadius: 14,
+  border: "1px solid #cbd5e1",
+  boxSizing: "border-box",
+  outline: "none",
+  minWidth: 0,
+  background: "#ffffff",
+};
+
+const disabledInputStyle = {
+  ...inputStyle,
+  background: "#f1f5f9",
+  color: "#64748b",
+};
+
+const btnBaseStyle = {
+  border: 0,
+  borderRadius: 14,
+  padding: "11px 16px",
+  fontWeight: 700,
+  cursor: "pointer",
+  transition: "all .15s ease",
+};
+
+const btnLightStyle = {
+  ...btnBaseStyle,
+  background: "#ffffff",
+  color: "#334155",
+  border: "1px solid #cbd5e1",
+};
+
+const btnGreenStyle = {
+  ...btnBaseStyle,
+  background: "#059669",
+  color: "#ffffff",
+};
+
+const btnDarkStyle = {
+  ...btnBaseStyle,
+  background: "#0f172a",
+  color: "#ffffff",
+};
+
+const msgStyle = {
+  borderRadius: 16,
+  padding: "12px 14px",
+  fontSize: 14,
+  lineHeight: 1.6,
+  fontWeight: 700,
+  border: "1px solid #fde68a",
+  background: "#fffbeb",
+  color: "#92400e",
+  wordBreak: "break-word",
+};
 
 export default function ExportCsvPage() {
   const nav = useNavigate();
@@ -613,9 +727,9 @@ export default function ExportCsvPage() {
 
   if (pageLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-slate-50 to-white px-4 py-6">
-        <div className="mx-auto max-w-7xl rounded-3xl border border-white bg-white/90 p-8 shadow-xl shadow-emerald-100/40">
-          <div className="text-slate-700">กำลังโหลด...</div>
+      <div style={pageWrapStyle}>
+        <div style={shellStyle}>
+          <div style={cardStyle}>กำลังโหลด...</div>
         </div>
       </div>
     );
@@ -623,79 +737,136 @@ export default function ExportCsvPage() {
 
   if (!canUsePage) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-slate-50 to-white px-4 py-6">
-        <div className="mx-auto max-w-7xl rounded-3xl border border-white bg-white/90 p-8 shadow-xl shadow-emerald-100/40">
-          <div className="text-lg font-semibold text-red-600">ไม่มีสิทธิ์เข้าใช้งาน</div>
-          <button
-            type="button"
-            onClick={() => nav(-1)}
-            className="mt-4 rounded-xl bg-slate-800 px-4 py-2 text-white transition hover:bg-slate-900"
-          >
-            กลับ
-          </button>
+      <div style={pageWrapStyle}>
+        <div style={shellStyle}>
+          <div style={cardStyle}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#dc2626" }}>
+              ไม่มีสิทธิ์เข้าใช้งาน
+            </div>
+            <button
+              type="button"
+              onClick={() => nav(-1)}
+              style={{ ...btnDarkStyle, marginTop: 14 }}
+            >
+              กลับ
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-slate-50 to-white px-4 py-6">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <div className="overflow-hidden rounded-3xl border border-emerald-100 bg-white shadow-xl shadow-emerald-100/40">
-          <div className="bg-gradient-to-r from-emerald-600 to-emerald-500 px-6 py-5 text-white">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h1 className="text-2xl font-bold">Export CSV</h1>
-                <p className="mt-1 text-sm text-emerald-50/95">
-                  Role: <span className="font-semibold">{myRole || "-"}</span>
+    <div style={pageWrapStyle}>
+      <div style={shellStyle}>
+        <div style={topCardStyle}>
+          <div style={topHeadStyle}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 900 }}>Export CSV</div>
+                <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6 }}>
+                  Role: <b>{myRole || "-"}</b>
                   {myRole === "admin"
                     ? " — export ได้ทุกข้อมูล"
                     : " — export ได้เฉพาะข้อมูลที่ตัวเองสร้าง"}
-                </p>
-                <p className="mt-1 text-sm text-emerald-100">
+                </div>
+                <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   แสดงรายการสถานะ submitted และ issued
-                </p>
+                </div>
               </div>
 
               <button
                 type="button"
                 onClick={() => nav(-1)}
-                className="rounded-xl border border-white/30 bg-white/10 px-4 py-2 text-white transition hover:bg-white/20"
+                style={{
+                  ...btnBaseStyle,
+                  background: "rgba(255,255,255,0.14)",
+                  color: "#fff",
+                  border: "1px solid rgba(255,255,255,0.35)",
+                }}
               >
                 กลับ
               </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 px-6 py-4">
-            <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">
+          <div
+            style={{
+              padding: "14px 18px 18px",
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap",
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                padding: "6px 12px",
+                borderRadius: 999,
+                fontSize: 13,
+                fontWeight: 700,
+                border: "1px solid #a7f3d0",
+                background: "#ecfdf5",
+                color: "#047857",
+              }}
+            >
               submitted: {previewStatusCounts.submitted}
             </span>
-            <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-sm font-medium text-slate-700">
+
+            <span
+              style={{
+                display: "inline-flex",
+                padding: "6px 12px",
+                borderRadius: 999,
+                fontSize: 13,
+                fontWeight: 700,
+                border: "1px solid #cbd5e1",
+                background: "#f8fafc",
+                color: "#334155",
+              }}
+            >
               issued: {previewStatusCounts.issued}
             </span>
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-100/60">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <label className="block">
-              <div className="mb-1 text-sm font-medium text-slate-700">วันที่คัด</div>
+        <div style={cardStyle}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 14,
+            }}
+          >
+            <label style={{ display: "block", minWidth: 0 }}>
+              <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+                วันที่คัด
+              </div>
               <input
                 type="date"
                 value={selectedDate}
                 onChange={handleDateChange}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2.5 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100"
+                style={inputStyle}
               />
             </label>
 
-            <label className="block">
-              <div className="mb-1 text-sm font-medium text-slate-700">ฟาร์มที่คัด</div>
+            <label style={{ display: "block", minWidth: 0 }}>
+              <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+                ฟาร์มที่คัด
+              </div>
               <select
                 value={fromFarmCode}
                 onChange={handleFromFarmChange}
                 disabled={!selectedDate || fromFarmLoading}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2.5 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-100"
+                style={!selectedDate || fromFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
                   {fromFarmLoading ? "กำลังโหลด..." : "เลือกฟาร์มที่คัด"}
@@ -707,19 +878,21 @@ export default function ExportCsvPage() {
                 ))}
               </select>
               {!fromFarmLoading && selectedDate && fromFarmOptions.length === 0 ? (
-                <div className="mt-1 text-xs text-slate-500">
+                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   ไม่พบฟาร์มที่คัดในวันที่เลือก
                 </div>
               ) : null}
             </label>
 
-            <label className="block">
-              <div className="mb-1 text-sm font-medium text-slate-700">ฟาร์มปลายทาง</div>
+            <label style={{ display: "block", minWidth: 0 }}>
+              <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+                ฟาร์มปลายทาง
+              </div>
               <select
                 value={toFarmId}
                 onChange={handleToFarmChange}
                 disabled={!selectedDate || !fromFarmCode || toFarmLoading}
-                className="w-full rounded-2xl border border-slate-300 px-3 py-2.5 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-100"
+                style={!selectedDate || !fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
                   {toFarmLoading ? "กำลังโหลด..." : "เลือกฟาร์มปลายทาง"}
@@ -734,19 +907,33 @@ export default function ExportCsvPage() {
               selectedDate &&
               fromFarmCode &&
               toFarmOptions.length === 0 ? (
-                <div className="mt-1 text-xs text-slate-500">
+                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   ไม่พบฟาร์มปลายทางจากเงื่อนไขที่เลือก
                 </div>
               ) : null}
             </label>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-3">
+          <div
+            style={{
+              marginTop: 16,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+            }}
+          >
             <button
               type="button"
               onClick={handlePreview}
               disabled={!canQueryRows || previewLoading || exporting || submitting}
-              className="rounded-2xl border border-slate-300 bg-white px-4 py-2.5 font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{
+                ...btnLightStyle,
+                opacity: !canQueryRows || previewLoading || exporting || submitting ? 0.6 : 1,
+                cursor:
+                  !canQueryRows || previewLoading || exporting || submitting
+                    ? "not-allowed"
+                    : "pointer",
+              }}
             >
               {previewLoading ? "กำลังโหลด..." : "แสดงข้อมูล"}
             </button>
@@ -755,7 +942,14 @@ export default function ExportCsvPage() {
               type="button"
               onClick={handleExport}
               disabled={!canQueryRows || exporting || previewLoading || submitting}
-              className="rounded-2xl bg-emerald-600 px-4 py-2.5 font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{
+                ...btnGreenStyle,
+                opacity: !canQueryRows || exporting || previewLoading || submitting ? 0.6 : 1,
+                cursor:
+                  !canQueryRows || exporting || previewLoading || submitting
+                    ? "not-allowed"
+                    : "pointer",
+              }}
             >
               {exporting ? "กำลัง Export..." : "Export CSV"}
             </button>
@@ -764,87 +958,107 @@ export default function ExportCsvPage() {
               type="button"
               onClick={handleSubmitConfirm}
               disabled={!canQueryRows || submitting || previewLoading || exporting}
-              className="rounded-2xl bg-slate-800 px-4 py-2.5 font-medium text-white transition hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+              style={{
+                ...btnDarkStyle,
+                opacity: !canQueryRows || submitting || previewLoading || exporting ? 0.6 : 1,
+                cursor:
+                  !canQueryRows || submitting || previewLoading || exporting
+                    ? "not-allowed"
+                    : "pointer",
+              }}
             >
               {submitting ? "กำลัง Submit..." : "Submit"}
             </button>
           </div>
 
-          {msg ? (
-            <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-              {msg}
-            </div>
-          ) : null}
+          {msg ? <div style={{ ...msgStyle, marginTop: 14 }}>{msg}</div> : null}
         </div>
 
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-lg shadow-slate-100/60">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="text-lg font-semibold text-slate-900">
+        <div style={cardStyle}>
+          <div
+            style={{
+              marginBottom: 12,
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
               Preview ({previewRows.length} รายการ)
             </div>
+
             {previewRows.length > 100 ? (
-              <div className="text-sm text-slate-500">แสดงตัวอย่าง 100 แถวแรก</div>
+              <div style={{ fontSize: 13, color: "#64748b" }}>
+                แสดงตัวอย่าง 100 แถวแรก
+              </div>
             ) : null}
           </div>
 
-          <div className="overflow-x-auto rounded-2xl border border-slate-200">
-            <table className="min-w-full border-collapse text-sm">
+          <div
+            style={{
+              overflowX: "auto",
+              border: "1px solid #e5e7eb",
+              borderRadius: 16,
+              background: "#fff",
+            }}
+          >
+            <table
+              style={{
+                width: "100%",
+                minWidth: 1200,
+                borderCollapse: "collapse",
+                fontSize: 14,
+              }}
+            >
               <thead>
-                <tr className="bg-slate-100 text-left text-slate-700">
-                  <th className="border px-3 py-2">สถานะ</th>
-                  <th className="border px-3 py-2">วันที่คัด</th>
-                  <th className="border px-3 py-2">ฟาร์มที่คัด</th>
-                  <th className="border px-3 py-2">โรงเรือน</th>
-                  <th className="border px-3 py-2">flock</th>
-                  <th className="border px-3 py-2">ฟาร์มปลายทาง</th>
-                  <th className="border px-3 py-2">เบอร์หมู</th>
-                  <th className="border px-3 py-2">วันเกิด</th>
-                  <th className="border px-3 py-2">อายุ(วัน)</th>
-                  <th className="border px-3 py-2">เต้าซ้าย</th>
-                  <th className="border px-3 py-2">เต้าขวา</th>
-                  <th className="border px-3 py-2">backfat</th>
-                  <th className="border px-3 py-2">น้ำหนัก</th>
-                  <th className="border px-3 py-2">หมายเหตุ</th>
+                <tr style={{ background: "#f8fafc", color: "#334155" }}>
+                  <th style={thStyle}>สถานะ</th>
+                  <th style={thStyle}>วันที่คัด</th>
+                  <th style={thStyle}>ฟาร์มที่คัด</th>
+                  <th style={thStyle}>โรงเรือน</th>
+                  <th style={thStyle}>flock</th>
+                  <th style={thStyle}>ฟาร์มปลายทาง</th>
+                  <th style={thStyle}>เบอร์หมู</th>
+                  <th style={thStyle}>วันเกิด</th>
+                  <th style={thStyle}>อายุ(วัน)</th>
+                  <th style={thStyle}>เต้าซ้าย</th>
+                  <th style={thStyle}>เต้าขวา</th>
+                  <th style={thStyle}>backfat</th>
+                  <th style={thStyle}>น้ำหนัก</th>
+                  <th style={thStyle}>หมายเหตุ</th>
                 </tr>
               </thead>
+
               <tbody>
                 {previewTop100.length === 0 ? (
                   <tr>
-                    <td
-                      colSpan={14}
-                      className="border px-3 py-8 text-center text-slate-500"
-                    >
+                    <td colSpan={14} style={emptyTdStyle}>
                       ยังไม่มีข้อมูลแสดง
                     </td>
                   </tr>
                 ) : (
                   previewTop100.map((row, idx) => (
-                    <tr
-                      key={`${row.swine_code}-${row.created_at}-${idx}`}
-                      className="hover:bg-slate-50"
-                    >
-                      <td className="border px-3 py-2">
-                        <span
-                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium ${statusBadgeClass(
-                            row.shipment_status
-                          )}`}
-                        >
+                    <tr key={`${row.swine_code}-${row.created_at}-${idx}`}>
+                      <td style={tdStyle}>
+                        <span style={statusBadgeStyle(row.shipment_status)}>
                           {formatStatus(row.shipment_status)}
                         </span>
                       </td>
-                      <td className="border px-3 py-2">{row.selected_date}</td>
-                      <td className="border px-3 py-2">{row.from_farm_name}</td>
-                      <td className="border px-3 py-2">{row.house_no}</td>
-                      <td className="border px-3 py-2">{row.flock}</td>
-                      <td className="border px-3 py-2">{row.to_farm_name}</td>
-                      <td className="border px-3 py-2">{row.swine_code}</td>
-                      <td className="border px-3 py-2">{row.birth_date}</td>
-                      <td className="border px-3 py-2">{row.age_days}</td>
-                      <td className="border px-3 py-2">{row.teats_left}</td>
-                      <td className="border px-3 py-2">{row.teats_right}</td>
-                      <td className="border px-3 py-2">{row.backfat}</td>
-                      <td className="border px-3 py-2">{row.weight}</td>
-                      <td className="border px-3 py-2">{row.remark}</td>
+                      <td style={tdStyle}>{row.selected_date}</td>
+                      <td style={tdStyle}>{row.from_farm_name}</td>
+                      <td style={tdStyle}>{row.house_no}</td>
+                      <td style={tdStyle}>{row.flock}</td>
+                      <td style={tdStyle}>{row.to_farm_name}</td>
+                      <td style={tdStyle}>{row.swine_code}</td>
+                      <td style={tdStyle}>{row.birth_date}</td>
+                      <td style={tdStyle}>{row.age_days}</td>
+                      <td style={tdStyle}>{row.teats_left}</td>
+                      <td style={tdStyle}>{row.teats_right}</td>
+                      <td style={tdStyle}>{row.backfat}</td>
+                      <td style={tdStyle}>{row.weight}</td>
+                      <td style={tdStyle}>{row.remark}</td>
                     </tr>
                   ))
                 )}
@@ -856,3 +1070,27 @@ export default function ExportCsvPage() {
     </div>
   );
 }
+
+const thStyle = {
+  borderBottom: "1px solid #e5e7eb",
+  padding: "12px 10px",
+  textAlign: "left",
+  whiteSpace: "nowrap",
+  fontWeight: 800,
+};
+
+const tdStyle = {
+  borderBottom: "1px solid #e5e7eb",
+  padding: "10px",
+  textAlign: "left",
+  verticalAlign: "top",
+  color: "#0f172a",
+};
+
+const emptyTdStyle = {
+  borderBottom: "1px solid #e5e7eb",
+  padding: "28px 12px",
+  textAlign: "center",
+  color: "#64748b",
+  fontWeight: 600,
+};
