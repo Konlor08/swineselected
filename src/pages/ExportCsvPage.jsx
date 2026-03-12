@@ -127,7 +127,6 @@ function statusBadgeStyle(status) {
 const pageWrapStyle = {
   minHeight: "100vh",
   background: "linear-gradient(180deg, #f0fdf4 0%, #f8fafc 45%, #ffffff 100%)",
-  padding: "16px",
   boxSizing: "border-box",
 };
 
@@ -137,6 +136,7 @@ const shellStyle = {
   margin: "0 auto",
   display: "grid",
   gap: 16,
+  boxSizing: "border-box",
 };
 
 const topCardStyle = {
@@ -150,7 +150,6 @@ const topCardStyle = {
 const topHeadStyle = {
   background: "linear-gradient(135deg, #059669 0%, #10b981 100%)",
   color: "#ffffff",
-  padding: 20,
 };
 
 const cardStyle = {
@@ -160,6 +159,7 @@ const cardStyle = {
   padding: 18,
   boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
   boxSizing: "border-box",
+  minWidth: 0,
 };
 
 const inputStyle = {
@@ -186,6 +186,7 @@ const btnBaseStyle = {
   fontWeight: 700,
   cursor: "pointer",
   transition: "all .15s ease",
+  minHeight: 44,
 };
 
 const btnLightStyle = {
@@ -222,6 +223,10 @@ const msgStyle = {
 export default function ExportCsvPage() {
   const nav = useNavigate();
 
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false
+  );
+
   const [pageLoading, setPageLoading] = useState(true);
   const [fromFarmLoading, setFromFarmLoading] = useState(false);
   const [toFarmLoading, setToFarmLoading] = useState(false);
@@ -246,6 +251,16 @@ export default function ExportCsvPage() {
 
   const canUsePage = ["admin", "user"].includes(String(myRole).toLowerCase());
   const canQueryRows = Boolean(selectedDate && fromFarmCode && toFarmId);
+
+  useEffect(() => {
+    function onResize() {
+      setIsMobile(window.innerWidth <= 768);
+    }
+
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -783,8 +798,8 @@ export default function ExportCsvPage() {
 
   if (pageLoading) {
     return (
-      <div style={pageWrapStyle}>
-        <div style={shellStyle}>
+      <div style={{ ...pageWrapStyle, padding: isMobile ? 12 : 16 }}>
+        <div style={{ ...shellStyle, padding: isMobile ? "0 2px" : 0 }}>
           <div style={cardStyle}>กำลังโหลด...</div>
         </div>
       </div>
@@ -793,8 +808,8 @@ export default function ExportCsvPage() {
 
   if (!canUsePage) {
     return (
-      <div style={pageWrapStyle}>
-        <div style={shellStyle}>
+      <div style={{ ...pageWrapStyle, padding: isMobile ? 12 : 16 }}>
+        <div style={{ ...shellStyle, padding: isMobile ? "0 2px" : 0 }}>
           <div style={cardStyle}>
             <div style={{ fontSize: 18, fontWeight: 800, color: "#dc2626" }}>
               ไม่มีสิทธิ์เข้าใช้งาน
@@ -802,7 +817,11 @@ export default function ExportCsvPage() {
             <button
               type="button"
               onClick={() => nav(-1)}
-              style={{ ...btnDarkStyle, marginTop: 14 }}
+              style={{
+                ...btnDarkStyle,
+                marginTop: 14,
+                width: isMobile ? "100%" : "auto",
+              }}
             >
               กลับ
             </button>
@@ -813,21 +832,34 @@ export default function ExportCsvPage() {
   }
 
   return (
-    <div style={pageWrapStyle}>
-      <div style={shellStyle}>
+    <div style={{ ...pageWrapStyle, padding: isMobile ? 12 : 16 }}>
+      <div
+        style={{
+          ...shellStyle,
+          padding: isMobile ? "0 2px" : 0,
+        }}
+      >
         <div style={topCardStyle}>
-          <div style={topHeadStyle}>
+          <div
+            style={{
+              ...topHeadStyle,
+              padding: isMobile ? 16 : 20,
+            }}
+          >
             <div
               style={{
                 display: "flex",
+                flexDirection: isMobile ? "column" : "row",
                 justifyContent: "space-between",
-                alignItems: "flex-start",
+                alignItems: isMobile ? "stretch" : "flex-start",
                 gap: 12,
                 flexWrap: "wrap",
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 18, fontWeight: 900 }}>Export CSV</div>
+                <div style={{ fontSize: isMobile ? 17 : 18, fontWeight: 900 }}>
+                  Export CSV
+                </div>
                 <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6 }}>
                   Role: <b>{myRole || "-"}</b>
                   {myRole === "admin"
@@ -844,6 +876,7 @@ export default function ExportCsvPage() {
                 onClick={() => nav(-1)}
                 style={{
                   ...btnBaseStyle,
+                  width: isMobile ? "100%" : "auto",
                   background: "rgba(255,255,255,0.14)",
                   color: "#fff",
                   border: "1px solid rgba(255,255,255,0.35)",
@@ -856,7 +889,7 @@ export default function ExportCsvPage() {
 
           <div
             style={{
-              padding: "14px 18px 18px",
+              padding: isMobile ? "12px 14px 14px" : "14px 18px 18px",
               display: "flex",
               gap: 8,
               flexWrap: "wrap",
@@ -909,11 +942,18 @@ export default function ExportCsvPage() {
           </div>
         </div>
 
-        <div style={cardStyle}>
+        <div
+          style={{
+            ...cardStyle,
+            padding: isMobile ? 14 : 18,
+          }}
+        >
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gridTemplateColumns: isMobile
+                ? "1fr"
+                : "repeat(auto-fit, minmax(220px, 1fr))",
               gap: 14,
             }}
           >
@@ -981,7 +1021,7 @@ export default function ExportCsvPage() {
                 ))}
               </select>
 
-              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
                 ทั้งหมด {fromFarmOptions.length} รายการ / ตรงคำค้น {filteredFromFarmOptions.length} รายการ
               </div>
 
@@ -1037,7 +1077,7 @@ export default function ExportCsvPage() {
                 ))}
               </select>
 
-              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
                 ทั้งหมด {toFarmOptions.length} รายการ / ตรงคำค้น {filteredToFarmOptions.length} รายการ
               </div>
 
@@ -1063,6 +1103,8 @@ export default function ExportCsvPage() {
               disabled={!canQueryRows || previewLoading || exporting || submitting}
               style={{
                 ...btnLightStyle,
+                width: isMobile ? "100%" : "auto",
+                flex: isMobile ? "1 1 100%" : "1 1 160px",
                 opacity: !canQueryRows || previewLoading || exporting || submitting ? 0.6 : 1,
                 cursor:
                   !canQueryRows || previewLoading || exporting || submitting
@@ -1079,6 +1121,8 @@ export default function ExportCsvPage() {
               disabled={!canQueryRows || exporting || previewLoading || submitting}
               style={{
                 ...btnGreenStyle,
+                width: isMobile ? "100%" : "auto",
+                flex: isMobile ? "1 1 100%" : "1 1 160px",
                 opacity: !canQueryRows || exporting || previewLoading || submitting ? 0.6 : 1,
                 cursor:
                   !canQueryRows || exporting || previewLoading || submitting
@@ -1095,6 +1139,8 @@ export default function ExportCsvPage() {
               disabled={!canQueryRows || submitting || previewLoading || exporting}
               style={{
                 ...btnDarkStyle,
+                width: isMobile ? "100%" : "auto",
+                flex: isMobile ? "1 1 100%" : "1 1 160px",
                 opacity: !canQueryRows || submitting || previewLoading || exporting ? 0.6 : 1,
                 cursor:
                   !canQueryRows || submitting || previewLoading || exporting
@@ -1109,15 +1155,21 @@ export default function ExportCsvPage() {
           {msg ? <div style={{ ...msgStyle, marginTop: 14 }}>{msg}</div> : null}
         </div>
 
-        <div style={cardStyle}>
+        <div
+          style={{
+            ...cardStyle,
+            padding: isMobile ? 14 : 18,
+          }}
+        >
           <div
             style={{
               marginBottom: 12,
               display: "flex",
+              flexDirection: isMobile ? "column" : "row",
               justifyContent: "space-between",
               gap: 10,
               flexWrap: "wrap",
-              alignItems: "center",
+              alignItems: isMobile ? "flex-start" : "center",
             }}
           >
             <div style={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
@@ -1134,6 +1186,7 @@ export default function ExportCsvPage() {
           <div
             style={{
               overflowX: "auto",
+              WebkitOverflowScrolling: "touch",
               border: "1px solid #e5e7eb",
               borderRadius: 16,
               background: "#fff",
@@ -1142,7 +1195,7 @@ export default function ExportCsvPage() {
             <table
               style={{
                 width: "100%",
-                minWidth: 1200,
+                minWidth: isMobile ? 980 : 1200,
                 borderCollapse: "collapse",
                 fontSize: 14,
               }}
@@ -1220,6 +1273,7 @@ const tdStyle = {
   textAlign: "left",
   verticalAlign: "top",
   color: "#0f172a",
+  whiteSpace: "nowrap",
 };
 
 const emptyTdStyle = {
