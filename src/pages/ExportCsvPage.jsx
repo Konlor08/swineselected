@@ -222,6 +222,8 @@ export default function ExportCsvPage() {
   const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
   const [fromFarmCode, setFromFarmCode] = useState("");
   const [toFarmId, setToFarmId] = useState("");
+  const [fromFarmQ, setFromFarmQ] = useState("");
+  const [toFarmQ, setToFarmQ] = useState("");
 
   const [fromFarmOptions, setFromFarmOptions] = useState([]);
   const [toFarmOptions, setToFarmOptions] = useState([]);
@@ -565,20 +567,20 @@ export default function ExportCsvPage() {
       }
 
       const exportRows = flatRows.map((r) => ({
-        "สถานะ": formatStatus(r.shipment_status),
-        "วันที่คัด": r.selected_date,
-        "ฟาร์มที่คัด": r.from_farm_name,
-        "โรงเรือน": r.house_no,
-        "flock": r.flock,
-        "ฟาร์มปลายทาง": r.to_farm_name,
-        "เบอร์หมู": r.swine_code,
-        "วันเกิด": r.birth_date,
+        สถานะ: formatStatus(r.shipment_status),
+        วันที่คัด: r.selected_date,
+        ฟาร์มที่คัด: r.from_farm_name,
+        โรงเรือน: r.house_no,
+        flock: r.flock,
+        ฟาร์มปลายทาง: r.to_farm_name,
+        เบอร์หมู: r.swine_code,
+        วันเกิด: r.birth_date,
         "อายุ(วัน)": r.age_days,
-        "เต้าซ้าย": r.teats_left,
-        "เต้าขวา": r.teats_right,
-        "backfat": r.backfat,
-        "น้ำหนัก": r.weight,
-        "หมายเหตุ": r.remark,
+        เต้าซ้าย: r.teats_left,
+        เต้าขวา: r.teats_right,
+        backfat: r.backfat,
+        น้ำหนัก: r.weight,
+        หมายเหตุ: r.remark,
       }));
 
       const fromFarmText =
@@ -596,7 +598,15 @@ export default function ExportCsvPage() {
     } finally {
       setExporting(false);
     }
-  }, [canQueryRows, fetchExportBaseData, fromFarmCode, fromFarmOptions, selectedDate, toFarmId, toFarmOptions]);
+  }, [
+    canQueryRows,
+    fetchExportBaseData,
+    fromFarmCode,
+    fromFarmOptions,
+    selectedDate,
+    toFarmId,
+    toFarmOptions,
+  ]);
 
   const handleSubmitConfirm = useCallback(async () => {
     if (!canQueryRows) return;
@@ -662,7 +672,7 @@ export default function ExportCsvPage() {
           .eq("id", shipment.id)
           .eq("status", "submitted");
 
-        if (e2) throw e2;
+          if (e2) throw e2;
       }
 
       await refreshPreviewRows();
@@ -685,6 +695,8 @@ export default function ExportCsvPage() {
     setSelectedDate(value);
     setFromFarmCode("");
     setToFarmId("");
+    setFromFarmQ("");
+    setToFarmQ("");
     setFromFarmOptions([]);
     setToFarmOptions([]);
     setPreviewRows([]);
@@ -695,6 +707,7 @@ export default function ExportCsvPage() {
     const value = e.target.value;
     setFromFarmCode(value);
     setToFarmId("");
+    setToFarmQ("");
     setToFarmOptions([]);
     setPreviewRows([]);
     setMsg("");
@@ -706,6 +719,26 @@ export default function ExportCsvPage() {
     setPreviewRows([]);
     setMsg("");
   }
+
+  const filteredFromFarmOptions = useMemo(() => {
+    const q = String(fromFarmQ || "").trim().toLowerCase();
+    if (!q) return fromFarmOptions;
+
+    return fromFarmOptions.filter((opt) => {
+      const text = `${opt.code || ""} ${opt.name || ""} ${opt.label || ""}`.toLowerCase();
+      return text.includes(q);
+    });
+  }, [fromFarmOptions, fromFarmQ]);
+
+  const filteredToFarmOptions = useMemo(() => {
+    const q = String(toFarmQ || "").trim().toLowerCase();
+    if (!q) return toFarmOptions;
+
+    return toFarmOptions.filter((opt) => {
+      const text = `${opt.farm_code || ""} ${opt.farm_name || ""} ${opt.label || ""}`.toLowerCase();
+      return text.includes(q);
+    });
+  }, [toFarmOptions, toFarmQ]);
 
   const previewTop100 = useMemo(() => previewRows.slice(0, 100), [previewRows]);
 
@@ -863,6 +896,20 @@ export default function ExportCsvPage() {
               <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
                 ฟาร์มที่คัด
               </div>
+
+              <input
+                type="text"
+                value={fromFarmQ}
+                onChange={(e) => setFromFarmQ(e.target.value)}
+                placeholder={fromFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
+                disabled={!selectedDate || fromFarmLoading}
+                style={
+                  !selectedDate || fromFarmLoading
+                    ? { ...disabledInputStyle, marginBottom: 8 }
+                    : { ...inputStyle, marginBottom: 8 }
+                }
+              />
+
               <select
                 value={fromFarmCode}
                 onChange={handleFromFarmChange}
@@ -870,14 +917,23 @@ export default function ExportCsvPage() {
                 style={!selectedDate || fromFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
-                  {fromFarmLoading ? "กำลังโหลด..." : "เลือกฟาร์มที่คัด"}
+                  {fromFarmLoading
+                    ? "กำลังโหลด..."
+                    : filteredFromFarmOptions.length
+                    ? "เลือกฟาร์มที่คัด"
+                    : "ไม่พบฟาร์มที่คัด"}
                 </option>
-                {fromFarmOptions.map((opt) => (
+                {filteredFromFarmOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
               </select>
+
+              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+                ทั้งหมด {fromFarmOptions.length} รายการ / ตรงคำค้น {filteredFromFarmOptions.length} รายการ
+              </div>
+
               {!fromFarmLoading && selectedDate && fromFarmOptions.length === 0 ? (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   ไม่พบฟาร์มที่คัดในวันที่เลือก
@@ -889,6 +945,20 @@ export default function ExportCsvPage() {
               <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
                 ฟาร์มปลายทาง
               </div>
+
+              <input
+                type="text"
+                value={toFarmQ}
+                onChange={(e) => setToFarmQ(e.target.value)}
+                placeholder={toFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
+                disabled={!selectedDate || !fromFarmCode || toFarmLoading}
+                style={
+                  !selectedDate || !fromFarmCode || toFarmLoading
+                    ? { ...disabledInputStyle, marginBottom: 8 }
+                    : { ...inputStyle, marginBottom: 8 }
+                }
+              />
+
               <select
                 value={toFarmId}
                 onChange={handleToFarmChange}
@@ -896,14 +966,23 @@ export default function ExportCsvPage() {
                 style={!selectedDate || !fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
-                  {toFarmLoading ? "กำลังโหลด..." : "เลือกฟาร์มปลายทาง"}
+                  {toFarmLoading
+                    ? "กำลังโหลด..."
+                    : filteredToFarmOptions.length
+                    ? "เลือกฟาร์มปลายทาง"
+                    : "ไม่พบฟาร์มปลายทาง"}
                 </option>
-                {toFarmOptions.map((opt) => (
+                {filteredToFarmOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
               </select>
+
+              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
+                ทั้งหมด {toFarmOptions.length} รายการ / ตรงคำค้น {filteredToFarmOptions.length} รายการ
+              </div>
+
               {!toFarmLoading &&
               selectedDate &&
               fromFarmCode &&
