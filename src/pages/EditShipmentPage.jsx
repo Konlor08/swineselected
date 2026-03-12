@@ -116,6 +116,7 @@ export default function EditShipmentPage() {
 
   const [itemRows, setItemRows] = useState([]);
   const [selectedEditItemId, setSelectedEditItemId] = useState("");
+  const [editSwineQ, setEditSwineQ] = useState("");
   const [removedItemRows, setRemovedItemRows] = useState([]);
   const [newItemRows, setNewItemRows] = useState([]);
 
@@ -216,6 +217,7 @@ export default function EditShipmentPage() {
     setEditRemark("");
     setItemRows([]);
     setSelectedEditItemId("");
+    setEditSwineQ("");
     setRemovedItemRows([]);
     setNewItemRows([]);
     setAvailableSwines([]);
@@ -549,6 +551,7 @@ export default function EditShipmentPage() {
       setEditRemark(data.remark || "");
       setItemRows(mappedItems);
       setSelectedEditItemId(mappedItems[0]?.id || "");
+      setEditSwineQ("");
       setRemovedItemRows([]);
       setNewItemRows([]);
       setAddHouse("");
@@ -561,6 +564,7 @@ export default function EditShipmentPage() {
       setEditRemark("");
       setItemRows([]);
       setSelectedEditItemId("");
+      setEditSwineQ("");
       setRemovedItemRows([]);
       setNewItemRows([]);
       setAvailableSwines([]);
@@ -582,6 +586,29 @@ export default function EditShipmentPage() {
     );
   }
 
+  function handleEditSwineSearch(value) {
+    setEditSwineQ(value);
+
+    const q = clean(value).toLowerCase();
+    if (!q) {
+      setSelectedEditItemId(itemRows[0]?.id || "");
+      return;
+    }
+
+    const exact = itemRows.find(
+      (row) => String(row.swine_code || "").toLowerCase() === q
+    );
+    if (exact) {
+      setSelectedEditItemId(exact.id);
+      return;
+    }
+
+    const firstMatched = itemRows.find((row) =>
+      String(row.swine_code || "").toLowerCase().includes(q)
+    );
+    setSelectedEditItemId(firstMatched?.id || "");
+  }
+
   function removeExistingItem(itemId) {
     const row = itemRows.find((x) => x.id === itemId);
     if (!row) return;
@@ -599,6 +626,7 @@ export default function EditShipmentPage() {
       )
     );
     setSelectedEditItemId(nextItems[0]?.id || "");
+    setEditSwineQ("");
   }
 
   function undoRemoveExistingItem(itemId) {
@@ -682,6 +710,15 @@ export default function EditShipmentPage() {
       })
       .slice(0, 30);
   }, [availableSwines, addHouse, addSwineQ, newItemRows]);
+
+  const filteredEditItems = useMemo(() => {
+    const q = clean(editSwineQ).toLowerCase();
+    if (!q) return itemRows;
+
+    return itemRows.filter((row) =>
+      String(row.swine_code || "").toLowerCase().includes(q)
+    );
+  }, [itemRows, editSwineQ]);
 
   const selectedEditItem = useMemo(() => {
     return itemRows.find((x) => x.id === selectedEditItemId) || null;
@@ -1180,21 +1217,48 @@ export default function EditShipmentPage() {
                 </div>
               ) : (
                 <>
-                  <div>
-                    <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                      เลือกเบอร์หมูที่ต้องการแก้ไข
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      gap: 10,
+                    }}
+                  >
+                    <div>
+                      <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                        ค้นหาเบอร์หมู
+                      </div>
+                      <input
+                        value={editSwineQ}
+                        onChange={(e) => handleEditSwineSearch(e.target.value)}
+                        placeholder="พิมพ์เบอร์หมู..."
+                        style={fullInputStyle}
+                      />
                     </div>
-                    <select
-                      value={selectedEditItemId}
-                      onChange={(e) => setSelectedEditItemId(e.target.value)}
-                      style={fullInputStyle}
-                    >
-                      {itemRows.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.swine_code} | House: {row.house_no || "-"} | Flock: {row.flock || "-"}
-                        </option>
-                      ))}
-                    </select>
+
+                    <div>
+                      <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                        หรือเลือกจากรายการ
+                      </div>
+                      <select
+                        value={selectedEditItemId}
+                        onChange={(e) => {
+                          setSelectedEditItemId(e.target.value);
+                        }}
+                        style={fullInputStyle}
+                      >
+                        <option value="">เลือกเบอร์หมู</option>
+                        {filteredEditItems.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.swine_code}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="small" style={{ color: "#666" }}>
+                    พบ <b>{filteredEditItems.length}</b> รายการ
                   </div>
 
                   {selectedEditItem ? (
@@ -1219,8 +1283,9 @@ export default function EditShipmentPage() {
                             {selectedEditItem.swine_code}
                           </div>
                           <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                            House: {selectedEditItem.house_no || "-"} | Flock: {selectedEditItem.flock || "-"} |
-                            วันเกิด: {selectedEditItem.birth_date || "-"}
+                            House: {selectedEditItem.house_no || "-"} | Flock:{" "}
+                            {selectedEditItem.flock || "-"} | วันเกิด:{" "}
+                            {selectedEditItem.birth_date || "-"}
                           </div>
                         </div>
 
@@ -1279,7 +1344,11 @@ export default function EditShipmentPage() {
                         />
                       </div>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="small" style={{ color: "#666" }}>
+                      ไม่พบเบอร์หมูตามคำค้น
+                    </div>
+                  )}
                 </>
               )}
 
