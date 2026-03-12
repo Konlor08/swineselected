@@ -74,6 +74,7 @@ function sortByLabelTh(a, b) {
 
 function formatStatus(status) {
   const s = String(status || "").toLowerCase();
+  if (s === "draft") return "draft";
   if (s === "submitted") return "submitted";
   if (s === "issued") return "issued";
   return s || "-";
@@ -81,6 +82,20 @@ function formatStatus(status) {
 
 function statusBadgeStyle(status) {
   const s = String(status || "").toLowerCase();
+
+  if (s === "draft") {
+    return {
+      display: "inline-flex",
+      padding: "4px 10px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 700,
+      border: "1px solid #fde68a",
+      background: "#fffbeb",
+      color: "#92400e",
+      whiteSpace: "nowrap",
+    };
+  }
 
   if (s === "issued") {
     return {
@@ -307,7 +322,7 @@ export default function ExportCsvPage() {
         .from("swine_shipments")
         .select("from_farm_code, from_farm_name")
         .eq("selected_date", selectedDate)
-        .in("status", ["submitted", "issued"])
+        .in("status", ["draft", "submitted", "issued"])
         .order("from_farm_name", { ascending: true });
 
       query = await applyRoleFilter(query);
@@ -358,7 +373,7 @@ export default function ExportCsvPage() {
         `)
         .eq("selected_date", selectedDate)
         .eq("from_farm_code", fromFarmCode)
-        .in("status", ["submitted", "issued"])
+        .in("status", ["draft", "submitted", "issued"])
         .order("created_at", { ascending: false });
 
       query = await applyRoleFilter(query);
@@ -471,7 +486,7 @@ export default function ExportCsvPage() {
       .eq("selected_date", selectedDate)
       .eq("from_farm_code", fromFarmCode)
       .eq("to_farm_id", toFarmId)
-      .in("status", ["submitted", "issued"])
+      .in("status", ["draft", "submitted", "issued"])
       .order("created_at", { ascending: false });
 
     query = await applyRoleFilter(query);
@@ -672,7 +687,7 @@ export default function ExportCsvPage() {
           .eq("id", shipment.id)
           .eq("status", "submitted");
 
-          if (e2) throw e2;
+        if (e2) throw e2;
       }
 
       await refreshPreviewRows();
@@ -688,7 +703,13 @@ export default function ExportCsvPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [canQueryRows, fetchExportBaseData, loadFromFarmOptions, loadToFarmOptions, refreshPreviewRows]);
+  }, [
+    canQueryRows,
+    fetchExportBaseData,
+    loadFromFarmOptions,
+    loadToFarmOptions,
+    refreshPreviewRows,
+  ]);
 
   function handleDateChange(e) {
     const value = e.target.value;
@@ -743,7 +764,7 @@ export default function ExportCsvPage() {
   const previewTop100 = useMemo(() => previewRows.slice(0, 100), [previewRows]);
 
   const previewStatusCounts = useMemo(() => {
-    const counts = { submitted: 0, issued: 0 };
+    const counts = { draft: 0, submitted: 0, issued: 0 };
     const shipmentSeen = new Set();
 
     for (const row of previewRows) {
@@ -752,6 +773,7 @@ export default function ExportCsvPage() {
       shipmentSeen.add(key);
 
       const s = String(row.shipment_status || "").toLowerCase();
+      if (s === "draft") counts.draft += 1;
       if (s === "submitted") counts.submitted += 1;
       if (s === "issued") counts.issued += 1;
     }
@@ -813,7 +835,7 @@ export default function ExportCsvPage() {
                     : " — export ได้เฉพาะข้อมูลที่ตัวเองสร้าง"}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
-                  แสดงรายการสถานะ submitted และ issued
+                  แสดงรายการสถานะ draft, submitted และ issued
                 </div>
               </div>
 
@@ -840,6 +862,21 @@ export default function ExportCsvPage() {
               flexWrap: "wrap",
             }}
           >
+            <span
+              style={{
+                display: "inline-flex",
+                padding: "6px 12px",
+                borderRadius: 999,
+                fontSize: 13,
+                fontWeight: 700,
+                border: "1px solid #fde68a",
+                background: "#fffbeb",
+                color: "#92400e",
+              }}
+            >
+              draft: {previewStatusCounts.draft}
+            </span>
+
             <span
               style={{
                 display: "inline-flex",
@@ -881,7 +918,14 @@ export default function ExportCsvPage() {
             }}
           >
             <label style={{ display: "block", minWidth: 0 }}>
-              <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+              <div
+                style={{
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#334155",
+                }}
+              >
                 วันที่คัด
               </div>
               <input
@@ -893,7 +937,14 @@ export default function ExportCsvPage() {
             </label>
 
             <label style={{ display: "block", minWidth: 0 }}>
-              <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+              <div
+                style={{
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#334155",
+                }}
+              >
                 ฟาร์มที่คัด
               </div>
 
@@ -942,7 +993,14 @@ export default function ExportCsvPage() {
             </label>
 
             <label style={{ display: "block", minWidth: 0 }}>
-              <div style={{ marginBottom: 6, fontSize: 14, fontWeight: 700, color: "#334155" }}>
+              <div
+                style={{
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#334155",
+                }}
+              >
                 ฟาร์มปลายทาง
               </div>
 
@@ -983,10 +1041,7 @@ export default function ExportCsvPage() {
                 ทั้งหมด {toFarmOptions.length} รายการ / ตรงคำค้น {filteredToFarmOptions.length} รายการ
               </div>
 
-              {!toFarmLoading &&
-              selectedDate &&
-              fromFarmCode &&
-              toFarmOptions.length === 0 ? (
+              {!toFarmLoading && selectedDate && fromFarmCode && toFarmOptions.length === 0 ? (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   ไม่พบฟาร์มปลายทางจากเงื่อนไขที่เลือก
                 </div>
