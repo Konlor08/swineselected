@@ -216,7 +216,7 @@ export default function ExportCsvPage() {
 
   const [msg, setMsg] = useState("");
 
-  const [myProfile, setMyProfile] = useState(null);
+  const [, setMyProfile] = useState(null);
   const [myRole, setMyRole] = useState("");
 
   const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
@@ -274,22 +274,6 @@ export default function ExportCsvPage() {
       ignore = true;
     };
   }, []);
-
-  useEffect(() => {
-    if (!canUsePage || !selectedDate) {
-      setFromFarmOptions([]);
-      return;
-    }
-    loadFromFarmOptions();
-  }, [canUsePage, loadFromFarmOptions, selectedDate]);
-
-  useEffect(() => {
-    if (!canUsePage || !selectedDate || !fromFarmCode) {
-      setToFarmOptions([]);
-      return;
-    }
-    loadToFarmOptions();
-  }, [canUsePage, fromFarmCode, loadToFarmOptions, selectedDate]);
 
   async function getCurrentUserId() {
     const {
@@ -407,6 +391,22 @@ export default function ExportCsvPage() {
       setToFarmLoading(false);
     }
   }, [applyRoleFilter, fromFarmCode, selectedDate]);
+
+  useEffect(() => {
+    if (!canUsePage || !selectedDate) {
+      setFromFarmOptions([]);
+      return;
+    }
+    loadFromFarmOptions();
+  }, [canUsePage, selectedDate, loadFromFarmOptions]);
+
+  useEffect(() => {
+    if (!canUsePage || !selectedDate || !fromFarmCode) {
+      setToFarmOptions([]);
+      return;
+    }
+    loadToFarmOptions();
+  }, [canUsePage, selectedDate, fromFarmCode, loadToFarmOptions]);
 
   async function loadSwineMapByCodes(swineCodes) {
     const uniqueCodes = Array.from(
@@ -678,13 +678,7 @@ export default function ExportCsvPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [
-    applyRoleFilter,
-    canQueryRows,
-    fetchExportBaseData,
-    loadFromFarmOptions,
-    loadToFarmOptions,
-  ]);
+  }, [canQueryRows, fetchExportBaseData, loadFromFarmOptions, loadToFarmOptions, refreshPreviewRows]);
 
   function handleDateChange(e) {
     const value = e.target.value;
