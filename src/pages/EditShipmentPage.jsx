@@ -115,6 +115,7 @@ export default function EditShipmentPage() {
   const [editRemark, setEditRemark] = useState("");
 
   const [itemRows, setItemRows] = useState([]);
+  const [selectedEditItemId, setSelectedEditItemId] = useState("");
   const [removedItemRows, setRemovedItemRows] = useState([]);
   const [newItemRows, setNewItemRows] = useState([]);
 
@@ -176,6 +177,18 @@ export default function EditShipmentPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUsePage, filterDate, filterFromFarmCode, myRole]);
 
+  useEffect(() => {
+    if (!itemRows.length) {
+      setSelectedEditItemId("");
+      return;
+    }
+
+    setSelectedEditItemId((prev) => {
+      if (prev && itemRows.some((x) => x.id === prev)) return prev;
+      return itemRows[0].id;
+    });
+  }, [itemRows]);
+
   async function getCurrentUserId() {
     const {
       data: { user },
@@ -202,6 +215,7 @@ export default function EditShipmentPage() {
     setShipmentHeader(null);
     setEditRemark("");
     setItemRows([]);
+    setSelectedEditItemId("");
     setRemovedItemRows([]);
     setNewItemRows([]);
     setAvailableSwines([]);
@@ -534,6 +548,7 @@ export default function EditShipmentPage() {
       setShipmentHeader(data);
       setEditRemark(data.remark || "");
       setItemRows(mappedItems);
+      setSelectedEditItemId(mappedItems[0]?.id || "");
       setRemovedItemRows([]);
       setNewItemRows([]);
       setAddHouse("");
@@ -545,6 +560,7 @@ export default function EditShipmentPage() {
       setShipmentHeader(null);
       setEditRemark("");
       setItemRows([]);
+      setSelectedEditItemId("");
       setRemovedItemRows([]);
       setNewItemRows([]);
       setAvailableSwines([]);
@@ -574,12 +590,15 @@ export default function EditShipmentPage() {
       return;
     }
 
-    setItemRows((prev) => prev.filter((x) => x.id !== itemId));
+    const nextItems = itemRows.filter((x) => x.id !== itemId);
+
+    setItemRows(nextItems);
     setRemovedItemRows((prev) =>
       [...prev, row].sort((a, b) =>
         String(a.swine_code || "").localeCompare(String(b.swine_code || ""))
       )
     );
+    setSelectedEditItemId(nextItems[0]?.id || "");
   }
 
   function undoRemoveExistingItem(itemId) {
@@ -663,6 +682,10 @@ export default function EditShipmentPage() {
       })
       .slice(0, 30);
   }, [availableSwines, addHouse, addSwineQ, newItemRows]);
+
+  const selectedEditItem = useMemo(() => {
+    return itemRows.find((x) => x.id === selectedEditItemId) || null;
+  }, [itemRows, selectedEditItemId]);
 
   async function handleSaveChanges() {
     if (!shipmentHeader?.id) {
@@ -1156,10 +1179,26 @@ export default function EditShipmentPage() {
                   ยังไม่มีหมูใน shipment นี้
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: 10 }}>
-                  {itemRows.map((row) => (
+                <>
+                  <div>
+                    <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                      เลือกเบอร์หมูที่ต้องการแก้ไข
+                    </div>
+                    <select
+                      value={selectedEditItemId}
+                      onChange={(e) => setSelectedEditItemId(e.target.value)}
+                      style={fullInputStyle}
+                    >
+                      {itemRows.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {row.swine_code} | House: {row.house_no || "-"} | Flock: {row.flock || "-"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedEditItem ? (
                     <div
-                      key={row.id}
                       style={{
                         border: "1px solid #e5e7eb",
                         borderRadius: 14,
@@ -1177,18 +1216,18 @@ export default function EditShipmentPage() {
                       >
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                            {row.swine_code}
+                            {selectedEditItem.swine_code}
                           </div>
                           <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                            House: {row.house_no || "-"} | Flock: {row.flock || "-"} |
-                            วันเกิด: {row.birth_date || "-"}
+                            House: {selectedEditItem.house_no || "-"} | Flock: {selectedEditItem.flock || "-"} |
+                            วันเกิด: {selectedEditItem.birth_date || "-"}
                           </div>
                         </div>
 
                         <button
                           className="linkbtn"
                           type="button"
-                          onClick={() => removeExistingItem(row.id)}
+                          onClick={() => removeExistingItem(selectedEditItem.id)}
                         >
                           ลบออกจาก shipment
                         </button>
@@ -1203,36 +1242,36 @@ export default function EditShipmentPage() {
                         }}
                       >
                         <input
-                          value={row.teats_left}
+                          value={selectedEditItem.teats_left}
                           onChange={(e) =>
-                            setExistingField(row.id, "teats_left", e.target.value)
+                            setExistingField(selectedEditItem.id, "teats_left", e.target.value)
                           }
                           placeholder="เต้าซ้าย"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
-                          value={row.teats_right}
+                          value={selectedEditItem.teats_right}
                           onChange={(e) =>
-                            setExistingField(row.id, "teats_right", e.target.value)
+                            setExistingField(selectedEditItem.id, "teats_right", e.target.value)
                           }
                           placeholder="เต้าขวา"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
-                          value={row.backfat}
+                          value={selectedEditItem.backfat}
                           onChange={(e) =>
-                            setExistingField(row.id, "backfat", e.target.value)
+                            setExistingField(selectedEditItem.id, "backfat", e.target.value)
                           }
                           placeholder="Backfat"
                           inputMode="decimal"
                           style={smallInputStyle}
                         />
                         <input
-                          value={row.weight}
+                          value={selectedEditItem.weight}
                           onChange={(e) =>
-                            setExistingField(row.id, "weight", e.target.value)
+                            setExistingField(selectedEditItem.id, "weight", e.target.value)
                           }
                           placeholder="น้ำหนัก"
                           inputMode="decimal"
@@ -1240,8 +1279,8 @@ export default function EditShipmentPage() {
                         />
                       </div>
                     </div>
-                  ))}
-                </div>
+                  ) : null}
+                </>
               )}
 
               {removedItemRows.length > 0 ? (
