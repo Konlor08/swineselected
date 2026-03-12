@@ -80,6 +80,7 @@ export default function ExportCsvPage() {
   const [toFarmLoading, setToFarmLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const [msg, setMsg] = useState("");
 
@@ -94,7 +95,7 @@ export default function ExportCsvPage() {
   const [toFarmOptions, setToFarmOptions] = useState([]);
   const [previewRows, setPreviewRows] = useState([]);
 
-  const canUsePage = myRole === "admin" || myRole === "user";
+  const canUsePage = ["admin", "user"].includes(String(myRole).toLowerCase());
   const canQueryRows = Boolean(selectedDate && fromFarmCode && toFarmId);
 
   useEffect(() => {
@@ -105,14 +106,31 @@ export default function ExportCsvPage() {
       setMsg("");
 
       try {
-        const profile = await fetchMyProfile();
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        const uid = data?.session?.user?.id;
+        if (!uid) {
+          if (!ignore) {
+            setMyProfile(null);
+            setMyRole("");
+            setMsg("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
+          }
+          return;
+        }
+
+        const profile = await fetchMyProfile(uid);
         if (ignore) return;
 
         setMyProfile(profile || null);
-        setMyRole(profile?.role || "");
+        setMyRole(String(profile?.role || "").toLowerCase());
       } catch (e) {
         console.error("init ExportCsvPage error:", e);
-        if (!ignore) setMsg(e.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+        if (!ignore) {
+          setMyProfile(null);
+          setMyRole("");
+          setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+        }
       } finally {
         if (!ignore) setPageLoading(false);
       }
@@ -199,7 +217,7 @@ export default function ExportCsvPage() {
     } catch (e) {
       console.error("loadFromFarmOptions error:", e);
       setFromFarmOptions([]);
-      setMsg(e.message || "โหลดรายการฟาร์มที่คัดไม่สำเร็จ");
+      setMsg(e?.message || "โหลดรายการฟาร์มที่คัดไม่สำเร็จ");
     } finally {
       setFromFarmLoading(false);
     }
@@ -251,7 +269,7 @@ export default function ExportCsvPage() {
     } catch (e) {
       console.error("loadToFarmOptions error:", e);
       setToFarmOptions([]);
-      setMsg(e.message || "โหลดรายการฟาร์มปลายทางไม่สำเร็จ");
+      setMsg(e?.message || "โหลดรายการฟาร์มปลายทางไม่สำเร็จ");
     } finally {
       setToFarmLoading(false);
     }
@@ -382,7 +400,7 @@ export default function ExportCsvPage() {
     } catch (e) {
       console.error("handlePreview error:", e);
       setPreviewRows([]);
-      setMsg(e.message || "โหลดตัวอย่างข้อมูลไม่สำเร็จ");
+      setMsg(e?.message || "โหลดตัวอย่างข้อมูลไม่สำเร็จ");
     } finally {
       setPreviewLoading(false);
     }
@@ -407,14 +425,14 @@ export default function ExportCsvPage() {
         "วันที่คัด": r.selected_date,
         "ฟาร์มที่คัด": r.from_farm_name,
         "โรงเรือน": r.house_no,
-        "flock": r.flock,
+        flock: r.flock,
         "ฟาร์มปลายทาง": r.to_farm_name,
         "เบอร์หมู": r.swine_code,
         "วันเกิด": r.birth_date,
         "อายุ(วัน)": r.age_days,
         "เต้าซ้าย": r.teats_left,
         "เต้าขวา": r.teats_right,
-        "backfat": r.backfat,
+        backfat: r.backfat,
         "น้ำหนัก": r.weight,
         "หมายเหตุ": r.remark,
       }));
@@ -430,9 +448,122 @@ export default function ExportCsvPage() {
       setMsg(`Export สำเร็จ ${exportRows.length} รายการ`);
     } catch (e) {
       console.error("handleExport error:", e);
-      setMsg(e.message || "Export CSV ไม่สำเร็จ");
+      setMsg(e?.message || "Export CSV ไม่สำเร็จ");
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function handleSubmitConfirm() {
+    if (!canQueryRows) return;
+
+    const ok = window.confirm(
+      "ยืนยัน Submit ใช่หรือไม่\nระบบจะเปลี่ยน shipment จาก submitted เป็น issued และยืนยันสถานะหมูทั้งหมดเป็น issued"
+    );
+    if (!ok) return;
+
+    setSubmitting(true);
+    setMsg("");
+
+    try {
+      const { shipments } = await fetchExportBaseData();
+
+      if (!shipments.length) {
+        setMsg("ไม่พบ shipment สถานะ submitted สำหรับยืนยัน");
+        return;
+      }
+
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError) throw authError;
+      if (!user?.id) throw new Error("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
+
+      const nowIso = new Date().toISOString();
+      let totalSwines = 0;
+
+      for (const shipment of shipments) {
+        const codes = (shipment.items || [])
+          .map((x) => String(x?.swine_code || "").trim())
+          .filter(Boolean);
+
+        totalSwines += codes.length;
+
+        if (codes.length) {
+          const { error: e1 } = await supabase
+            .from("swine_master")
+            .update({
+              delivery_state: "issued",
+              issued_shipment_id: shipment.id,
+              issued_at: nowIso,
+              issued_by: user.id,
+            })
+            .in("swine_code", codes);
+
+          if (e1) throw e1;
+        }
+
+        const { error: e2 } = await supabase
+          .from("swine_shipments")
+          .update({
+            status: "issued",
+            issued_at: nowIso,
+            issued_by: user.id,
+          })
+          .eq("id", shipment.id)
+          .eq("status", "submitted");
+
+        if (e2) throw e2;
+      }
+
+      setPreviewRows([]);
+      setMsg(
+        `Submit สำเร็จ ${shipments.length} shipment และยืนยันสถานะหมู ${totalSwines} ตัว เป็น issued แล้ว`
+      );
+
+      await loadFromFarmOptions();
+
+      let query = supabase
+        .from("swine_shipments")
+        .select(`
+          to_farm_id,
+          to_farm:swine_farms!swine_shipments_to_farm_id_fkey (
+            id,
+            farm_code,
+            farm_name
+          )
+        `)
+        .eq("selected_date", selectedDate)
+        .eq("from_farm_code", fromFarmCode)
+        .eq("status", "submitted")
+        .order("created_at", { ascending: false });
+
+      query = await applyRoleFilter(query);
+      const { data } = await query;
+
+      const map = new Map();
+      for (const row of data || []) {
+        const id = String(row?.to_farm_id || "").trim();
+        const farmCode = String(row?.to_farm?.farm_code || "").trim();
+        const farmName = String(row?.to_farm?.farm_name || "").trim();
+        if (!id) continue;
+        if (!map.has(id)) {
+          map.set(id, {
+            value: id,
+            label: farmCode ? `${farmCode} - ${farmName}` : farmName || id,
+            farm_code: farmCode,
+            farm_name: farmName,
+          });
+        }
+      }
+      setToFarmOptions(Array.from(map.values()).sort(sortByLabelTh));
+    } catch (e) {
+      console.error("handleSubmitConfirm error:", e);
+      setMsg(e?.message || "Submit ไม่สำเร็จ");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -596,7 +727,7 @@ export default function ExportCsvPage() {
             <button
               type="button"
               onClick={handlePreview}
-              disabled={!canQueryRows || previewLoading}
+              disabled={!canQueryRows || previewLoading || exporting || submitting}
               className="rounded-xl border border-slate-300 px-4 py-2 text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {previewLoading ? "กำลังโหลด..." : "แสดงข้อมูล"}
@@ -605,10 +736,19 @@ export default function ExportCsvPage() {
             <button
               type="button"
               onClick={handleExport}
-              disabled={!canQueryRows || exporting}
+              disabled={!canQueryRows || exporting || previewLoading || submitting}
               className="rounded-xl bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {exporting ? "กำลัง Export..." : "Export CSV"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSubmitConfirm}
+              disabled={!canQueryRows || submitting || previewLoading || exporting}
+              className="rounded-xl bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {submitting ? "กำลัง Submit..." : "Submit"}
             </button>
           </div>
 
