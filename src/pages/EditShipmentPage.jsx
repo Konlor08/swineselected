@@ -1,6 +1,6 @@
 // src/pages/EditShipmentPage.jsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
@@ -200,16 +200,19 @@ export default function EditShipmentPage() {
     return user?.id || null;
   }
 
-  async function applyRoleFilter(query) {
-    if (myRole === "admin") return query;
+  const applyRoleFilter = useCallback(
+    async (query) => {
+      if (myRole === "admin") return query;
 
-    const uid = await getCurrentUserId();
-    if (!uid) {
-      return query.eq("created_by", "__no_user__");
-    }
+      const uid = await getCurrentUserId();
+      if (!uid) {
+        return query.eq("created_by", "__no_user__");
+      }
 
-    return query.eq("created_by", uid);
-  }
+      return query.eq("created_by", uid);
+    },
+    [myRole]
+  );
 
   function clearEditor() {
     setSelectedShipmentId("");

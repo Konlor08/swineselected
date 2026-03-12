@@ -72,22 +72,20 @@ export default function UserDashboardPage() {
     }
   }, [busy, input]);
 
-  async function logout(e) {
+  const logout = useCallback(async (e) => {
     try {
       e?.preventDefault?.();
       void supabase.auth.signOut({ scope: "local" });
       try {
-        for (const k of Object.keys(localStorage)) {
-          if (k.startsWith("sb-")) localStorage.removeItem(k);
-        }
-        for (const k of Object.keys(sessionStorage)) {
-          if (k.startsWith("sb-")) sessionStorage.removeItem(k);
-        }
-      } catch {}
+        for (const k of Object.keys(localStorage)) if (k.startsWith("sb-")) localStorage.removeItem(k);
+        for (const k of Object.keys(sessionStorage)) if (k.startsWith("sb-")) sessionStorage.removeItem(k);
+      } catch {
+        // ignore cleanup errors
+      }
     } finally {
       window.location.href = `${window.location.origin}/login`;
     }
-  }
+  }, []);
 
   return (
     <div className="page">

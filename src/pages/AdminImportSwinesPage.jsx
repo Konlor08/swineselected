@@ -1,6 +1,6 @@
 // src/pages/AdminImportSwinesPage.jsx
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { supabase } from "../lib/supabase";
@@ -186,7 +186,7 @@ export default function AdminImportSwinesPage() {
     return { total: rows.length, bad: bad.length, hasFarm, hasHouse, hasBirth };
   }, [rows, bad]);
 
-  async function onPickFileAB(e) {
+  const onPickFileAB = useCallback(async (e) => {
     setMsg("");
     setRows([]);
     setBad([]);
@@ -244,9 +244,9 @@ export default function AdminImportSwinesPage() {
       setBusy(false);
       e.target.value = "";
     }
-  }
+  }, []);
 
-  async function onImport() {
+  const onImport = useCallback(async () => {
     if (!rows.length || busy) return;
 
     setBusy(true);
@@ -289,7 +289,7 @@ export default function AdminImportSwinesPage() {
     } finally {
       setBusy(false);
     }
-  }
+  }, [busy, rows]);
 
   return (
     <div className="page">

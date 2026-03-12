@@ -1,6 +1,6 @@
 // src/pages/ExportCsvPage.jsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
@@ -281,8 +281,7 @@ export default function ExportCsvPage() {
       return;
     }
     loadFromFarmOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUsePage, myRole, selectedDate]);
+  }, [canUsePage, loadFromFarmOptions, selectedDate]);
 
   useEffect(() => {
     if (!canUsePage || !selectedDate || !fromFarmCode) {
@@ -290,8 +289,7 @@ export default function ExportCsvPage() {
       return;
     }
     loadToFarmOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUsePage, myRole, selectedDate, fromFarmCode]);
+  }, [canUsePage, fromFarmCode, loadToFarmOptions, selectedDate]);
 
   async function getCurrentUserId() {
     const {
@@ -303,16 +301,19 @@ export default function ExportCsvPage() {
     return user?.id || null;
   }
 
-  async function applyRoleFilter(query) {
-    if (myRole === "admin") return query;
+  const applyRoleFilter = useCallback(
+    async (query) => {
+      if (myRole === "admin") return query;
 
-    const userId = await getCurrentUserId();
-    if (!userId) return query.eq("created_by", "__no_user__");
+      const userId = await getCurrentUserId();
+      if (!userId) return query.eq("created_by", "__no_user__");
 
-    return query.eq("created_by", userId);
-  }
+      return query.eq("created_by", userId);
+    },
+    [myRole]
+  );
 
-  async function loadFromFarmOptions() {
+  const loadFromFarmOptions = useCallback(async () => {
     setFromFarmLoading(true);
 
     try {
@@ -353,9 +354,9 @@ export default function ExportCsvPage() {
     } finally {
       setFromFarmLoading(false);
     }
-  }
+  }, [applyRoleFilter, selectedDate]);
 
-  async function loadToFarmOptions() {
+  const loadToFarmOptions = useCallback(async () => {
     setToFarmLoading(true);
 
     try {
@@ -405,7 +406,7 @@ export default function ExportCsvPage() {
     } finally {
       setToFarmLoading(false);
     }
-  }
+  }, [applyRoleFilter, fromFarmCode, selectedDate]);
 
   async function loadSwineMapByCodes(swineCodes) {
     const uniqueCodes = Array.from(
@@ -438,7 +439,7 @@ export default function ExportCsvPage() {
     return map;
   }
 
-  async function fetchExportBaseData() {
+  const fetchExportBaseData = useCallback(async () => {
     let query = supabase
       .from("swine_shipments")
       .select(`
@@ -486,7 +487,7 @@ export default function ExportCsvPage() {
     const swineMap = await loadSwineMapByCodes(allCodes);
 
     return { shipments: data || [], swineMap };
-  }
+  }, [applyRoleFilter, fromFarmCode, selectedDate, toFarmId]);
 
   function buildFlatRows(shipments, swineMap) {
     const rows = [];
@@ -520,14 +521,14 @@ export default function ExportCsvPage() {
     return rows;
   }
 
-  async function refreshPreviewRows() {
+  const refreshPreviewRows = useCallback(async () => {
     const { shipments, swineMap } = await fetchExportBaseData();
     const rows = buildFlatRows(shipments, swineMap);
     setPreviewRows(rows);
     return { shipments, rows };
-  }
+  }, [fetchExportBaseData]);
 
-  async function handlePreview() {
+  const handlePreview = useCallback(async () => {
     if (!canQueryRows) return;
 
     setPreviewLoading(true);
@@ -546,9 +547,9 @@ export default function ExportCsvPage() {
     } finally {
       setPreviewLoading(false);
     }
-  }
+  }, [canQueryRows, refreshPreviewRows]);
 
-  async function handleExport() {
+  const handleExport = useCallback(async () => {
     if (!canQueryRows) return;
 
     setExporting(true);
@@ -595,9 +596,9 @@ export default function ExportCsvPage() {
     } finally {
       setExporting(false);
     }
-  }
+  }, [canQueryRows, fetchExportBaseData, fromFarmCode, fromFarmOptions, selectedDate, toFarmId, toFarmOptions]);
 
-  async function handleSubmitConfirm() {
+  const handleSubmitConfirm = useCallback(async () => {
     if (!canQueryRows) return;
 
     const ok = window.confirm(
@@ -677,7 +678,13 @@ export default function ExportCsvPage() {
     } finally {
       setSubmitting(false);
     }
-  }
+  }, [
+    applyRoleFilter,
+    canQueryRows,
+    fetchExportBaseData,
+    loadFromFarmOptions,
+    loadToFarmOptions,
+  ]);
 
   function handleDateChange(e) {
     const value = e.target.value;

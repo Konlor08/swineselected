@@ -1,6 +1,6 @@
 // src/App.jsx
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
 import { fetchMyProfile } from "./lib/profile";
@@ -40,6 +40,7 @@ function Splash() {
 function RequireRole({ roleAllow, children }) {
   const [loading, setLoading] = useState(true);
   const [ok, setOk] = useState(false);
+  const allowSet = useMemo(() => new Set(roleAllow.map((r) => String(r).toLowerCase())), [roleAllow]);
 
   useEffect(() => {
     let alive = true;
@@ -81,7 +82,7 @@ function RequireRole({ roleAllow, children }) {
 
         const r = String(profile.role || "user").toLowerCase();
         if (alive) {
-          setOk(roleAllow.includes(r));
+          setOk(allowSet.has(r));
           setLoading(false);
         }
       } catch {
@@ -101,7 +102,7 @@ function RequireRole({ roleAllow, children }) {
       alive = false;
       sub?.subscription?.unsubscribe?.();
     };
-  }, [roleAllow]);
+  }, [allowSet]);
 
   if (loading) return <Splash />;
   if (!ok) return <Navigate to="/login" replace />;

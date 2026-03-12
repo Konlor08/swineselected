@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
 
@@ -17,7 +17,7 @@ export default function ShipmentCreatePage() {
     return !!fromFarmId && !!toFarmId && !isSame;
   }, [fromFarmId, toFarmId, isSame]);
 
-  async function saveDraft() {
+  const saveDraft = useCallback(async () => {
     if (!canSave) {
       alert("กรุณาเลือกฟาร์มต้นทางและปลายทางให้ครบ และห้ามซ้ำกัน");
       return;
@@ -58,7 +58,7 @@ export default function ShipmentCreatePage() {
     } finally {
       setSaving(false);
     }
-  }
+  }, [canSave, fromFarmId, remark, toFarmId]);
 
   return (
     <div style={{ padding: 16, display: "grid", gap: 14 }}>

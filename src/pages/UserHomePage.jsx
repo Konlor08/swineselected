@@ -1,6 +1,6 @@
 // src/pages/UserHomePage.jsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
@@ -349,7 +349,7 @@ export default function UserHomePage() {
       .slice(0, 50);
   }, [swineOptions, selectedHouse, swineQ, availableSwineCodeSet]);
 
-  function handleSelectFromFarm(farm) {
+  const handleSelectFromFarm = useCallback((farm) => {
     setFromFarm(farm);
     setSelectedHouse("");
     setSwineQ("");
@@ -358,17 +358,17 @@ export default function UserHomePage() {
     setSelectedSwineIds(new Set());
     setSwineForm({});
     setMsg("");
-  }
+  }, []);
 
-  function handleHouseChange(value) {
+  const handleHouseChange = useCallback((value) => {
     setSelectedHouse(value);
     setSwineQ("");
     setSelectedSwineIds(new Set());
     setSwineForm({});
     setMsg("");
-  }
+  }, []);
 
-  function toggleSwine(id) {
+  const toggleSwine = useCallback((id) => {
     setSelectedSwineIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -379,14 +379,14 @@ export default function UserHomePage() {
       }
       return next;
     });
-  }
+  }, []);
 
-  function setSwineField(swine_id, field, value) {
+  const setSwineField = useCallback((swine_id, field, value) => {
     setSwineForm((prev) => {
       const cur = prev[swine_id] || {};
       return { ...prev, [swine_id]: { ...cur, [field]: value } };
     });
-  }
+  }, []);
 
   const canSave = useMemo(() => {
     return (
@@ -398,7 +398,7 @@ export default function UserHomePage() {
     );
   }, [selectedDate, fromFarm, selectedToFarmId, selectedHouse, selectedSwineIds]);
 
-  async function logout(e) {
+  const logout = useCallback(async (e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
     setMsg("");
@@ -410,16 +410,14 @@ export default function UserHomePage() {
     }
 
     try {
-      for (const k of Object.keys(localStorage)) {
-        if (k.startsWith("sb-")) localStorage.removeItem(k);
-      }
-      for (const k of Object.keys(sessionStorage)) {
-        if (k.startsWith("sb-")) sessionStorage.removeItem(k);
-      }
-    } catch {}
+      for (const k of Object.keys(localStorage)) if (k.startsWith("sb-")) localStorage.removeItem(k);
+      for (const k of Object.keys(sessionStorage)) if (k.startsWith("sb-")) sessionStorage.removeItem(k);
+    } catch {
+      // ignore storage cleanup failures
+    }
 
     window.location.replace(`/login?logout=1&ts=${Date.now()}`);
-  }
+  }, []);
 
   async function saveDraft() {
     if (!canSave) {

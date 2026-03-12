@@ -1,6 +1,6 @@
 // src/pages/LoginPage.jsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 
@@ -61,75 +61,81 @@ export default function LoginPage() {
     return `${u}@swine.local`;
   }, [username]);
 
-  async function onLogin(e) {
-    e?.preventDefault?.();
-    if (busy) return;
+  const onLogin = useCallback(
+    async (e) => {
+      e?.preventDefault?.();
+      if (busy) return;
 
-    setMsg("");
-    const u = clean(username);
-    const p = String(password ?? "");
+      setMsg("");
+      const u = clean(username);
+      const p = String(password ?? "");
 
-    if (u.length < 3 || u.length > 20) {
-      setMsg("Username ต้องยาว 3-20 ตัวอักษร");
-      return;
-    }
-    if (p.length < 6) {
-      setMsg("Password อย่างน้อย 6 ตัวอักษร");
-      return;
-    }
+      if (u.length < 3 || u.length > 20) {
+        setMsg("Username ต้องยาว 3-20 ตัวอักษร");
+        return;
+      }
+      if (p.length < 6) {
+        setMsg("Password อย่างน้อย 6 ตัวอักษร");
+        return;
+      }
 
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password: p,
-      });
-      if (error) throw error;
+      setBusy(true);
+      try {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password: p,
+        });
+        if (error) throw error;
 
-      nav("/", { replace: true });
-    } catch (err) {
-      setMsg(err?.message || "Login ไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
-  }
+        nav("/", { replace: true });
+      } catch (err) {
+        setMsg(err?.message || "Login ไม่สำเร็จ");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, email, nav, password, username]
+  );
 
-  async function onRegister(e) {
-    e?.preventDefault?.();
-    if (busy) return;
+  const onRegister = useCallback(
+    async (e) => {
+      e?.preventDefault?.();
+      if (busy) return;
 
-    setMsg("");
-    const u = clean(username);
-    const p = String(password ?? "");
+      setMsg("");
+      const u = clean(username);
+      const p = String(password ?? "");
 
-    if (u.length < 3 || u.length > 20) {
-      setMsg("Username ต้องยาว 3-20 ตัวอักษร");
-      return;
-    }
-    if (!/^[a-zA-Z0-9_]+$/.test(u)) {
-      setMsg("Username ใช้ได้เฉพาะ a-z A-Z 0-9 _");
-      return;
-    }
-    if (p.length < 6) {
-      setMsg("Password อย่างน้อย 6 ตัวอักษร");
-      return;
-    }
+      if (u.length < 3 || u.length > 20) {
+        setMsg("Username ต้องยาว 3-20 ตัวอักษร");
+        return;
+      }
+      if (!/^[a-zA-Z0-9_]+$/.test(u)) {
+        setMsg("Username ใช้ได้เฉพาะ a-z A-Z 0-9 _");
+        return;
+      }
+      if (p.length < 6) {
+        setMsg("Password อย่างน้อย 6 ตัวอักษร");
+        return;
+      }
 
-    setBusy(true);
-    try {
-      const { error } = await supabase.auth.signUp({
-        email,
-        password: p,
-      });
-      if (error) throw error;
+      setBusy(true);
+      try {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password: p,
+        });
+        if (error) throw error;
 
-      setMsg("✅ Register สำเร็จ (ถ้าเปิด confirm email ไว้ อาจต้องยืนยันก่อน)");
-    } catch (err) {
-      setMsg(err?.message || "Register ไม่สำเร็จ");
-    } finally {
-      setBusy(false);
-    }
-  }
+        setMsg("✅ Register สำเร็จ (ถ้าเปิด confirm email ไว้ อาจต้องยืนยันก่อน)");
+      } catch (err) {
+        setMsg(err?.message || "Register ไม่สำเร็จ");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, email, password, username]
+  );
 
   const activeBtnStyle = (active) => ({
     flex: 1,

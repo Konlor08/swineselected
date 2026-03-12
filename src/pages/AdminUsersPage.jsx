@@ -1,6 +1,6 @@
 // src/pages/AdminUsersPage.jsx
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 
@@ -109,79 +109,88 @@ export default function AdminUsersPage() {
     });
   }, [profiles, q]);
 
-  function setDraftField(user_id, key, value) {
+  const setDraftField = useCallback((user_id, key, value) => {
     setDraft((prev) => ({
       ...prev,
       [user_id]: { ...(prev[user_id] || {}), [key]: value },
     }));
     setRowErr((prev) => ({ ...prev, [user_id]: "" }));
-  }
+  }, []);
 
-  function resetRow(user_id) {
-    const p = profiles.find((x) => x.user_id === user_id);
-    if (!p) return;
+  const resetRow = useCallback(
+    (user_id) => {
+      const p = profiles.find((x) => x.user_id === user_id);
+      if (!p) return;
 
-    setDraft((prev) => ({
-      ...prev,
-      [user_id]: {
-        role: lower(p.role || "user"),
-        team_name: clean(p.team_name || ""),
-        is_active: p.is_active !== false,
-        branch_id: p.branch_id || "",
-      },
-    }));
+      setDraft((prev) => ({
+        ...prev,
+        [user_id]: {
+          role: lower(p.role || "user"),
+          team_name: clean(p.team_name || ""),
+          is_active: p.is_active !== false,
+          branch_id: p.branch_id || "",
+        },
+      }));
 
-    setRowErr((prev) => ({ ...prev, [user_id]: "" }));
-  }
+      setRowErr((prev) => ({ ...prev, [user_id]: "" }));
+    },
+    [profiles]
+  );
 
-  async function saveRow(user_id) {
-    const d = draft[user_id];
-    if (!d) return;
+  const saveRow = useCallback(
+    async (user_id) => {
+      const d = draft[user_id];
+      if (!d) return;
 
-    const role = lower(d.role);
-    if (!ROLE_OPTIONS.includes(role)) {
-      setRowErr((prev) => ({ ...prev, [user_id]: "role ไม่ถูกต้อง" }));
-      return;
-    }
+      const role = lower(d.role);
+      if (!ROLE_OPTIONS.includes(role)) {
+        setRowErr((prev) => ({ ...prev, [user_id]: "role ไม่ถูกต้อง" }));
+        return;
+      }
 
-    setSaving((prev) => ({ ...prev, [user_id]: true }));
-    setRowErr((prev) => ({ ...prev, [user_id]: "" }));
+      setSaving((prev) => ({ ...prev, [user_id]: true }));
+      setRowErr((prev) => ({ ...prev, [user_id]: "" }));
 
-    try {
-      const payload = {
-        role,
-        team_name: clean(d.team_name || "") || null,
-        is_active: d.is_active === true,
-        branch_id: clean(d.branch_id || "") || null,
-      };
+      try {
+        const payload = {
+          role,
+          team_name: clean(d.team_name || "") || null,
+          is_active: d.is_active === true,
+          branch_id: clean(d.branch_id || "") || null,
+        };
 
-      const { error } = await supabase.from("profiles").update(payload).eq("user_id", user_id);
-      if (error) throw error;
+        const { error } = await supabase.from("profiles").update(payload).eq("user_id", user_id);
+        if (error) throw error;
 
-      setProfiles((prev) =>
-        prev.map((p) =>
-          p.user_id === user_id
-            ? {
-                ...p,
-                role: payload.role,
-                team_name: payload.team_name,
-                is_active: payload.is_active,
-                branch_id: payload.branch_id,
-              }
-            : p
-        )
-      );
-    } catch (e) {
-      setRowErr((prev) => ({ ...prev, [user_id]: e?.message || String(e) }));
-    } finally {
-      setSaving((prev) => ({ ...prev, [user_id]: false }));
-    }
-  }
+        setProfiles((prev) =>
+          prev.map((p) =>
+            p.user_id === user_id
+              ? {
+                  ...p,
+                  role: payload.role,
+                  team_name: payload.team_name,
+                  is_active: payload.is_active,
+                  branch_id: payload.branch_id,
+                }
+              : p
+          )
+        );
+      } catch (e) {
+        setRowErr((prev) => ({ ...prev, [user_id]: e?.message || String(e) }));
+      } finally {
+        setSaving((prev) => ({ ...prev, [user_id]: false }));
+      }
+    },
+    [draft]
+  );
 
-  async function quickDisable(user_id, nextActive) {
-    setDraftField(user_id, "is_active", nextActive);
-    await saveRow(user_id);
-  }
+  const quickDisable = useCallback(
+    async (user_id, nextActive) => {
+      setDraftField(user_id, "is_active", nextActive);
+      await saveRow(user_id);
+    },
+    [saveRow, setDraftField]
+  );
 
   const thStyle = {
     textAlign: "left",

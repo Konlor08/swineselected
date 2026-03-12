@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import { supabase } from "../lib/supabase";
@@ -45,7 +45,7 @@ export default function AdminImportMasterFarmsPage() {
 
   const preview = useMemo(() => rows.slice(0, 50), [rows]);
 
-  async function onPickFile(e) {
+  const onPickFile = useCallback(async (e) => {
     setMsg("");
     setRows([]);
     setBad([]);
@@ -86,9 +86,9 @@ export default function AdminImportMasterFarmsPage() {
       setBusy(false);
       e.target.value = "";
     }
-  }
+  }, []);
 
-  async function onImport() {
+  const onImport = useCallback(async () => {
     if (!rows.length) return;
 
     setBusy(true);
@@ -107,7 +107,7 @@ export default function AdminImportMasterFarmsPage() {
     } finally {
       setBusy(false);
     }
-  }
+  }, [rows]);
 
   return (
     <div className="page">
