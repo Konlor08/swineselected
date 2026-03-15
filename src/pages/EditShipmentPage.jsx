@@ -58,6 +58,20 @@ function chunkArray(arr, size = 500) {
   return out;
 }
 
+function countAffectedRows(data) {
+  if (Array.isArray(data)) return data.length;
+  if (data) return 1;
+  return 0;
+}
+
+function ensureAffectedRows(data, label, expectedMin = 1) {
+  const affected = countAffectedRows(data);
+  if (affected < expectedMin) {
+    throw new Error(`NO_ROWS_AFFECTED: ${label}`);
+  }
+  return affected;
+}
+
 const fullInputStyle = {
   width: "100%",
   padding: 10,
@@ -444,7 +458,13 @@ export default function EditShipmentPage() {
 
       if (e1) throw e1;
 
-      const swines = farmSwines || [];
+      const swines = (farmSwines || []).map((x) => ({
+        ...x,
+        swine_code: clean(x.swine_code),
+        house_no: clean(x.house_no),
+        flock: clean(x.flock),
+      }));
+
       const codes = swines.map((x) => x.swine_code).filter(Boolean);
 
       if (!codes.length) {
@@ -465,13 +485,16 @@ export default function EditShipmentPage() {
         if (e2) throw e2;
 
         for (const row of availableRows || []) {
-          if (row?.swine_code) {
-            availableCodeSet.add(row.swine_code);
+          const code = clean(row?.swine_code);
+          if (code) {
+            availableCodeSet.add(code);
           }
         }
       }
 
-      const availableOnly = swines.filter((x) => availableCodeSet.has(x.swine_code));
+      const availableOnly = swines.filter((x) =>
+        availableCodeSet.has(clean(x.swine_code))
+      );
       setAvailableSwines(availableOnly);
     } catch (e) {
       console.error("loadAvailableSwinesOfFarm error:", e);
@@ -482,11 +505,13 @@ export default function EditShipmentPage() {
     }
   }
 
-  async function openShipment(shipmentId) {
+  async function openShipment(shipmentId, opts = {}) {
+    const { silent = false } = opts;
+
     if (!shipmentId) return;
 
     setDetailLoading(true);
-    setMsg("");
+    if (!silent) setMsg("");
     setSelectedShipmentId(shipmentId);
 
     try {
@@ -537,13 +562,13 @@ export default function EditShipmentPage() {
         .map((it) => ({
           id: it.id,
           swine_id: it.swine_id,
-          swine_code: it.swine_code || "",
+          swine_code: clean(it.swine_code),
           teats_left: it.teats_left ?? "",
           teats_right: it.teats_right ?? "",
           backfat: it.backfat ?? "",
           weight: it.weight ?? "",
-          house_no: it.swine?.house_no || "",
-          flock: it.swine?.flock || "",
+          house_no: clean(it.swine?.house_no),
+          flock: clean(it.swine?.flock),
           birth_date: it.swine?.birth_date || "",
         }))
         .sort((a, b) =>
@@ -571,7 +596,10 @@ export default function EditShipmentPage() {
       setRemovedItemRows([]);
       setNewItemRows([]);
       setAvailableSwines([]);
-      setMsg(e?.message || "เปิด shipment เพื่อแก้ไขไม่สำเร็จ");
+      if (!silent) {
+        setMsg(e?.message || "เปิด shipment เพื่อแก้ไขไม่สำเร็จ");
+      }
+      throw e;
     } finally {
       setDetailLoading(false);
     }
@@ -656,9 +684,9 @@ export default function EditShipmentPage() {
         {
           temp_id: `new-${swine.id}-${Date.now()}`,
           swine_id: swine.id,
-          swine_code: swine.swine_code || "",
-          house_no: swine.house_no || "",
-          flock: swine.flock || "",
+          swine_code: clean(swine.swine_code),
+          house_no: clean(swine.house_no),
+          flock: clean(swine.flock),
           birth_date: swine.birth_date || "",
           teats_left: "",
           teats_right: "",
@@ -734,22 +762,32 @@ export default function EditShipmentPage() {
     }
 
     setSaving(true);
-    setMsg("");
+    let step = "เริ่มต้น";
+    setMsg("กำลังเริ่มบันทึก...");
 
     try {
       const shipmentId = shipmentHeader.id;
 
+      step = "อัปเดตหมายเหตุ shipment";
+      setMsg("กำลังอัปเดตหมายเหตุ shipment...");
       const headerPayload = {
         remark: clean(editRemark) || null,
       };
 
       const res1 = await withTimeout(
-        supabase.from("swine_shipments").update(headerPayload).eq("id", shipmentId),
+        supabase
+          .from("swine_shipments")
+          .update(headerPayload)
+          .eq("id", shipmentId)
+          .select("id"),
         15000,
         "update swine_shipments"
       );
       if (res1.error) throw res1.error;
+      ensureAffectedRows(res1.data, "update swine_shipments");
 
+      step = "อัปเดตรายการหมูเดิม";
+      setMsg("กำลังอัปเดตรายการหมูเดิม...");
       for (const row of itemRows) {
         const res = await withTimeout(
           supabase
@@ -760,18 +798,22 @@ export default function EditShipmentPage() {
               backfat: toNumOrNull(row.backfat),
               weight: toNumOrNull(row.weight),
             })
-            .eq("id", row.id),
+            .eq("id", row.id)
+            .select("id"),
           15000,
           `update swine_shipment_items ${row.id}`
         );
         if (res.error) throw res.error;
+        ensureAffectedRows(res.data, `update swine_shipment_items ${row.id}`);
       }
 
       if (newItemRows.length) {
+        step = "เพิ่มรายการหมูใหม่";
+        setMsg("กำลังเพิ่มรายการหมูใหม่...");
         const insertRows = newItemRows.map((row) => ({
           shipment_id: shipmentId,
           swine_id: row.swine_id,
-          swine_code: row.swine_code,
+          swine_code: clean(row.swine_code),
           teats_left: toIntOrNull(row.teats_left),
           teats_right: toIntOrNull(row.teats_right),
           backfat: toNumOrNull(row.backfat),
@@ -779,62 +821,117 @@ export default function EditShipmentPage() {
         }));
 
         const res2 = await withTimeout(
-          supabase.from("swine_shipment_items").insert(insertRows),
+          supabase.from("swine_shipment_items").insert(insertRows).select("id, swine_code"),
           15000,
           "insert swine_shipment_items"
         );
         if (res2.error) throw res2.error;
+        if (countAffectedRows(res2.data) !== insertRows.length) {
+          throw new Error(
+            `INSERT_MISMATCH: swine_shipment_items inserted ${countAffectedRows(
+              res2.data
+            )}/${insertRows.length}`
+          );
+        }
 
-        const newCodes = insertRows.map((x) => x.swine_code).filter(Boolean);
+        const newCodes = insertRows.map((x) => clean(x.swine_code)).filter(Boolean);
         if (newCodes.length) {
+          step = "เปลี่ยนสถานะหมูใหม่เป็น reserved";
+          setMsg("กำลังเปลี่ยนสถานะหมูใหม่เป็น reserved...");
           const res3 = await withTimeout(
             supabase
               .from("swine_master")
               .update({ delivery_state: "reserved" })
-              .in("swine_code", newCodes),
+              .in("swine_code", newCodes)
+              .select("swine_code"),
             15000,
             "reserve new swines"
           );
           if (res3.error) throw res3.error;
+          if (countAffectedRows(res3.data) !== newCodes.length) {
+            throw new Error(
+              `RESERVE_MISMATCH: swine_master updated ${countAffectedRows(
+                res3.data
+              )}/${newCodes.length}`
+            );
+          }
         }
       }
 
       if (removedItemRows.length) {
         const removedIds = removedItemRows.map((x) => x.id).filter(Boolean);
-        const removedCodes = removedItemRows.map((x) => x.swine_code).filter(Boolean);
+        const removedCodes = removedItemRows.map((x) => clean(x.swine_code)).filter(Boolean);
 
         if (removedIds.length) {
+          step = "ลบรายการหมูที่เอาออก";
+          setMsg("กำลังลบรายการหมูที่เอาออก...");
           const res4 = await withTimeout(
-            supabase.from("swine_shipment_items").delete().in("id", removedIds),
+            supabase
+              .from("swine_shipment_items")
+              .delete()
+              .in("id", removedIds)
+              .select("id"),
             15000,
             "delete removed swine_shipment_items"
           );
           if (res4.error) throw res4.error;
+          if (countAffectedRows(res4.data) !== removedIds.length) {
+            throw new Error(
+              `DELETE_MISMATCH: swine_shipment_items deleted ${countAffectedRows(
+                res4.data
+              )}/${removedIds.length}`
+            );
+          }
         }
 
         if (removedCodes.length) {
+          step = "ปล่อยสถานะหมูกลับเป็น available";
+          setMsg("กำลังปล่อยสถานะหมูกลับเป็น available...");
           const res5 = await withTimeout(
             supabase
               .from("swine_master")
               .update({ delivery_state: "available" })
-              .in("swine_code", removedCodes),
+              .in("swine_code", removedCodes)
+              .select("swine_code"),
             15000,
             "release removed swines"
           );
           if (res5.error) throw res5.error;
+          if (countAffectedRows(res5.data) !== removedCodes.length) {
+            throw new Error(
+              `RELEASE_MISMATCH: swine_master updated ${countAffectedRows(
+                res5.data
+              )}/${removedCodes.length}`
+            );
+          }
         }
       }
 
-      await openShipment(shipmentId);
+      step = "รีโหลด shipment หลังบันทึก";
+      setMsg("กำลังรีโหลด shipment หลังบันทึก...");
+      await openShipment(shipmentId, { silent: true });
+
+      step = "รีเฟรชรายการ draft";
+      setMsg("กำลังรีเฟรชรายการ draft...");
       await refreshShipmentList();
 
       setMsg("บันทึกการแก้ไขสำเร็จ ✅ สถานะยังคงเป็น draft");
     } catch (e) {
-      console.error("handleSaveChanges error:", e);
+      console.error("handleSaveChanges error:", {
+        step,
+        message: e?.message,
+        code: e?.code,
+        details: e?.details,
+        hint: e?.hint,
+        raw: e,
+      });
+
       setMsg(
-        `${e?.message || "บันทึกการแก้ไขไม่สำเร็จ"}${
-          e?.details ? ` | details: ${e.details}` : ""
-        }${e?.hint ? ` | hint: ${e.hint}` : ""}`
+        `บันทึกไม่สำเร็จ ที่ขั้นตอน: ${step}${
+          e?.message ? ` | ${e.message}` : ""
+        }${e?.details ? ` | details: ${e.details}` : ""}${
+          e?.hint ? ` | hint: ${e.hint}` : ""
+        }`
       );
     } finally {
       setSaving(false);
@@ -853,11 +950,14 @@ export default function EditShipmentPage() {
     if (!ok) return;
 
     setCancelling(true);
+    let step = "เริ่มต้น";
     setMsg("");
 
     try {
       const shipmentId = shipmentHeader.id;
 
+      step = "โหลดรายการหมูใน shipment";
+      setMsg("กำลังโหลดรายการหมูใน shipment...");
       const { data: currentItems, error: e1 } = await supabase
         .from("swine_shipment_items")
         .select("id, swine_code")
@@ -865,24 +965,38 @@ export default function EditShipmentPage() {
 
       if (e1) throw e1;
 
-      const codes = (currentItems || []).map((x) => x.swine_code).filter(Boolean);
+      const codes = (currentItems || [])
+        .map((x) => clean(x.swine_code))
+        .filter(Boolean);
 
       if (codes.length) {
+        step = "ปล่อยสถานะหมูกลับเป็น available";
+        setMsg("กำลังปล่อยสถานะหมูกลับเป็น available...");
         const rel = await withTimeout(
           supabase
             .from("swine_master")
             .update({ delivery_state: "available" })
-            .in("swine_code", codes),
+            .in("swine_code", codes)
+            .select("swine_code"),
           15000,
           "release shipment swines"
         );
         if (rel.error) throw rel.error;
+        if (countAffectedRows(rel.data) !== codes.length) {
+          throw new Error(
+            `RELEASE_MISMATCH: swine_master updated ${countAffectedRows(
+              rel.data
+            )}/${codes.length}`
+          );
+        }
       }
 
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
+      step = "เปลี่ยนสถานะ shipment เป็น cancelled";
+      setMsg("กำลังเปลี่ยนสถานะ shipment เป็น cancelled...");
       const payload = {
         status: "cancelled",
         cancelled_at: new Date().toISOString(),
@@ -894,22 +1008,34 @@ export default function EditShipmentPage() {
           .from("swine_shipments")
           .update(payload)
           .eq("id", shipmentId)
-          .eq("status", "draft"),
+          .eq("status", "draft")
+          .select("id"),
         15000,
         "cancel shipment"
       );
       if (res2.error) throw res2.error;
+      ensureAffectedRows(res2.data, "cancel shipment");
 
       clearEditor();
       await refreshShipmentList();
 
       setMsg("ยกเลิก shipment สำเร็จ ✅");
     } catch (e) {
-      console.error("handleCancelShipment error:", e);
+      console.error("handleCancelShipment error:", {
+        step,
+        message: e?.message,
+        code: e?.code,
+        details: e?.details,
+        hint: e?.hint,
+        raw: e,
+      });
+
       setMsg(
-        `${e?.message || "ยกเลิก shipment ไม่สำเร็จ"}${
-          e?.details ? ` | details: ${e.details}` : ""
-        }${e?.hint ? ` | hint: ${e.hint}` : ""}`
+        `ยกเลิก shipment ไม่สำเร็จ ที่ขั้นตอน: ${step}${
+          e?.message ? ` | ${e.message}` : ""
+        }${e?.details ? ` | details: ${e.details}` : ""}${
+          e?.hint ? ` | hint: ${e.hint}` : ""
+        }`
       );
     } finally {
       setCancelling(false);

@@ -239,7 +239,9 @@ export default function ExportCsvPage() {
   const [, setMyProfile] = useState(null);
   const [myRole, setMyRole] = useState("");
 
-  const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
+  const [dateFrom, setDateFrom] = useState(todayYmdLocal());
+  const [dateTo, setDateTo] = useState(todayYmdLocal());
+
   const [fromFarmCode, setFromFarmCode] = useState("");
   const [toFarmId, setToFarmId] = useState("");
   const [fromFarmQ, setFromFarmQ] = useState("");
@@ -249,8 +251,32 @@ export default function ExportCsvPage() {
   const [toFarmOptions, setToFarmOptions] = useState([]);
   const [previewRows, setPreviewRows] = useState([]);
 
+  const isAdmin = String(myRole).toLowerCase() === "admin";
   const canUsePage = ["admin", "user"].includes(String(myRole).toLowerCase());
-  const canQueryRows = Boolean(selectedDate && fromFarmCode && toFarmId);
+
+  const effectiveDateFrom = dateFrom;
+  const effectiveDateTo = isAdmin ? dateTo : dateFrom;
+
+  const dateRangeValid = useMemo(() => {
+    return Boolean(
+      effectiveDateFrom &&
+        effectiveDateTo &&
+        String(effectiveDateFrom) <= String(effectiveDateTo)
+    );
+  }, [effectiveDateFrom, effectiveDateTo]);
+
+  const canPreviewExport = isAdmin
+    ? dateRangeValid
+    : Boolean(dateRangeValid && effectiveDateFrom && fromFarmCode && toFarmId);
+
+  const canSubmitRows = isAdmin
+    ? Boolean(
+        dateRangeValid &&
+          effectiveDateFrom === effectiveDateTo &&
+          fromFarmCode &&
+          toFarmId
+      )
+    : Boolean(dateRangeValid && effectiveDateFrom && fromFarmCode && toFarmId);
 
   useEffect(() => {
     function onResize() {
@@ -319,24 +345,41 @@ export default function ExportCsvPage() {
 
   const applyRoleFilter = useCallback(
     async (query) => {
-      if (myRole === "admin") return query;
+      if (isAdmin) return query;
 
       const userId = await getCurrentUserId();
       if (!userId) return query.eq("created_by", "__no_user__");
 
       return query.eq("created_by", userId);
     },
-    [myRole]
+    [isAdmin]
   );
 
+  const resetSelectionsAfterDateChange = useCallback(() => {
+    setFromFarmCode("");
+    setToFarmId("");
+    setFromFarmQ("");
+    setToFarmQ("");
+    setFromFarmOptions([]);
+    setToFarmOptions([]);
+    setPreviewRows([]);
+    setMsg("");
+  }, []);
+
   const loadFromFarmOptions = useCallback(async () => {
+    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
+      setFromFarmOptions([]);
+      return;
+    }
+
     setFromFarmLoading(true);
 
     try {
       let query = supabase
         .from("swine_shipments")
         .select("from_farm_code, from_farm_name")
-        .eq("selected_date", selectedDate)
+        .gte("selected_date", effectiveDateFrom)
+        .lte("selected_date", effectiveDateTo)
         .in("status", ["draft", "submitted", "issued"])
         .order("from_farm_name", { ascending: true });
 
@@ -370,9 +413,19 @@ export default function ExportCsvPage() {
     } finally {
       setFromFarmLoading(false);
     }
-  }, [applyRoleFilter, selectedDate]);
+  }, [
+    applyRoleFilter,
+    dateRangeValid,
+    effectiveDateFrom,
+    effectiveDateTo,
+  ]);
 
   const loadToFarmOptions = useCallback(async () => {
+    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo || !fromFarmCode) {
+      setToFarmOptions([]);
+      return;
+    }
+
     setToFarmLoading(true);
 
     try {
@@ -386,7 +439,8 @@ export default function ExportCsvPage() {
             farm_name
           )
         `)
-        .eq("selected_date", selectedDate)
+        .gte("selected_date", effectiveDateFrom)
+        .lte("selected_date", effectiveDateTo)
         .eq("from_farm_code", fromFarmCode)
         .in("status", ["draft", "submitted", "issued"])
         .order("created_at", { ascending: false });
@@ -422,23 +476,42 @@ export default function ExportCsvPage() {
     } finally {
       setToFarmLoading(false);
     }
-  }, [applyRoleFilter, fromFarmCode, selectedDate]);
+  }, [
+    applyRoleFilter,
+    dateRangeValid,
+    effectiveDateFrom,
+    effectiveDateTo,
+    fromFarmCode,
+  ]);
 
   useEffect(() => {
-    if (!canUsePage || !selectedDate) {
+    if (!canUsePage || !dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
       setFromFarmOptions([]);
       return;
     }
     loadFromFarmOptions();
-  }, [canUsePage, selectedDate, loadFromFarmOptions]);
+  }, [
+    canUsePage,
+    dateRangeValid,
+    effectiveDateFrom,
+    effectiveDateTo,
+    loadFromFarmOptions,
+  ]);
 
   useEffect(() => {
-    if (!canUsePage || !selectedDate || !fromFarmCode) {
+    if (!canUsePage || !dateRangeValid || !effectiveDateFrom || !effectiveDateTo || !fromFarmCode) {
       setToFarmOptions([]);
       return;
     }
     loadToFarmOptions();
-  }, [canUsePage, selectedDate, fromFarmCode, loadToFarmOptions]);
+  }, [
+    canUsePage,
+    dateRangeValid,
+    effectiveDateFrom,
+    effectiveDateTo,
+    fromFarmCode,
+    loadToFarmOptions,
+  ]);
 
   async function loadSwineMapByCodes(swineCodes) {
     const uniqueCodes = Array.from(
@@ -472,6 +545,10 @@ export default function ExportCsvPage() {
   }
 
   const fetchExportBaseData = useCallback(async () => {
+    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
+      return { shipments: [], swineMap: {} };
+    }
+
     let query = supabase
       .from("swine_shipments")
       .select(`
@@ -498,11 +575,18 @@ export default function ExportCsvPage() {
           weight
         )
       `)
-      .eq("selected_date", selectedDate)
-      .eq("from_farm_code", fromFarmCode)
-      .eq("to_farm_id", toFarmId)
+      .gte("selected_date", effectiveDateFrom)
+      .lte("selected_date", effectiveDateTo)
       .in("status", ["draft", "submitted", "issued"])
       .order("created_at", { ascending: false });
+
+    if (fromFarmCode) {
+      query = query.eq("from_farm_code", fromFarmCode);
+    }
+
+    if (toFarmId) {
+      query = query.eq("to_farm_id", toFarmId);
+    }
 
     query = await applyRoleFilter(query);
 
@@ -519,7 +603,14 @@ export default function ExportCsvPage() {
     const swineMap = await loadSwineMapByCodes(allCodes);
 
     return { shipments: data || [], swineMap };
-  }, [applyRoleFilter, fromFarmCode, selectedDate, toFarmId]);
+  }, [
+    applyRoleFilter,
+    dateRangeValid,
+    effectiveDateFrom,
+    effectiveDateTo,
+    fromFarmCode,
+    toFarmId,
+  ]);
 
   function buildFlatRows(shipments, swineMap) {
     const rows = [];
@@ -561,7 +652,7 @@ export default function ExportCsvPage() {
   }, [fetchExportBaseData]);
 
   const handlePreview = useCallback(async () => {
-    if (!canQueryRows) return;
+    if (!canPreviewExport) return;
 
     setPreviewLoading(true);
     setMsg("");
@@ -579,10 +670,10 @@ export default function ExportCsvPage() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [canQueryRows, refreshPreviewRows]);
+  }, [canPreviewExport, refreshPreviewRows]);
 
   const handleExport = useCallback(async () => {
-    if (!canQueryRows) return;
+    if (!canPreviewExport) return;
 
     setExporting(true);
     setMsg("");
@@ -615,10 +706,16 @@ export default function ExportCsvPage() {
 
       const fromFarmText =
         fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || "all";
+
       const toFarmText =
         toFarmOptions.find((x) => x.value === toFarmId)?.farm_code || "all";
 
-      const filename = `swine_export_${selectedDate}_${fromFarmText}_${toFarmText}.csv`;
+      const dateText =
+        effectiveDateFrom === effectiveDateTo
+          ? effectiveDateFrom
+          : `${effectiveDateFrom}_to_${effectiveDateTo}`;
+
+      const filename = `swine_export_${dateText}_${fromFarmText}_${toFarmText}.csv`;
 
       downloadCsv(filename, exportRows);
       setMsg(`Export สำเร็จ ${exportRows.length} รายการ`);
@@ -629,17 +726,18 @@ export default function ExportCsvPage() {
       setExporting(false);
     }
   }, [
-    canQueryRows,
+    canPreviewExport,
     fetchExportBaseData,
     fromFarmCode,
     fromFarmOptions,
-    selectedDate,
+    effectiveDateFrom,
+    effectiveDateTo,
     toFarmId,
     toFarmOptions,
   ]);
 
   const handleSubmitConfirm = useCallback(async () => {
-    if (!canQueryRows) return;
+    if (!canSubmitRows) return;
 
     const ok = window.confirm(
       "ยืนยัน Submit ใช่หรือไม่\nระบบจะเปลี่ยน shipment ที่เป็น submitted ให้เป็น issued และยืนยันสถานะหมูทั้งหมดเป็น issued"
@@ -719,24 +817,30 @@ export default function ExportCsvPage() {
       setSubmitting(false);
     }
   }, [
-    canQueryRows,
+    canSubmitRows,
     fetchExportBaseData,
     loadFromFarmOptions,
     loadToFarmOptions,
     refreshPreviewRows,
   ]);
 
-  function handleDateChange(e) {
+  function handleSingleDateChange(e) {
     const value = e.target.value;
-    setSelectedDate(value);
-    setFromFarmCode("");
-    setToFarmId("");
-    setFromFarmQ("");
-    setToFarmQ("");
-    setFromFarmOptions([]);
-    setToFarmOptions([]);
-    setPreviewRows([]);
-    setMsg("");
+    setDateFrom(value);
+    setDateTo(value);
+    resetSelectionsAfterDateChange();
+  }
+
+  function handleDateFromChange(e) {
+    const value = e.target.value;
+    setDateFrom(value);
+    resetSelectionsAfterDateChange();
+  }
+
+  function handleDateToChange(e) {
+    const value = e.target.value;
+    setDateTo(value);
+    resetSelectionsAfterDateChange();
   }
 
   function handleFromFarmChange(e) {
@@ -795,6 +899,12 @@ export default function ExportCsvPage() {
 
     return counts;
   }, [previewRows]);
+
+  const dateSummaryText = useMemo(() => {
+    if (!effectiveDateFrom || !effectiveDateTo) return "-";
+    if (effectiveDateFrom === effectiveDateTo) return effectiveDateFrom;
+    return `${effectiveDateFrom} ถึง ${effectiveDateTo}`;
+  }, [effectiveDateFrom, effectiveDateTo]);
 
   if (pageLoading) {
     return (
@@ -862,12 +972,15 @@ export default function ExportCsvPage() {
                 </div>
                 <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6 }}>
                   Role: <b>{myRole || "-"}</b>
-                  {myRole === "admin"
-                    ? " — export ได้ทุกข้อมูล"
+                  {isAdmin
+                    ? " — export ได้ทุกข้อมูล และเลือกช่วงวันที่ได้"
                     : " — export ได้เฉพาะข้อมูลที่ตัวเองสร้าง"}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   แสดงรายการสถานะ draft, submitted และ issued
+                </div>
+                <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
+                  ช่วงวันที่: <b>{dateSummaryText}</b>
                 </div>
               </div>
 
@@ -953,28 +1066,77 @@ export default function ExportCsvPage() {
               display: "grid",
               gridTemplateColumns: isMobile
                 ? "1fr"
+                : isAdmin
+                ? "repeat(auto-fit, minmax(220px, 1fr))"
                 : "repeat(auto-fit, minmax(220px, 1fr))",
               gap: 14,
             }}
           >
-            <label style={{ display: "block", minWidth: 0 }}>
-              <div
-                style={{
-                  marginBottom: 6,
-                  fontSize: 14,
-                  fontWeight: 700,
-                  color: "#334155",
-                }}
-              >
-                วันที่คัด
-              </div>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={handleDateChange}
-                style={inputStyle}
-              />
-            </label>
+            {!isAdmin ? (
+              <label style={{ display: "block", minWidth: 0 }}>
+                <div
+                  style={{
+                    marginBottom: 6,
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: "#334155",
+                  }}
+                >
+                  วันที่คัด
+                </div>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={handleSingleDateChange}
+                  style={inputStyle}
+                />
+              </label>
+            ) : (
+              <>
+                <label style={{ display: "block", minWidth: 0 }}>
+                  <div
+                    style={{
+                      marginBottom: 6,
+                      fontSize: 14,
+                      fontWeight: 700,
+                      color: "#334155",
+                    }}
+                  >
+                    วันที่เริ่ม
+                  </div>
+                  <input
+                    type="date"
+                    value={dateFrom}
+                    onChange={handleDateFromChange}
+                    style={inputStyle}
+                  />
+                </label>
+
+                <label style={{ display: "block", minWidth: 0 }}>
+                  <div
+                    style={{
+                      marginBottom: 6,
+                      fontSize: 14,
+                      fontWeight: 700,
+                      color: "#334155",
+                    }}
+                  >
+                    วันที่สิ้นสุด
+                  </div>
+                  <input
+                    type="date"
+                    value={dateTo}
+                    onChange={handleDateToChange}
+                    style={inputStyle}
+                  />
+                  {!dateRangeValid ? (
+                    <div style={{ marginTop: 6, fontSize: 12, color: "#dc2626" }}>
+                      วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่ม
+                    </div>
+                  ) : null}
+                </label>
+              </>
+            )}
 
             <label style={{ display: "block", minWidth: 0 }}>
               <div
@@ -985,7 +1147,7 @@ export default function ExportCsvPage() {
                   color: "#334155",
                 }}
               >
-                ฟาร์มที่คัด
+                ฟาร์มที่คัด {isAdmin ? "(ไม่บังคับ)" : ""}
               </div>
 
               <input
@@ -993,9 +1155,9 @@ export default function ExportCsvPage() {
                 value={fromFarmQ}
                 onChange={(e) => setFromFarmQ(e.target.value)}
                 placeholder={fromFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
-                disabled={!selectedDate || fromFarmLoading}
+                disabled={!dateRangeValid || fromFarmLoading}
                 style={
-                  !selectedDate || fromFarmLoading
+                  !dateRangeValid || fromFarmLoading
                     ? { ...disabledInputStyle, marginBottom: 8 }
                     : { ...inputStyle, marginBottom: 8 }
                 }
@@ -1004,14 +1166,16 @@ export default function ExportCsvPage() {
               <select
                 value={fromFarmCode}
                 onChange={handleFromFarmChange}
-                disabled={!selectedDate || fromFarmLoading}
-                style={!selectedDate || fromFarmLoading ? disabledInputStyle : inputStyle}
+                disabled={!dateRangeValid || fromFarmLoading}
+                style={!dateRangeValid || fromFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
                   {fromFarmLoading
                     ? "กำลังโหลด..."
                     : filteredFromFarmOptions.length
-                    ? "เลือกฟาร์มที่คัด"
+                    ? isAdmin
+                      ? "ทุกฟาร์มที่คัด / หรือเลือก 1 ฟาร์ม"
+                      : "เลือกฟาร์มที่คัด"
                     : "ไม่พบฟาร์มที่คัด"}
                 </option>
                 {filteredFromFarmOptions.map((opt) => (
@@ -1025,9 +1189,9 @@ export default function ExportCsvPage() {
                 ทั้งหมด {fromFarmOptions.length} รายการ / ตรงคำค้น {filteredFromFarmOptions.length} รายการ
               </div>
 
-              {!fromFarmLoading && selectedDate && fromFarmOptions.length === 0 ? (
+              {!fromFarmLoading && dateRangeValid && fromFarmOptions.length === 0 ? (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
-                  ไม่พบฟาร์มที่คัดในวันที่เลือก
+                  ไม่พบฟาร์มที่คัดในช่วงวันที่เลือก
                 </div>
               ) : null}
             </label>
@@ -1041,7 +1205,7 @@ export default function ExportCsvPage() {
                   color: "#334155",
                 }}
               >
-                ฟาร์มปลายทาง
+                ฟาร์มปลายทาง {isAdmin ? "(ไม่บังคับ)" : ""}
               </div>
 
               <input
@@ -1049,9 +1213,9 @@ export default function ExportCsvPage() {
                 value={toFarmQ}
                 onChange={(e) => setToFarmQ(e.target.value)}
                 placeholder={toFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
-                disabled={!selectedDate || !fromFarmCode || toFarmLoading}
+                disabled={!dateRangeValid || !fromFarmCode || toFarmLoading}
                 style={
-                  !selectedDate || !fromFarmCode || toFarmLoading
+                  !dateRangeValid || !fromFarmCode || toFarmLoading
                     ? { ...disabledInputStyle, marginBottom: 8 }
                     : { ...inputStyle, marginBottom: 8 }
                 }
@@ -1060,14 +1224,20 @@ export default function ExportCsvPage() {
               <select
                 value={toFarmId}
                 onChange={handleToFarmChange}
-                disabled={!selectedDate || !fromFarmCode || toFarmLoading}
-                style={!selectedDate || !fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
+                disabled={!dateRangeValid || !fromFarmCode || toFarmLoading}
+                style={!dateRangeValid || !fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
-                  {toFarmLoading
+                  {!fromFarmCode
+                    ? isAdmin
+                      ? "เลือกฟาร์มที่คัดก่อน (ปล่อยว่างได้)"
+                      : "เลือกฟาร์มที่คัดก่อน"
+                    : toFarmLoading
                     ? "กำลังโหลด..."
                     : filteredToFarmOptions.length
-                    ? "เลือกฟาร์มปลายทาง"
+                    ? isAdmin
+                      ? "ทุกฟาร์มปลายทาง / หรือเลือก 1 ฟาร์ม"
+                      : "เลือกฟาร์มปลายทาง"
                     : "ไม่พบฟาร์มปลายทาง"}
                 </option>
                 {filteredToFarmOptions.map((opt) => (
@@ -1081,13 +1251,21 @@ export default function ExportCsvPage() {
                 ทั้งหมด {toFarmOptions.length} รายการ / ตรงคำค้น {filteredToFarmOptions.length} รายการ
               </div>
 
-              {!toFarmLoading && selectedDate && fromFarmCode && toFarmOptions.length === 0 ? (
+              {!toFarmLoading && dateRangeValid && fromFarmCode && toFarmOptions.length === 0 ? (
                 <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
                   ไม่พบฟาร์มปลายทางจากเงื่อนไขที่เลือก
                 </div>
               ) : null}
             </label>
           </div>
+
+          {isAdmin ? (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
+              Preview / Export ของ admin ใช้ได้จากช่วงวันที่ แม้ไม่เลือกฟาร์มก็ได้
+              <br />
+              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทางกับฟาร์มปลายทาง
+            </div>
+          ) : null}
 
           <div
             style={{
@@ -1100,14 +1278,14 @@ export default function ExportCsvPage() {
             <button
               type="button"
               onClick={handlePreview}
-              disabled={!canQueryRows || previewLoading || exporting || submitting}
+              disabled={!canPreviewExport || previewLoading || exporting || submitting}
               style={{
                 ...btnLightStyle,
                 width: isMobile ? "100%" : "auto",
                 flex: isMobile ? "1 1 100%" : "1 1 160px",
-                opacity: !canQueryRows || previewLoading || exporting || submitting ? 0.6 : 1,
+                opacity: !canPreviewExport || previewLoading || exporting || submitting ? 0.6 : 1,
                 cursor:
-                  !canQueryRows || previewLoading || exporting || submitting
+                  !canPreviewExport || previewLoading || exporting || submitting
                     ? "not-allowed"
                     : "pointer",
               }}
@@ -1118,14 +1296,14 @@ export default function ExportCsvPage() {
             <button
               type="button"
               onClick={handleExport}
-              disabled={!canQueryRows || exporting || previewLoading || submitting}
+              disabled={!canPreviewExport || exporting || previewLoading || submitting}
               style={{
                 ...btnGreenStyle,
                 width: isMobile ? "100%" : "auto",
                 flex: isMobile ? "1 1 100%" : "1 1 160px",
-                opacity: !canQueryRows || exporting || previewLoading || submitting ? 0.6 : 1,
+                opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
                 cursor:
-                  !canQueryRows || exporting || previewLoading || submitting
+                  !canPreviewExport || exporting || previewLoading || submitting
                     ? "not-allowed"
                     : "pointer",
               }}
@@ -1136,14 +1314,14 @@ export default function ExportCsvPage() {
             <button
               type="button"
               onClick={handleSubmitConfirm}
-              disabled={!canQueryRows || submitting || previewLoading || exporting}
+              disabled={!canSubmitRows || submitting || previewLoading || exporting}
               style={{
                 ...btnDarkStyle,
                 width: isMobile ? "100%" : "auto",
                 flex: isMobile ? "1 1 100%" : "1 1 160px",
-                opacity: !canQueryRows || submitting || previewLoading || exporting ? 0.6 : 1,
+                opacity: !canSubmitRows || submitting || previewLoading || exporting ? 0.6 : 1,
                 cursor:
-                  !canQueryRows || submitting || previewLoading || exporting
+                  !canSubmitRows || submitting || previewLoading || exporting
                     ? "not-allowed"
                     : "pointer",
               }}
