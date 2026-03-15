@@ -431,11 +431,14 @@ export default function EditShipmentPage() {
 
   async function refreshShipmentList() {
     if (!canSearch) return;
+
     try {
       const rows = await fetchShipmentList();
       setShipmentList(rows);
     } catch (e) {
       console.error("refreshShipmentList error:", e);
+      setMsg(e?.message || "รีเฟรชรายการ draft ไม่สำเร็จ");
+      throw e;
     }
   }
 
@@ -1016,7 +1019,13 @@ export default function EditShipmentPage() {
       if (res2.error) throw res2.error;
       ensureAffectedRows(res2.data, "cancel shipment");
 
+      // เอาออกจากรายการบนหน้าจอทันที
+      setShipmentList((prev) => prev.filter((row) => row.id !== shipmentId));
+
+      // ล้าง editor
       clearEditor();
+
+      // รีเฟรชซ้ำจากฐานข้อมูลอีกครั้ง
       await refreshShipmentList();
 
       setMsg("ยกเลิก shipment สำเร็จ ✅");
@@ -1232,6 +1241,9 @@ export default function EditShipmentPage() {
                           วันคัด: <b>{row.selected_date || "-"}</b> | ต้นทาง:{" "}
                           <b>{row.from_farm_name || row.from_farm_code || "-"}</b> |
                           ปลายทาง: <b>{row.to_farm?.farm_name || "-"}</b>
+                        </div>
+                        <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                          สถานะ: <b>{row.status || "-"}</b>
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           สร้างเมื่อ: {row.created_at || "-"} | จำนวนหมู:{" "}
