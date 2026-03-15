@@ -49,6 +49,8 @@ function normalizeSwineRow(r) {
 
 const SELECTED_BG = "#fef9c3";
 const SELECTED_BORDER = "#fde68a";
+const INVALID_BG = "#fef2f2";
+const INVALID_BORDER = "#fecaca";
 
 const fullInputStyle = {
   width: "100%",
@@ -100,11 +102,17 @@ export default function UserHomePage() {
   const [swineOptions, setSwineOptions] = useState([]);
   const [availableSwineCodeSet, setAvailableSwineCodeSet] = useState(new Set());
   const [directSearchResults, setDirectSearchResults] = useState([]);
+
   const [selectedSwineIds, setSelectedSwineIds] = useState(new Set());
+  const [selectedSwineMap, setSelectedSwineMap] = useState({});
 
   const [swineForm, setSwineForm] = useState({});
   const [remark, setRemark] = useState("");
   const [saving, setSaving] = useState(false);
+
+  const [showSavePreview, setShowSavePreview] = useState(false);
+  const [savePreviewRows, setSavePreviewRows] = useState([]);
+  const [invalidSwineIds, setInvalidSwineIds] = useState(new Set());
 
   const selectedToFarmId = useMemo(() => {
     if (!toFarmId) return "";
@@ -279,8 +287,10 @@ export default function UserHomePage() {
       setDirectSearchResults([]);
       setSelectedHouse("");
       setSelectedSwineIds(new Set());
+      setSelectedSwineMap({});
       setSwineForm({});
       setSwineQ("");
+      setInvalidSwineIds(new Set());
       return;
     }
 
@@ -308,7 +318,9 @@ export default function UserHomePage() {
 
       if (clearPicked) {
         setSelectedSwineIds(new Set());
+        setSelectedSwineMap({});
         setSwineForm({});
+        setInvalidSwineIds(new Set());
       }
 
       if (clearSearch) {
@@ -332,8 +344,10 @@ export default function UserHomePage() {
       setDirectSearchResults([]);
       setSelectedHouse("");
       setSelectedSwineIds(new Set());
+      setSelectedSwineMap({});
       setSwineForm({});
       setSwineQ("");
+      setInvalidSwineIds(new Set());
       return;
     }
 
@@ -470,6 +484,14 @@ export default function UserHomePage() {
     directSearchResults,
   ]);
 
+  const swineSourceMap = useMemo(() => {
+    const map = new Map();
+    for (const s of [...(swineOptions || []), ...(directSearchResults || [])]) {
+      if (s?.id) map.set(s.id, s);
+    }
+    return map;
+  }, [swineOptions, directSearchResults]);
+
   const handleSelectFromFarm = useCallback((farm) => {
     setFromFarm(farm);
     setSelectedHouse("");
@@ -478,7 +500,9 @@ export default function UserHomePage() {
     setAvailableSwineCodeSet(new Set());
     setDirectSearchResults([]);
     setSelectedSwineIds(new Set());
+    setSelectedSwineMap({});
     setSwineForm({});
+    setInvalidSwineIds(new Set());
     setMsg("");
   }, []);
 
@@ -487,11 +511,16 @@ export default function UserHomePage() {
     setSwineQ("");
     setDirectSearchResults([]);
     setSelectedSwineIds(new Set());
+    setSelectedSwineMap({});
     setSwineForm({});
+    setInvalidSwineIds(new Set());
     setMsg("");
   }, []);
 
-  const toggleSwine = useCallback((id) => {
+  const toggleSwine = useCallback((swineRow) => {
+    const id = swineRow?.id;
+    if (!id) return;
+
     setSelectedSwineIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -500,6 +529,28 @@ export default function UserHomePage() {
         next.add(id);
         setSwineForm((pf) => (pf[id] ? pf : { ...pf, [id]: pf[id] || {} }));
       }
+      return next;
+    });
+
+    setSelectedSwineMap((prev) => {
+      const next = { ...prev };
+      if (next[id]) {
+        delete next[id];
+      } else {
+        next[id] = {
+          id,
+          swine_code: clean(swineRow?.swine_code),
+          farm_code: clean(swineRow?.farm_code),
+          house_no: clean(swineRow?.house_no),
+        };
+      }
+      return next;
+    });
+
+    setInvalidSwineIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
       return next;
     });
   }, []);
@@ -521,6 +572,64 @@ export default function UserHomePage() {
     );
   }, [selectedDate, fromFarm, selectedToFarmId, selectedHouse, selectedSwineIds]);
 
+  const buildSavePreviewRows = useCallback(() => {
+    const selectedIds = Array.from(selectedSwineIds);
+
+    return selectedIds.map((swine_id, index) => {
+      const picked = selectedSwineMap[swine_id] || null;
+      const fallback = swineSourceMap.get(swine_id) || null;
+
+      const swineCode =
+        clean(picked?.swine_code) || clean(fallback?.swine_code) || "";
+      const label = swineCode || `รายการ ${index + 1}`;
+
+      const issues = [];
+      if (!swine_id) issues.push("ไม่มี swine_id");
+      if (!swineCode) issues.push("ไม่มี swine_code");
+
+      return {
+        index: index + 1,
+        swine_id,
+        swine_code: swineCode,
+        label,
+        ok: issues.length === 0,
+        reason: issues.join(", ") || "พร้อมบันทึก",
+      };
+    });
+  }, [selectedSwineIds, selectedSwineMap, swineSourceMap]);
+
+  const previewSummary = useMemo(() => {
+    const total = savePreviewRows.length;
+    const valid = savePreviewRows.filter((x) => x.ok).length;
+    const invalid = total - valid;
+    return { total, valid, invalid };
+  }, [savePreviewRows]);
+
+  const okRows = useMemo(
+    () => savePreviewRows.filter((x) => x.ok),
+    [savePreviewRows]
+  );
+
+  const badRows = useMemo(
+    () => savePreviewRows.filter((x) => !x.ok),
+    [savePreviewRows]
+  );
+
+  const hasPreviewError = badRows.length > 0;
+
+  const openSavePreview = useCallback(() => {
+    if (!canSave) {
+      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + House + หมูอย่างน้อย 1 ตัว");
+      return;
+    }
+
+    const rows = buildSavePreviewRows();
+    setSavePreviewRows(rows);
+    setInvalidSwineIds(new Set(rows.filter((x) => !x.ok).map((x) => x.swine_id)));
+    setShowSavePreview(true);
+    setMsg("");
+  }, [canSave, buildSavePreviewRows]);
+
   const logout = useCallback(async (e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
@@ -540,7 +649,7 @@ export default function UserHomePage() {
         if (k.startsWith("sb-")) sessionStorage.removeItem(k);
       }
     } catch {
-      // ignore storage cleanup failures
+      // ignore
     }
 
     window.location.replace(`/login?logout=1&ts=${Date.now()}`);
@@ -549,6 +658,22 @@ export default function UserHomePage() {
   async function saveDraft() {
     if (!canSave) {
       setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + House + หมูอย่างน้อย 1 ตัว");
+      return;
+    }
+
+    const previewRowsNow = buildSavePreviewRows();
+    const invalidNow = previewRowsNow.filter((x) => !x.ok);
+
+    setSavePreviewRows(previewRowsNow);
+    setInvalidSwineIds(new Set(invalidNow.map((x) => x.swine_id)));
+
+    if (invalidNow.length > 0) {
+      setShowSavePreview(true);
+      setMsg(
+        `ยังบันทึกไม่ได้ กรุณากลับไปแก้ไขรายการที่มีปัญหาก่อน: ${invalidNow
+          .map((x) => x.label)
+          .join(", ")}`
+      );
       return;
     }
 
@@ -588,10 +713,6 @@ export default function UserHomePage() {
       );
       if (res1.error) throw res1.error;
 
-      const swineMap = new Map(
-        (swineOptions || []).map((s) => [s.id, clean(s.swine_code)])
-      );
-
       const toIntOrNull = (v) => {
         const s = clean(v);
         if (!s) return null;
@@ -608,7 +729,10 @@ export default function UserHomePage() {
 
       const itemRows = selectedIds.map((swine_id) => {
         const f = swineForm[swine_id] || {};
-        const swine_code = swineMap.get(swine_id) || null;
+        const picked = selectedSwineMap[swine_id] || null;
+        const fallback = swineSourceMap.get(swine_id) || null;
+        const swine_code =
+          clean(picked?.swine_code) || clean(fallback?.swine_code) || null;
 
         return {
           shipment_id: shipmentId,
@@ -621,8 +745,17 @@ export default function UserHomePage() {
         };
       });
 
-      if (itemRows.some((r) => !r.swine_code)) {
-        throw new Error("MISSING_SWINE_CODE: บางตัวไม่มี swine_code");
+      const missingCodeRows = itemRows
+        .filter((r) => !r.swine_code)
+        .map((r, i) => {
+          const found = previewRowsNow.find((x) => x.swine_id === r.swine_id);
+          return found?.label || `รายการ ${i + 1}`;
+        });
+
+      if (missingCodeRows.length > 0) {
+        throw new Error(
+          `MISSING_SWINE_CODE: บางตัวไม่มี swine_code (${missingCodeRows.join(", ")})`
+        );
       }
 
       if (itemRows.some((r) => !r.swine_id)) {
@@ -654,12 +787,15 @@ export default function UserHomePage() {
 
       setCurrentShipmentId(shipmentId);
       setCurrentStatus("draft");
-
       setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${shipmentId}, หมู: ${selectedCount} ตัว)`);
 
       setRemark("");
       setSelectedSwineIds(new Set());
+      setSelectedSwineMap({});
       setSwineForm({});
+      setInvalidSwineIds(new Set());
+      setShowSavePreview(false);
+      setSavePreviewRows([]);
 
       await reloadSwinesOfFarm(fromFarm.farm_code, {
         preserveHouse: true,
@@ -1050,6 +1186,7 @@ export default function UserHomePage() {
                   filteredSwines.map((s) => {
                     const checked = selectedSwineIds.has(s.id);
                     const f = swineForm[s.id] || {};
+                    const isInvalid = invalidSwineIds.has(s.id);
 
                     return (
                       <div
@@ -1057,8 +1194,16 @@ export default function UserHomePage() {
                         style={{
                           padding: "10px 12px",
                           borderBottom: "1px solid #eee",
-                          background: checked ? SELECTED_BG : "white",
-                          boxShadow: checked ? `inset 0 0 0 1px ${SELECTED_BORDER}` : "none",
+                          background: isInvalid
+                            ? INVALID_BG
+                            : checked
+                            ? SELECTED_BG
+                            : "white",
+                          boxShadow: isInvalid
+                            ? `inset 0 0 0 1px ${INVALID_BORDER}`
+                            : checked
+                            ? `inset 0 0 0 1px ${SELECTED_BORDER}`
+                            : "none",
                           boxSizing: "border-box",
                         }}
                       >
@@ -1074,11 +1219,25 @@ export default function UserHomePage() {
                           <input
                             type="checkbox"
                             checked={checked}
-                            onChange={() => toggleSwine(s.id)}
+                            onChange={() => toggleSwine(s)}
                             style={{ marginTop: 3, flex: "0 0 auto" }}
                           />
-                          <div style={{ fontWeight: 800, wordBreak: "break-word", minWidth: 0 }}>
-                            {s.swine_code}
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                              {s.swine_code}
+                            </div>
+                            {isInvalid && (
+                              <div
+                                style={{
+                                  marginTop: 4,
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  color: "#b91c1c",
+                                }}
+                              >
+                                รายการนี้มีปัญหา กรุณาตรวจสอบก่อนบันทึก
+                              </div>
+                            )}
                           </div>
                         </label>
 
@@ -1196,13 +1355,16 @@ export default function UserHomePage() {
                     );
                   })}
 
-                {!swineLoading && !swineSearchLoading && selectedHouse && filteredSwines.length === 0 && (
-                  <div style={{ padding: 12, color: "#666" }}>
-                    {clean(swineQ)
-                      ? "ไม่พบเลขหมู available ตามที่ค้นหา"
-                      : "ไม่พบหมู available ใน House นี้"}
-                  </div>
-                )}
+                {!swineLoading &&
+                  !swineSearchLoading &&
+                  selectedHouse &&
+                  filteredSwines.length === 0 && (
+                    <div style={{ padding: 12, color: "#666" }}>
+                      {clean(swineQ)
+                        ? "ไม่พบเลขหมู available ตามที่ค้นหา"
+                        : "ไม่พบหมู available ใน House นี้"}
+                    </div>
+                  )}
               </div>
 
               <div
@@ -1224,7 +1386,9 @@ export default function UserHomePage() {
                   className="linkbtn"
                   onClick={() => {
                     setSelectedSwineIds(new Set());
+                    setSelectedSwineMap({});
                     setSwineForm({});
+                    setInvalidSwineIds(new Set());
                   }}
                 >
                   ล้างรายการหมู
@@ -1260,7 +1424,7 @@ export default function UserHomePage() {
           <button
             className="linkbtn"
             type="button"
-            onClick={saveDraft}
+            onClick={openSavePreview}
             disabled={!canSave || saving || submitting}
             style={{ flex: "1 1 140px", minWidth: 0 }}
           >
@@ -1297,7 +1461,11 @@ export default function UserHomePage() {
               setAvailableSwineCodeSet(new Set());
               setDirectSearchResults([]);
               setSelectedSwineIds(new Set());
+              setSelectedSwineMap({});
               setSwineForm({});
+              setShowSavePreview(false);
+              setSavePreviewRows([]);
+              setInvalidSwineIds(new Set());
             }}
             style={{ flex: "1 1 140px", minWidth: 0 }}
           >
@@ -1305,6 +1473,279 @@ export default function UserHomePage() {
           </button>
         </div>
       </div>
+
+      {showSavePreview && (
+        <div
+          onClick={() => !saving && setShowSavePreview(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.45)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 9999,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 760,
+              maxHeight: "85vh",
+              overflow: "hidden",
+              background: "#fff",
+              borderRadius: 18,
+              boxShadow: "0 20px 50px rgba(0,0,0,0.2)",
+              display: "grid",
+              gridTemplateRows: "auto auto 1fr auto",
+            }}
+          >
+            <div style={{ padding: "16px 18px 8px", borderBottom: "1px solid #eee" }}>
+              <div style={{ fontSize: 20, fontWeight: 900 }}>ตรวจรายการก่อนบันทึก</div>
+              <div style={{ color: "#555", marginTop: 6 }}>
+                ตรวจสอบจำนวนที่คัด และดูว่าตัวไหนพร้อมบันทึก / มีปัญหา
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "14px 18px",
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                gap: 10,
+                borderBottom: "1px solid #eee",
+              }}
+            >
+              <div
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: "#fafafa",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#666" }}>คัดทั้งหมด</div>
+                <div style={{ fontSize: 24, fontWeight: 900 }}>{previewSummary.total}</div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid #dcfce7",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: "#f0fdf4",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#166534" }}>พร้อมบันทึก</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: "#166534" }}>
+                  {previewSummary.valid}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid #fecaca",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: "#fef2f2",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#b91c1c" }}>มีปัญหา</div>
+                <div style={{ fontSize: 24, fontWeight: 900, color: "#b91c1c" }}>
+                  {previewSummary.invalid}
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                overflowY: "auto",
+                padding: 18,
+                display: "grid",
+                gap: 18,
+                background: "#fff",
+              }}
+            >
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "#166534" }}>
+                  พร้อมบันทึก ({okRows.length})
+                </div>
+
+                {okRows.length > 0 ? (
+                  okRows.map((row) => (
+                    <div
+                      key={row.swine_id || `ok-${row.index}`}
+                      style={{
+                        border: "1px solid #bbf7d0",
+                        background: "#f0fdf4",
+                        borderRadius: 12,
+                        padding: "12px 14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, wordBreak: "break-word" }}>{row.label}</div>
+                        <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 13,
+                            color: "#166534",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {row.reason}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          flex: "0 0 auto",
+                          fontWeight: 800,
+                          color: "#166534",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        พร้อมบันทึก
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div
+                    style={{
+                      border: "1px dashed #d1d5db",
+                      borderRadius: 12,
+                      padding: 12,
+                      color: "#666",
+                    }}
+                  >
+                    ไม่มีรายการในกลุ่มนี้
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "#b91c1c" }}>
+                  มีปัญหา ({badRows.length})
+                </div>
+
+                {badRows.length > 0 ? (
+                  badRows.map((row) => (
+                    <div
+                      key={row.swine_id || `bad-${row.index}`}
+                      style={{
+                        border: "1px solid #fecaca",
+                        background: "#fef2f2",
+                        borderRadius: 12,
+                        padding: "12px 14px",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-start",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, wordBreak: "break-word" }}>{row.label}</div>
+                        <div
+                          style={{
+                            marginTop: 4,
+                            fontSize: 13,
+                            color: "#b91c1c",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {row.reason}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          flex: "0 0 auto",
+                          fontWeight: 800,
+                          color: "#b91c1c",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        มีปัญหา
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div
+                    style={{
+                      border: "1px dashed #d1d5db",
+                      borderRadius: 12,
+                      padding: 12,
+                      color: "#666",
+                    }}
+                  >
+                    ไม่มีรายการในกลุ่มนี้
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: 16,
+                borderTop: "1px solid #eee",
+                display: "grid",
+                gap: 10,
+              }}
+            >
+              {hasPreviewError && (
+                <div
+                  style={{
+                    color: "#b91c1c",
+                    fontWeight: 800,
+                    background: "#fef2f2",
+                    border: "1px solid #fecaca",
+                    borderRadius: 12,
+                    padding: "10px 12px",
+                  }}
+                >
+                  ยังบันทึกไม่ได้ กรุณากลับไปแก้ไขรายการที่มีปัญหาก่อน
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  justifyContent: "flex-end",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  type="button"
+                  className="linkbtn"
+                  onClick={() => setShowSavePreview(false)}
+                  disabled={saving}
+                >
+                  กลับไปแก้ไข
+                </button>
+
+                <button
+                  type="button"
+                  className="linkbtn"
+                  onClick={saveDraft}
+                  disabled={saving || hasPreviewError}
+                  style={{
+                    opacity: saving || hasPreviewError ? 0.6 : 1,
+                    cursor: saving || hasPreviewError ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {saving ? "Saving..." : "ยืนยันบันทึก"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
