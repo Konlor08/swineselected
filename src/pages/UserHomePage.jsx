@@ -241,6 +241,7 @@ export default function UserHomePage() {
     }
   }, [myRole, nav]);
 
+  // ✅ เปลี่ยนมาอ่านฟาร์มต้นทางจาก view ที่สรุปจาก swines โดยตรง
   useEffect(() => {
     let alive = true;
 
@@ -251,39 +252,22 @@ export default function UserHomePage() {
 
       try {
         const { data, error } = await supabase
-          .from("swines")
-          .select("farm_code, farm_name, branch_id")
-          .not("farm_code", "is", null)
-          .order("farm_code", { ascending: true })
-          .limit(5000);
+          .from("v_swine_source_farms")
+          .select("farm_code, farm_name, swine_count")
+          .order("farm_code", { ascending: true });
 
         if (error) throw error;
 
-        dlog("loadFromFarms:raw rows", {
-          count: data?.length || 0,
-          sample: (data || []).slice(0, 5),
-        });
+        const arr = (data || [])
+          .map((r) => ({
+            farm_code: clean(r.farm_code),
+            farm_name: clean(r.farm_name) || clean(r.farm_code),
+            branch_id: null,
+            swine_count: Number(r.swine_count || 0),
+          }))
+          .filter((x) => x.farm_code);
 
-        const map = new Map();
-        for (const r of data || []) {
-          const fc = clean(r.farm_code);
-          if (!fc) continue;
-          const fn = clean(r.farm_name);
-          const key = `${fc}__${fn}`;
-          if (!map.has(key)) {
-            map.set(key, {
-              farm_code: fc,
-              farm_name: fn || fc,
-              branch_id: r.branch_id || null,
-            });
-          }
-        }
-
-        const arr = Array.from(map.values()).sort((a, b) =>
-          String(a.farm_code).localeCompare(String(b.farm_code))
-        );
-
-        dlog("loadFromFarms:deduped result", {
+        dlog("loadFromFarms:view result", {
           count: arr.length,
           sample: arr.slice(0, 10),
         });
@@ -293,7 +277,7 @@ export default function UserHomePage() {
         derr("loadFromFarms error", e);
         if (alive) {
           setFromOptions([]);
-          setMsg(e?.message || "โหลดฟาร์มต้นทางจาก swines ไม่สำเร็จ");
+          setMsg(e?.message || "โหลดฟาร์มต้นทางจาก v_swine_source_farms ไม่สำเร็จ");
         }
       } finally {
         if (alive) setFromLoading(false);
@@ -1478,6 +1462,7 @@ export default function UserHomePage() {
               filteredFromOptions.map((f) => {
                 const active =
                   fromFarm?.farm_code === f.farm_code && fromFarm?.farm_name === f.farm_name;
+
                 return (
                   <button
                     key={`${f.farm_code}__${f.farm_name}`}
@@ -1496,7 +1481,7 @@ export default function UserHomePage() {
                     }}
                   >
                     <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                      {f.farm_code} - {f.farm_name}
+                      {f.farm_code} - {f.farm_name} ({f.swine_count} ตัว)
                     </div>
                   </button>
                 );
@@ -1518,7 +1503,16 @@ export default function UserHomePage() {
               padding: fromFarm ? "8px 10px" : 0,
             }}
           >
-            เลือกอยู่: <b>{fromFarm ? `${fromFarm.farm_code} - ${fromFarm.farm_name}` : "-"}</b>
+            เลือกอยู่:{" "}
+            <b>
+              {fromFarm
+                ? `${fromFarm.farm_code} - ${fromFarm.farm_name}${
+                    Number.isFinite(fromFarm.swine_count)
+                      ? ` (${fromFarm.swine_count} ตัว)`
+                      : ""
+                  }`
+                : "-"}
+            </b>
           </div>
         </div>
 
