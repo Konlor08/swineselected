@@ -1,8 +1,4 @@
-// src/components/FarmPickerInlineAdd.jsx (FULL FILE)
-// ✅ FIX: "farm_code" ไม่บังคับแล้ว (บังคับแค่ farm_name)
-// ✅ UI: แสดงชื่อฟาร์มเป็นหลัก ถ้าไม่มี code จะโชว์ "(no code)"
-// ✅ Search: ค้นหาจาก farm_code + farm_name ได้เหมือนเดิม
-// ✅ Insert: ส่ง farm_code = null ถ้าว่าง
+// src/components/FarmPickerInlineAdd.jsx
 
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
@@ -13,10 +9,9 @@ function clean(s) {
 
 export default function FarmPickerInlineAdd({
   label = "เลือกฟาร์ม",
-  value = null,          // selected farm id
-  excludeId = null,      // exclude one farm id (กันเลือกซ้ำ)
-  onChange,              // (id|null) => void
-  requireBranch = false, // ถ้า branch_id ใน DB เป็น NOT NULL ให้ตั้ง true แล้วกรอก branch_id ตอนเพิ่ม
+  value = null,
+  excludeId = null,
+  onChange,
 }) {
   const [farms, setFarms] = useState([]);
   const [q, setQ] = useState("");
@@ -25,22 +20,19 @@ export default function FarmPickerInlineAdd({
   const [openAdd, setOpenAdd] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // ฟอร์มเพิ่มฟาร์ม
   const [newFarm, setNewFarm] = useState({
     farm_code: "",
     farm_name: "",
-    branch_id: "",
   });
 
   async function loadFarms() {
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from("swine_farms")
-        .select("id, farm_code, farm_name, branch_id, is_active")
+        .from("master_farms")
+        .select("id, farm_code, farm_name, is_active")
         .eq("is_active", true)
-        // ✅ ถ้า farm_code เป็น null บางแถว order อาจดูแปลกนิดหน่อย แต่ใช้งานได้
-        .order("farm_code", { ascending: true, nullsFirst: false });
+        .order("farm_name", { ascending: true });
 
       if (error) throw error;
       setFarms(data || []);
@@ -75,42 +67,34 @@ export default function FarmPickerInlineAdd({
   }, [farms, q, excludeId]);
 
   function resetAddForm() {
-    setNewFarm({ farm_code: "", farm_name: "", branch_id: "" });
+    setNewFarm({ farm_code: "", farm_name: "" });
   }
 
   async function addFarmNow() {
-    const farm_code_raw = clean(newFarm.farm_code);
+    const farm_code = clean(newFarm.farm_code) || null;
     const farm_name = clean(newFarm.farm_name);
-    const branch_id = clean(newFarm.branch_id) || null;
 
-    // ✅ farm_code ไม่บังคับแล้ว
     if (!farm_name) {
       alert("กรุณากรอก Farm Name");
-      return;
-    }
-    if (requireBranch && !branch_id) {
-      alert("กรุณากรอก Branch ID (จำเป็น)");
       return;
     }
 
     setSaving(true);
     try {
       const payload = {
-        farm_code: farm_code_raw ? farm_code_raw : null, // ✅ ว่าง => null
+        farm_code,
         farm_name,
-        branch_id,
         is_active: true,
       };
 
       const { data, error } = await supabase
-        .from("swine_farms")
+        .from("master_farms")
         .insert([payload])
-        .select("id, farm_code, farm_name, branch_id, is_active")
+        .select("id, farm_code, farm_name, is_active")
         .single();
 
       if (error) throw error;
 
-      // เพิ่มเข้า list ทันที + เลือกให้เลย
       setFarms((prev) => [data, ...(prev || [])]);
       onChange?.(data.id);
 
@@ -119,7 +103,7 @@ export default function FarmPickerInlineAdd({
       setQ("");
     } catch (e) {
       console.error("addFarmNow error:", e);
-      alert(e?.message || "เพิ่มฟาร์มไม่สำเร็จ (อาจติด RLS หรือ farm_code ซ้ำ)");
+      alert(e?.message || "เพิ่มฟาร์มไม่สำเร็จ");
     } finally {
       setSaving(false);
     }
@@ -154,7 +138,6 @@ export default function FarmPickerInlineAdd({
         )}
       </div>
 
-      {/* Search */}
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -162,7 +145,6 @@ export default function FarmPickerInlineAdd({
         style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
       />
 
-      {/* Options list */}
       <div
         style={{
           border: "1px solid #ddd",
@@ -200,12 +182,10 @@ export default function FarmPickerInlineAdd({
         )}
       </div>
 
-      {/* Selected label */}
       <div style={{ color: "#444" }}>
         เลือกอยู่: <b>{selected ? labelText(selected) : "-"}</b>
       </div>
 
-      {/* Modal */}
       {openAdd && (
         <div
           style={{
@@ -246,7 +226,7 @@ export default function FarmPickerInlineAdd({
                 <input
                   value={newFarm.farm_code}
                   onChange={(e) => setNewFarm((s) => ({ ...s, farm_code: e.target.value }))}
-                  placeholder="เช่น 2006IE8 (เว้นว่างได้)"
+                  placeholder="เช่น 2006IE8"
                   style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
                 />
               </label>
@@ -257,16 +237,6 @@ export default function FarmPickerInlineAdd({
                   value={newFarm.farm_name}
                   onChange={(e) => setNewFarm((s) => ({ ...s, farm_name: e.target.value }))}
                   placeholder="เช่น PJ.15 ธัญญ์-1-04"
-                  style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-                />
-              </label>
-
-              <label style={{ display: "grid", gap: 6 }}>
-                Branch ID {requireBranch ? "*" : "(เว้นว่างได้)"}
-                <input
-                  value={newFarm.branch_id}
-                  onChange={(e) => setNewFarm((s) => ({ ...s, branch_id: e.target.value }))}
-                  placeholder={requireBranch ? "จำเป็นต้องกรอก UUID" : "uuid ของสาขา หรือเว้นว่าง"}
                   style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
                 />
               </label>
@@ -285,10 +255,6 @@ export default function FarmPickerInlineAdd({
                 <button type="button" onClick={addFarmNow} disabled={saving}>
                   {saving ? "กำลังบันทึก..." : "บันทึกและเลือกทันที"}
                 </button>
-              </div>
-
-              <div style={{ color: "#666", fontSize: 12, marginTop: 4 }}>
-                * ถ้ากดเพิ่มไม่ผ่าน มักจะเป็น (1) RLS ไม่อนุญาต insert (2) farm_code ซ้ำ (3) branch_id เป็น NOT NULL แต่ไม่ได้กรอก
               </div>
             </div>
           </div>

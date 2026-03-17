@@ -11,6 +11,68 @@ function clean(v) {
   return String(v ?? "").trim();
 }
 
+async function ensureProfileAfterLogin({ userId, email, username }) {
+  const fallbackName =
+    clean(username) || String(email ?? "").split("@")[0] || "-";
+
+  try {
+    const { data: existing, error: readError } = await supabase
+      .from("profiles")
+      .select("user_id, display_name, role, team_name, branch_id, is_active")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (readError) {
+      console.error("ensureProfileAfterLogin read error:", readError);
+      return;
+    }
+
+    if (!existing) {
+      const payload = {
+        user_id: userId,
+        display_name: fallbackName,
+        role: "user",
+        team_name: null,
+        branch_id: null,
+        is_active: true,
+      };
+
+      console.log("ensureProfileAfterLogin insert payload:", payload);
+
+      const { error: insertError } = await supabase
+        .from("profiles")
+        .insert([payload]);
+
+      if (insertError) {
+        console.error("ensureProfileAfterLogin insert error:", insertError);
+      }
+      return;
+    }
+
+    if (!clean(existing.display_name)) {
+      const payload = {
+        display_name: fallbackName,
+      };
+
+      console.log("ensureProfileAfterLogin update display_name payload:", {
+        user_id: userId,
+        ...payload,
+      });
+
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update(payload)
+        .eq("user_id", userId);
+
+      if (updateError) {
+        console.error("ensureProfileAfterLogin update error:", updateError);
+      }
+    }
+  } catch (e) {
+    console.error("ensureProfileAfterLogin unexpected error:", e);
+  }
+}
+
 export default function LoginPage() {
   const nav = useNavigate();
 
@@ -81,14 +143,26 @@ export default function LoginPage() {
 
       setBusy(true);
       try {
-        const { error } = await supabase.auth.signInWithPassword({
+        const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password: p,
         });
         if (error) throw error;
 
+        console.log("onLogin signIn result:", data);
+
+        const loggedInUser = data?.user;
+        if (loggedInUser?.id) {
+          await ensureProfileAfterLogin({
+            userId: loggedInUser.id,
+            email: loggedInUser.email,
+            username: u,
+          });
+        }
+
         nav("/", { replace: true });
       } catch (err) {
+        console.error("onLogin error:", err);
         setMsg(err?.message || "Login ไม่สำเร็จ");
       } finally {
         setBusy(false);
@@ -121,14 +195,49 @@ export default function LoginPage() {
 
       setBusy(true);
       try {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email,
           password: p,
+          options: {
+            data: {
+              display_name: u,
+            },
+          },
         });
+
         if (error) throw error;
 
-        setMsg("✅ Register สำเร็จ (ถ้าเปิด confirm email ไว้ อาจต้องยืนยันก่อน)");
+        console.log("signUp result:", data);
+
+        const newUserId = data?.user?.id || null;
+
+        if (newUserId) {
+          const profilePayload = {
+            user_id: newUserId,
+            display_name: u,
+            role: "user",
+            team_name: null,
+            branch_id: null,
+            is_active: true,
+          };
+
+          console.log("upsert profile payload:", profilePayload);
+
+          const { error: profileError } = await supabase
+            .from("profiles")
+            .upsert([profilePayload], {
+              onConflict: "user_id",
+            });
+
+          if (profileError) {
+            console.error("upsert profile error:", profileError);
+            throw profileError;
+          }
+        }
+
+        setMsg("✅ Register สำเร็จ");
       } catch (err) {
+        console.error("onRegister error:", err);
         setMsg(err?.message || "Register ไม่สำเร็จ");
       } finally {
         setBusy(false);

@@ -47,6 +47,44 @@ function normalizeSwineRow(r) {
   };
 }
 
+function toIntOrNull(v) {
+  const s = clean(v);
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function toNumOrNull(v) {
+  const s = clean(v);
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+const DEBUG = true;
+
+function dlog(label, payload) {
+  if (!DEBUG) return;
+  const ts = new Date().toISOString();
+  if (payload === undefined) {
+    console.log(`[UserHomePage][${ts}] ${label}`);
+  } else {
+    console.log(`[UserHomePage][${ts}] ${label}`, payload);
+  }
+}
+
+function derr(label, error, extra) {
+  const ts = new Date().toISOString();
+  console.error(`[UserHomePage][${ts}] ${label}`, {
+    message: error?.message,
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint,
+    raw: error,
+    ...(extra || {}),
+  });
+}
+
 const SELECTED_BG = "#fef9c3";
 const SELECTED_BORDER = "#fde68a";
 const INVALID_BG = "#fef2f2";
@@ -122,20 +160,70 @@ export default function UserHomePage() {
   }, [toFarmId]);
 
   useEffect(() => {
+    dlog("component mounted");
+    return () => {
+      dlog("component unmounted");
+    };
+  }, []);
+
+  useEffect(() => {
+    dlog("state:selectedDate changed", { selectedDate });
+  }, [selectedDate]);
+
+  useEffect(() => {
+    dlog("state:current shipment changed", {
+      currentShipmentId,
+      currentStatus,
+    });
+  }, [currentShipmentId, currentStatus]);
+
+  useEffect(() => {
+    dlog("state:fromFarm changed", { fromFarm });
+  }, [fromFarm]);
+
+  useEffect(() => {
+    dlog("state:selectedHouse changed", { selectedHouse });
+  }, [selectedHouse]);
+
+  useEffect(() => {
+    dlog("state:toFarm changed", { toFarmId, selectedToFarmId });
+  }, [toFarmId, selectedToFarmId]);
+
+  useEffect(() => {
+    dlog("state:selected swines changed", {
+      selectedCount: selectedSwineIds.size,
+      selectedIds: Array.from(selectedSwineIds),
+    });
+  }, [selectedSwineIds]);
+
+  useEffect(() => {
+    dlog("state:swineForm changed", swineForm);
+  }, [swineForm]);
+
+  useEffect(() => {
     let alive = true;
 
     async function loadMyRole() {
+      dlog("loadMyRole:start");
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data, error: sessionError } = await supabase.auth.getSession();
+        if (sessionError) throw sessionError;
+
         const uid = data?.session?.user?.id;
+        dlog("loadMyRole:session", {
+          hasSession: !!data?.session,
+          uid,
+        });
+
         if (!uid) return;
 
         const profile = await fetchMyProfile(uid);
         if (!alive) return;
 
+        dlog("loadMyRole:profile", profile);
         setMyRole(String(profile?.role || "user").toLowerCase());
       } catch (e) {
-        console.error("loadMyRole error:", e);
+        derr("loadMyRole error", e);
       }
     }
 
@@ -146,7 +234,9 @@ export default function UserHomePage() {
   }, []);
 
   useEffect(() => {
+    dlog("role check", { myRole });
     if (myRole === "admin") {
+      dlog("redirect to /admin");
       nav("/admin", { replace: true });
     }
   }, [myRole, nav]);
@@ -155,6 +245,7 @@ export default function UserHomePage() {
     let alive = true;
 
     async function loadFromFarms() {
+      dlog("loadFromFarms:start");
       setFromLoading(true);
       setMsg("");
 
@@ -167,6 +258,11 @@ export default function UserHomePage() {
           .limit(5000);
 
         if (error) throw error;
+
+        dlog("loadFromFarms:raw rows", {
+          count: data?.length || 0,
+          sample: (data || []).slice(0, 5),
+        });
 
         const map = new Map();
         for (const r of data || []) {
@@ -187,15 +283,21 @@ export default function UserHomePage() {
           String(a.farm_code).localeCompare(String(b.farm_code))
         );
 
+        dlog("loadFromFarms:deduped result", {
+          count: arr.length,
+          sample: arr.slice(0, 10),
+        });
+
         if (alive) setFromOptions(arr);
       } catch (e) {
-        console.error("loadFromFarms error:", e);
+        derr("loadFromFarms error", e);
         if (alive) {
           setFromOptions([]);
           setMsg(e?.message || "โหลดฟาร์มต้นทางจาก swines ไม่สำเร็จ");
         }
       } finally {
         if (alive) setFromLoading(false);
+        dlog("loadFromFarms:finish");
       }
     }
 
@@ -207,23 +309,56 @@ export default function UserHomePage() {
 
   const filteredFromOptions = useMemo(() => {
     const q = clean(fromQ).toLowerCase();
-    if (!q) return fromOptions.slice(0, 12);
-    return fromOptions
-      .filter((x) => `${x.farm_code} ${x.farm_name}`.toLowerCase().includes(q))
-      .slice(0, 12);
+    const result = !q
+      ? fromOptions.slice(0, 12)
+      : fromOptions
+          .filter((x) =>
+            `${x.farm_code} ${x.farm_name}`.toLowerCase().includes(q)
+          )
+          .slice(0, 12);
+
+    return result;
   }, [fromOptions, fromQ]);
+
+  useEffect(() => {
+    dlog("filteredFromOptions recalculated", {
+      fromQ,
+      totalFromOptions: fromOptions.length,
+      filteredCount: filteredFromOptions.length,
+      sample: filteredFromOptions.slice(0, 5),
+    });
+  }, [fromQ, fromOptions, filteredFromOptions]);
 
   async function fetchAvailableCodes(codes) {
     const availableSet = new Set();
     const normalizedCodes = (codes || []).map(clean).filter(Boolean);
 
+    dlog("fetchAvailableCodes:start", {
+      inputCount: codes?.length || 0,
+      normalizedCount: normalizedCodes.length,
+      sample: normalizedCodes.slice(0, 20),
+    });
+
     if (!normalizedCodes.length) {
+      dlog("fetchAvailableCodes:empty input");
       return availableSet;
     }
 
     const codeChunks = chunkArray(normalizedCodes, 500);
 
-    for (const chunk of codeChunks) {
+    dlog("fetchAvailableCodes:chunked", {
+      chunkCount: codeChunks.length,
+      chunkSizes: codeChunks.map((x) => x.length),
+    });
+
+    for (let i = 0; i < codeChunks.length; i += 1) {
+      const chunk = codeChunks[i];
+      dlog("fetchAvailableCodes:query chunk", {
+        chunkIndex: i,
+        size: chunk.length,
+        sample: chunk.slice(0, 10),
+      });
+
       const { data: availableRows, error } = await supabase
         .from("swine_master")
         .select("swine_code")
@@ -231,6 +366,12 @@ export default function UserHomePage() {
         .in("swine_code", chunk);
 
       if (error) throw error;
+
+      dlog("fetchAvailableCodes:query result", {
+        chunkIndex: i,
+        returnedCount: availableRows?.length || 0,
+        sample: (availableRows || []).slice(0, 10),
+      });
 
       for (const row of availableRows || []) {
         const code = clean(row?.swine_code);
@@ -240,11 +381,18 @@ export default function UserHomePage() {
       }
     }
 
+    dlog("fetchAvailableCodes:done", {
+      availableCount: availableSet.size,
+      sample: Array.from(availableSet).slice(0, 20),
+    });
+
     return availableSet;
   }
 
   async function fetchFarmSwinesWithAvailability(farmCode) {
     const farmCodeClean = clean(farmCode);
+
+    dlog("fetchFarmSwinesWithAvailability:start", { farmCode: farmCodeClean });
 
     const { data: farmSwines, error: e1 } = await supabase
       .from("swines")
@@ -256,16 +404,23 @@ export default function UserHomePage() {
 
     if (e1) throw e1;
 
+    dlog("fetchFarmSwinesWithAvailability:swines raw", {
+      farmCode: farmCodeClean,
+      count: farmSwines?.length || 0,
+      sample: (farmSwines || []).slice(0, 20),
+    });
+
     const swines = (farmSwines || []).map(normalizeSwineRow);
     const codes = swines.map((x) => x.swine_code).filter(Boolean);
     const availableSet = await fetchAvailableCodes(codes);
 
-    console.log("fetchFarmSwinesWithAvailability", {
+    dlog("fetchFarmSwinesWithAvailability:done", {
       farmCode: farmCodeClean,
       swinesCount: swines.length,
+      codesCount: codes.length,
       availableCount: availableSet.size,
-      targetInSwines: swines.find((s) => s.swine_code === "2609545521") || null,
-      targetAvailable: availableSet.has("2609545521"),
+      swinesSample: swines.slice(0, 20),
+      availableSample: Array.from(availableSet).slice(0, 20),
     });
 
     return { swines, availableSet };
@@ -279,9 +434,17 @@ export default function UserHomePage() {
       clearMessage = true,
     } = opts;
 
+    dlog("reloadSwinesOfFarm:start", {
+      farmCode,
+      opts,
+      currentSelectedHouse: selectedHouse,
+      currentSelectedCount: selectedSwineIds.size,
+    });
+
     if (clearMessage) setMsg("");
 
     if (!farmCode) {
+      dlog("reloadSwinesOfFarm:no farmCode -> reset state");
       setSwineOptions([]);
       setAvailableSwineCodeSet(new Set());
       setDirectSearchResults([]);
@@ -299,11 +462,18 @@ export default function UserHomePage() {
     try {
       const { swines, availableSet } = await fetchFarmSwinesWithAvailability(farmCode);
 
+      dlog("reloadSwinesOfFarm:fetched", {
+        farmCode,
+        swinesCount: swines.length,
+        availableCount: availableSet.size,
+      });
+
       setSwineOptions(swines);
       setAvailableSwineCodeSet(availableSet);
       setDirectSearchResults([]);
 
       if (!preserveHouse) {
+        dlog("reloadSwinesOfFarm:clear selectedHouse because preserveHouse=false");
         setSelectedHouse("");
       } else {
         const houseValueSet = new Set(
@@ -311,12 +481,18 @@ export default function UserHomePage() {
         );
 
         setSelectedHouse((prev) => {
-          if (!prev) return prev;
-          return houseValueSet.has(prev) ? prev : "";
+          const next = !prev ? prev : houseValueSet.has(prev) ? prev : "";
+          dlog("reloadSwinesOfFarm:preserve house decision", {
+            previousHouse: prev,
+            houseExists: houseValueSet.has(prev),
+            nextHouse: next,
+          });
+          return next;
         });
       }
 
       if (clearPicked) {
+        dlog("reloadSwinesOfFarm:clear picked selection");
         setSelectedSwineIds(new Set());
         setSelectedSwineMap({});
         setSwineForm({});
@@ -324,21 +500,28 @@ export default function UserHomePage() {
       }
 
       if (clearSearch) {
+        dlog("reloadSwinesOfFarm:clear search text");
         setSwineQ("");
       }
     } catch (e) {
-      console.error("reloadSwinesOfFarm error:", e);
+      derr("reloadSwinesOfFarm error", e, { farmCode, opts });
       setSwineOptions([]);
       setAvailableSwineCodeSet(new Set());
       setDirectSearchResults([]);
       setMsg(e?.message || "โหลดรายการหมูไม่สำเร็จ");
     } finally {
       setSwineLoading(false);
+      dlog("reloadSwinesOfFarm:finish", { farmCode });
     }
   }
 
   useEffect(() => {
+    dlog("effect fromFarm.farm_code changed", {
+      farmCode: fromFarm?.farm_code || null,
+    });
+
     if (!fromFarm?.farm_code) {
+      dlog("effect fromFarm empty -> reset swine-related state");
       setSwineOptions([]);
       setAvailableSwineCodeSet(new Set());
       setDirectSearchResults([]);
@@ -367,7 +550,18 @@ export default function UserHomePage() {
       const house = clean(selectedHouse);
       const q = clean(swineQ);
 
+      dlog("runDirectSearch:trigger", {
+        farmCode,
+        house,
+        q,
+      });
+
       if (!farmCode || !house || !q) {
+        dlog("runDirectSearch:skip because missing farmCode/house/q", {
+          farmCode,
+          house,
+          q,
+        });
         setDirectSearchResults([]);
         setSwineSearchLoading(false);
         return;
@@ -389,6 +583,12 @@ export default function UserHomePage() {
 
         query = query.ilike("swine_code", `%${q}%`).limit(50);
 
+        dlog("runDirectSearch:query prepared", {
+          farmCode,
+          house,
+          q,
+        });
+
         const { data, error } = await query;
         if (error) throw error;
 
@@ -397,20 +597,25 @@ export default function UserHomePage() {
         const availableSet = await fetchAvailableCodes(codes);
         const availableRows = rows.filter((r) => availableSet.has(clean(r.swine_code)));
 
-        console.log("runDirectSearch", {
+        dlog("runDirectSearch:result", {
           farmCode,
           house,
           q,
-          rowsCount: rows.length,
-          availableRowsCount: availableRows.length,
-          target: availableRows.find((s) => s.swine_code === "2609545521") || null,
+          rawCount: rows.length,
+          availableCount: availableRows.length,
+          rawSample: rows.slice(0, 20),
+          availableSample: availableRows.slice(0, 20),
         });
 
         if (alive) {
           setDirectSearchResults(availableRows);
         }
       } catch (e) {
-        console.error("runDirectSearch error:", e);
+        derr("runDirectSearch error", e, {
+          farmCode,
+          house,
+          q,
+        });
         if (alive) {
           setDirectSearchResults([]);
         }
@@ -418,6 +623,11 @@ export default function UserHomePage() {
         if (alive) {
           setSwineSearchLoading(false);
         }
+        dlog("runDirectSearch:finish", {
+          farmCode,
+          house,
+          q,
+        });
       }
     }
 
@@ -445,20 +655,18 @@ export default function UserHomePage() {
     );
   }, [swineOptions]);
 
+  useEffect(() => {
+    dlog("houseOptions recalculated", {
+      swineOptionsCount: swineOptions.length,
+      houseCount: houseOptions.length,
+      houseOptions,
+    });
+  }, [swineOptions, houseOptions]);
+
   const filteredSwines = useMemo(() => {
     if (!selectedHouse) return [];
 
     const q = clean(swineQ).toLowerCase();
-
-    console.log("filteredSwines state", {
-      selectedHouse,
-      q,
-      swineOptionsCount: swineOptions.length,
-      availableCount: availableSwineCodeSet.size,
-      targetInOptions:
-        (swineOptions || []).find((s) => clean(s.swine_code) === "2609545521") || null,
-      targetAvailable: availableSwineCodeSet.has("2609545521"),
-    });
 
     if (q) {
       return directSearchResults.slice(0, 50);
@@ -484,6 +692,25 @@ export default function UserHomePage() {
     directSearchResults,
   ]);
 
+  useEffect(() => {
+    dlog("filteredSwines recalculated", {
+      selectedHouse,
+      swineQ,
+      swineOptionsCount: swineOptions.length,
+      availableCount: availableSwineCodeSet.size,
+      directSearchCount: directSearchResults.length,
+      filteredCount: filteredSwines.length,
+      filteredSample: filteredSwines.slice(0, 20),
+    });
+  }, [
+    selectedHouse,
+    swineQ,
+    swineOptions,
+    availableSwineCodeSet,
+    directSearchResults,
+    filteredSwines,
+  ]);
+
   const swineSourceMap = useMemo(() => {
     const map = new Map();
     for (const s of [...(swineOptions || []), ...(directSearchResults || [])]) {
@@ -492,7 +719,14 @@ export default function UserHomePage() {
     return map;
   }, [swineOptions, directSearchResults]);
 
+  useEffect(() => {
+    dlog("swineSourceMap recalculated", {
+      size: swineSourceMap.size,
+    });
+  }, [swineSourceMap]);
+
   const handleSelectFromFarm = useCallback((farm) => {
+    dlog("handleSelectFromFarm", { farm });
     setFromFarm(farm);
     setSelectedHouse("");
     setSwineQ("");
@@ -507,6 +741,10 @@ export default function UserHomePage() {
   }, []);
 
   const handleHouseChange = useCallback((value) => {
+    dlog("handleHouseChange", {
+      previousHouse: selectedHouse,
+      nextHouse: value,
+    });
     setSelectedHouse(value);
     setSwineQ("");
     setDirectSearchResults([]);
@@ -515,20 +753,44 @@ export default function UserHomePage() {
     setSwineForm({});
     setInvalidSwineIds(new Set());
     setMsg("");
-  }, []);
+  }, [selectedHouse]);
 
   const toggleSwine = useCallback((swineRow) => {
     const id = swineRow?.id;
-    if (!id) return;
+    if (!id) {
+      dlog("toggleSwine:skip because no id", { swineRow });
+      return;
+    }
+
+    dlog("toggleSwine:clicked", {
+      swineRow,
+    });
 
     setSelectedSwineIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) {
+      const wasSelected = next.has(id);
+
+      if (wasSelected) {
         next.delete(id);
       } else {
         next.add(id);
-        setSwineForm((pf) => (pf[id] ? pf : { ...pf, [id]: pf[id] || {} }));
+        setSwineForm((pf) => {
+          const nextForm = pf[id] ? pf : { ...pf, [id]: pf[id] || {} };
+          dlog("toggleSwine:init swineForm if needed", {
+            swineId: id,
+            existing: !!pf[id],
+            nextFormForSwine: nextForm[id] || {},
+          });
+          return nextForm;
+        });
       }
+
+      dlog("toggleSwine:selectedSwineIds updated", {
+        swineId: id,
+        wasSelected,
+        nextSelectedIds: Array.from(next),
+      });
+
       return next;
     });
 
@@ -544,6 +806,13 @@ export default function UserHomePage() {
           house_no: clean(swineRow?.house_no),
         };
       }
+
+      dlog("toggleSwine:selectedSwineMap updated", {
+        swineId: id,
+        nextSelectedSwine: next[id] || null,
+        nextMapSize: Object.keys(next).length,
+      });
+
       return next;
     });
 
@@ -551,14 +820,32 @@ export default function UserHomePage() {
       if (!prev.has(id)) return prev;
       const next = new Set(prev);
       next.delete(id);
+      dlog("toggleSwine:remove invalid mark", {
+        swineId: id,
+      });
       return next;
     });
   }, []);
 
   const setSwineField = useCallback((swine_id, field, value) => {
+    dlog("setSwineField", {
+      swine_id,
+      field,
+      value,
+      intPreview: toIntOrNull(value),
+      numPreview: toNumOrNull(value),
+    });
+
     setSwineForm((prev) => {
       const cur = prev[swine_id] || {};
-      return { ...prev, [swine_id]: { ...cur, [field]: value } };
+      const next = { ...prev, [swine_id]: { ...cur, [field]: value } };
+
+      dlog("setSwineField:next row form", {
+        swine_id,
+        nextRow: next[swine_id],
+      });
+
+      return next;
     });
   }, []);
 
@@ -572,10 +859,21 @@ export default function UserHomePage() {
     );
   }, [selectedDate, fromFarm, selectedToFarmId, selectedHouse, selectedSwineIds]);
 
+  useEffect(() => {
+    dlog("canSave recalculated", {
+      canSave,
+      selectedDate,
+      fromFarmCode: fromFarm?.farm_code || null,
+      selectedToFarmId,
+      selectedHouse,
+      selectedCount: selectedSwineIds.size,
+    });
+  }, [canSave, selectedDate, fromFarm, selectedToFarmId, selectedHouse, selectedSwineIds]);
+
   const buildSavePreviewRows = useCallback(() => {
     const selectedIds = Array.from(selectedSwineIds);
 
-    return selectedIds.map((swine_id, index) => {
+    const rows = selectedIds.map((swine_id, index) => {
       const picked = selectedSwineMap[swine_id] || null;
       const fallback = swineSourceMap.get(swine_id) || null;
 
@@ -596,6 +894,13 @@ export default function UserHomePage() {
         reason: issues.join(", ") || "พร้อมบันทึก",
       };
     });
+
+    dlog("buildSavePreviewRows", {
+      selectedIds,
+      rows,
+    });
+
+    return rows;
   }, [selectedSwineIds, selectedSwineMap, swineSourceMap]);
 
   const previewSummary = useMemo(() => {
@@ -604,6 +909,13 @@ export default function UserHomePage() {
     const invalid = total - valid;
     return { total, valid, invalid };
   }, [savePreviewRows]);
+
+  useEffect(() => {
+    dlog("previewSummary recalculated", {
+      previewSummary,
+      savePreviewRows,
+    });
+  }, [previewSummary, savePreviewRows]);
 
   const okRows = useMemo(
     () => savePreviewRows.filter((x) => x.ok),
@@ -618,27 +930,60 @@ export default function UserHomePage() {
   const hasPreviewError = badRows.length > 0;
 
   const openSavePreview = useCallback(() => {
+    dlog("openSavePreview:start", {
+      canSave,
+      selectedDate,
+      fromFarm,
+      selectedToFarmId,
+      selectedHouse,
+      selectedCount: selectedSwineIds.size,
+      selectedIds: Array.from(selectedSwineIds),
+      selectedSwineMap,
+      swineForm,
+    });
+
     if (!canSave) {
+      dlog("openSavePreview:block because canSave=false");
       setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + House + หมูอย่างน้อย 1 ตัว");
       return;
     }
 
     const rows = buildSavePreviewRows();
+    const invalidSet = new Set(rows.filter((x) => !x.ok).map((x) => x.swine_id));
+
+    dlog("openSavePreview:rows built", {
+      rows,
+      invalidIds: Array.from(invalidSet),
+    });
+
     setSavePreviewRows(rows);
-    setInvalidSwineIds(new Set(rows.filter((x) => !x.ok).map((x) => x.swine_id)));
+    setInvalidSwineIds(invalidSet);
     setShowSavePreview(true);
     setMsg("");
-  }, [canSave, buildSavePreviewRows]);
+  }, [
+    canSave,
+    selectedDate,
+    fromFarm,
+    selectedToFarmId,
+    selectedHouse,
+    selectedSwineIds,
+    selectedSwineMap,
+    swineForm,
+    buildSavePreviewRows,
+  ]);
 
   const logout = useCallback(async (e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
     setMsg("");
 
+    dlog("logout:start");
+
     try {
       await supabase.auth.signOut();
+      dlog("logout:signed out from supabase");
     } catch (err) {
-      console.error("logout error:", err);
+      derr("logout error", err);
     }
 
     try {
@@ -648,15 +993,31 @@ export default function UserHomePage() {
       for (const k of Object.keys(sessionStorage)) {
         if (k.startsWith("sb-")) sessionStorage.removeItem(k);
       }
-    } catch {
-      // ignore
+      dlog("logout:cleared local/session storage");
+    } catch (e2) {
+      derr("logout storage clear error", e2);
     }
 
+    dlog("logout:redirect to login");
     window.location.replace(`/login?logout=1&ts=${Date.now()}`);
   }, []);
 
   async function saveDraft() {
+    dlog("saveDraft:start", {
+      canSave,
+      selectedDate,
+      fromFarm,
+      selectedToFarmId,
+      selectedHouse,
+      remark,
+      selectedCount: selectedSwineIds.size,
+      selectedIds: Array.from(selectedSwineIds),
+      selectedSwineMap,
+      swineForm,
+    });
+
     if (!canSave) {
+      dlog("saveDraft:block because canSave=false");
       setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง + House + หมูอย่างน้อย 1 ตัว");
       return;
     }
@@ -664,10 +1025,20 @@ export default function UserHomePage() {
     const previewRowsNow = buildSavePreviewRows();
     const invalidNow = previewRowsNow.filter((x) => !x.ok);
 
+    dlog("saveDraft:previewRowsNow", {
+      previewRowsNow,
+      invalidNow,
+    });
+
     setSavePreviewRows(previewRowsNow);
     setInvalidSwineIds(new Set(invalidNow.map((x) => x.swine_id)));
 
     if (invalidNow.length > 0) {
+      dlog("saveDraft:block because preview invalid", {
+        invalidCount: invalidNow.length,
+        invalidLabels: invalidNow.map((x) => x.label),
+      });
+
       setShowSavePreview(true);
       setMsg(
         `ยังบันทึกไม่ได้ กรุณากลับไปแก้ไขรายการที่มีปัญหาก่อน: ${invalidNow
@@ -685,6 +1056,12 @@ export default function UserHomePage() {
         data: { user },
         error: authError,
       } = await supabase.auth.getUser();
+
+      dlog("saveDraft:getUser result", {
+        hasUser: !!user,
+        userId: user?.id || null,
+        authError: authError || null,
+      });
 
       if (authError) throw authError;
       if (!user?.id) throw new Error("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
@@ -705,27 +1082,18 @@ export default function UserHomePage() {
         status: "draft",
       };
 
+      dlog("saveDraft:header payload", header);
+
       setMsg("กำลังบันทึกหัวรายการ...");
       const res1 = await withTimeout(
         supabase.from("swine_shipments").insert([header]),
         15000,
         "insert swine_shipments"
       );
+
+      dlog("saveDraft:insert header result", res1);
+
       if (res1.error) throw res1.error;
-
-      const toIntOrNull = (v) => {
-        const s = clean(v);
-        if (!s) return null;
-        const n = Number(s);
-        return Number.isFinite(n) ? Math.trunc(n) : null;
-      };
-
-      const toNumOrNull = (v) => {
-        const s = clean(v);
-        if (!s) return null;
-        const n = Number(s);
-        return Number.isFinite(n) ? n : null;
-      };
 
       const itemRows = selectedIds.map((swine_id) => {
         const f = swineForm[swine_id] || {};
@@ -745,6 +1113,8 @@ export default function UserHomePage() {
         };
       });
 
+      dlog("saveDraft:itemRows before insert", itemRows);
+
       const missingCodeRows = itemRows
         .filter((r) => !r.swine_code)
         .map((r, i) => {
@@ -753,12 +1123,18 @@ export default function UserHomePage() {
         });
 
       if (missingCodeRows.length > 0) {
+        dlog("saveDraft:missing swine_code found", {
+          missingCodeRows,
+        });
         throw new Error(
           `MISSING_SWINE_CODE: บางตัวไม่มี swine_code (${missingCodeRows.join(", ")})`
         );
       }
 
       if (itemRows.some((r) => !r.swine_id)) {
+        dlog("saveDraft:missing swine_id found", {
+          itemRows,
+        });
         throw new Error("MISSING_SWINE_ID: บางตัวไม่มี swine_id");
       }
 
@@ -768,9 +1144,17 @@ export default function UserHomePage() {
         15000,
         "insert swine_shipment_items"
       );
+
+      dlog("saveDraft:insert itemRows result", res2);
+
       if (res2.error) throw res2.error;
 
       const pickedCodes = itemRows.map((x) => clean(x.swine_code)).filter(Boolean);
+
+      dlog("saveDraft:pickedCodes", {
+        count: pickedCodes.length,
+        pickedCodes,
+      });
 
       if (pickedCodes.length) {
         setMsg("กำลังอัปเดตสถานะหมู...");
@@ -782,12 +1166,20 @@ export default function UserHomePage() {
           15000,
           "update swine_master"
         );
+
+        dlog("saveDraft:update swine_master result", res3);
+
         if (res3.error) throw res3.error;
       }
 
       setCurrentShipmentId(shipmentId);
       setCurrentStatus("draft");
       setMsg(`Save Draft สำเร็จ ✅ (Shipment: ${shipmentId}, หมู: ${selectedCount} ตัว)`);
+
+      dlog("saveDraft:success", {
+        shipmentId,
+        selectedCount,
+      });
 
       setRemark("");
       setSelectedSwineIds(new Set());
@@ -803,13 +1195,16 @@ export default function UserHomePage() {
         clearSearch: false,
         clearMessage: false,
       });
+
+      dlog("saveDraft:finish success");
     } catch (e) {
-      console.error("saveDraft error:", {
-        message: e?.message,
-        code: e?.code,
-        details: e?.details,
-        hint: e?.hint,
-        raw: e,
+      derr("saveDraft error", e, {
+        selectedDate,
+        fromFarm,
+        selectedToFarmId,
+        selectedHouse,
+        selectedIds: Array.from(selectedSwineIds),
+        swineForm,
       });
 
       setMsg(
@@ -819,11 +1214,18 @@ export default function UserHomePage() {
       );
     } finally {
       setSaving(false);
+      dlog("saveDraft:finally -> saving=false");
     }
   }
 
   async function submitShipment() {
+    dlog("submitShipment:start", {
+      currentShipmentId,
+      currentStatus,
+    });
+
     if (!currentShipmentId) {
+      dlog("submitShipment:block because no currentShipmentId");
       setMsg("กรุณา Save Draft ก่อน แล้วจึง Submit");
       return;
     }
@@ -838,6 +1240,11 @@ export default function UserHomePage() {
         .eq("id", currentShipmentId)
         .single();
 
+      dlog("submitShipment:shipment query result", {
+        shipment,
+        error: e1 || null,
+      });
+
       if (e1) throw e1;
       if (!shipment) throw new Error("ไม่พบข้อมูล shipment");
       if (shipment.status !== "draft") {
@@ -850,6 +1257,11 @@ export default function UserHomePage() {
         .eq("shipment_id", currentShipmentId)
         .limit(1);
 
+      dlog("submitShipment:items query result", {
+        items,
+        error: e2 || null,
+      });
+
       if (e2) throw e2;
       if (!items || items.length === 0) {
         throw new Error("ไม่มีรายการหมูใน shipment นี้");
@@ -858,6 +1270,10 @@ export default function UserHomePage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
+
+      dlog("submitShipment:getUser", {
+        userId: user?.id || null,
+      });
 
       const payload = {
         status: "submitted",
@@ -868,18 +1284,32 @@ export default function UserHomePage() {
         payload.submitted_by = user.id;
       }
 
+      dlog("submitShipment:update payload", payload);
+
       const { error: e3 } = await supabase
         .from("swine_shipments")
         .update(payload)
         .eq("id", currentShipmentId)
         .eq("status", "draft");
 
+      dlog("submitShipment:update result", {
+        error: e3 || null,
+      });
+
       if (e3) throw e3;
 
       setCurrentStatus("submitted");
       setMsg("Submit สำเร็จ ✅ และเปลี่ยนสถานะเป็น submitted แล้ว");
+
+      dlog("submitShipment:success", {
+        currentShipmentId,
+      });
     } catch (e) {
-      console.error("submitShipment error:", e);
+      derr("submitShipment error", e, {
+        currentShipmentId,
+        currentStatus,
+      });
+
       setMsg(
         `${e?.message || "Submit ไม่สำเร็จ"}${
           e?.details ? ` | details: ${e.details}` : ""
@@ -887,6 +1317,7 @@ export default function UserHomePage() {
       );
     } finally {
       setSubmitting(false);
+      dlog("submitShipment:finally -> submitting=false");
     }
   }
 
@@ -942,7 +1373,10 @@ export default function UserHomePage() {
           <button
             className="linkbtn"
             type="button"
-            onClick={() => nav("/edit-shipment")}
+            onClick={() => {
+              dlog("navigate:/edit-shipment");
+              nav("/edit-shipment");
+            }}
           >
             จอแก้ไข
           </button>
@@ -950,7 +1384,10 @@ export default function UserHomePage() {
           <button
             className="linkbtn"
             type="button"
-            onClick={() => nav("/export-csv")}
+            onClick={() => {
+              dlog("navigate:/export-csv");
+              nav("/export-csv");
+            }}
           >
             Export CSV
           </button>
@@ -999,7 +1436,10 @@ export default function UserHomePage() {
           <input
             type="date"
             value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
+            onChange={(e) => {
+              dlog("selectedDate:onChange", { value: e.target.value });
+              setSelectedDate(e.target.value);
+            }}
             style={fullInputStyle}
           />
 
@@ -1014,7 +1454,10 @@ export default function UserHomePage() {
 
           <input
             value={fromQ}
-            onChange={(e) => setFromQ(e.target.value)}
+            onChange={(e) => {
+              dlog("fromQ:onChange", { value: e.target.value });
+              setFromQ(e.target.value);
+            }}
             placeholder="พิมพ์ค้นหา farm code / farm name…"
             style={fullInputStyle}
           />
@@ -1083,7 +1526,10 @@ export default function UserHomePage() {
           <FarmPickerInlineAdd
             label="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
             value={toFarmId}
-            onChange={setToFarmId}
+            onChange={(value) => {
+              dlog("FarmPickerInlineAdd:onChange", { value });
+              setToFarmId(value);
+            }}
             requireBranch={false}
           />
         </div>
@@ -1160,7 +1606,10 @@ export default function UserHomePage() {
             <>
               <input
                 value={swineQ}
-                onChange={(e) => setSwineQ(e.target.value)}
+                onChange={(e) => {
+                  dlog("swineQ:onChange", { value: e.target.value });
+                  setSwineQ(e.target.value);
+                }}
                 placeholder="พิมพ์ค้นหา swine code…"
                 style={fullInputStyle}
               />
@@ -1385,6 +1834,9 @@ export default function UserHomePage() {
                   type="button"
                   className="linkbtn"
                   onClick={() => {
+                    dlog("clear selected swines button clicked", {
+                      selectedIds: Array.from(selectedSwineIds),
+                    });
                     setSelectedSwineIds(new Set());
                     setSelectedSwineMap({});
                     setSwineForm({});
@@ -1402,7 +1854,10 @@ export default function UserHomePage() {
           <div style={{ fontWeight: 700 }}>หมายเหตุ</div>
           <textarea
             value={remark}
-            onChange={(e) => setRemark(e.target.value)}
+            onChange={(e) => {
+              dlog("remark:onChange", { value: e.target.value });
+              setRemark(e.target.value);
+            }}
             rows={3}
             placeholder="ใส่หมายเหตุ (ถ้ามี)"
             style={{
@@ -1445,6 +1900,20 @@ export default function UserHomePage() {
             className="linkbtn"
             type="button"
             onClick={() => {
+              dlog("clear all button clicked", {
+                selectedDate,
+                currentShipmentId,
+                currentStatus,
+                fromFarm,
+                toFarmId,
+                selectedHouse,
+                remark,
+                fromQ,
+                swineQ,
+                selectedIds: Array.from(selectedSwineIds),
+                swineForm,
+              });
+
               setSaving(false);
               setSubmitting(false);
               setMsg("");
@@ -1476,7 +1945,10 @@ export default function UserHomePage() {
 
       {showSavePreview && (
         <div
-          onClick={() => !saving && setShowSavePreview(false)}
+          onClick={() => {
+            dlog("save preview backdrop clicked", { saving });
+            if (!saving) setShowSavePreview(false);
+          }}
           style={{
             position: "fixed",
             inset: 0,
@@ -1723,7 +2195,10 @@ export default function UserHomePage() {
                 <button
                   type="button"
                   className="linkbtn"
-                  onClick={() => setShowSavePreview(false)}
+                  onClick={() => {
+                    dlog("save preview: back button clicked");
+                    setShowSavePreview(false);
+                  }}
                   disabled={saving}
                 >
                   กลับไปแก้ไข
