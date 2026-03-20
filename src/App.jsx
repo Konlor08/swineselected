@@ -1,3 +1,5 @@
+// src/App.jsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
@@ -14,6 +16,7 @@ import UserHomePage from "./pages/UserHomePage.jsx";
 import DisabledPage from "./pages/DisabledPage.jsx";
 import NoProfilePage from "./pages/NoProfilePage.jsx";
 import ExportCsvPage from "./pages/ExportCsvPage.jsx";
+import ShipmentCreatePage from "./pages/ShipmentCreatePage.jsx";
 import EditShipmentPage from "./pages/EditShipmentPage.jsx";
 
 const ROLE_ADMIN = ["admin"];
@@ -266,10 +269,19 @@ export default function App() {
         />
 
         <Route
-          path="/export-csv"
+          path="/shipment-create"
           element={
             <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
-              <ExportCsvPage />
+              <ShipmentCreatePage />
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="/create-shipment"
+          element={
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
+              <Navigate to="/shipment-create" replace />
             </RequireRole>
           }
         />
@@ -279,6 +291,15 @@ export default function App() {
           element={
             <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <EditShipmentPage />
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="/export-csv"
+          element={
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
+              <ExportCsvPage />
             </RequireRole>
           }
         />
