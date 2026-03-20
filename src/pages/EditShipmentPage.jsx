@@ -15,6 +15,14 @@ function todayYmdLocal() {
   return `${y}-${m}-${day}`;
 }
 
+function formatDateDisplay(v) {
+  const s = clean(v);
+  if (!s) return "-";
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s;
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
 function withTimeout(promise, ms = 20000, label = "request") {
   return Promise.race([
     promise,
@@ -71,8 +79,12 @@ function ensureAffectedRows(data, label, expectedMin = 1) {
 }
 
 function sortShipmentItems(a, b) {
-  const aNo = Number.isFinite(Number(a?.selection_no)) ? Number(a.selection_no) : 999999999;
-  const bNo = Number.isFinite(Number(b?.selection_no)) ? Number(b.selection_no) : 999999999;
+  const aNo = Number.isFinite(Number(a?.selection_no))
+    ? Number(a.selection_no)
+    : 999999999;
+  const bNo = Number.isFinite(Number(b?.selection_no))
+    ? Number(b.selection_no)
+    : 999999999;
 
   if (aNo !== bNo) return aNo - bNo;
 
@@ -146,6 +158,8 @@ export default function EditShipmentPage() {
   const [selectedShipmentId, setSelectedShipmentId] = useState("");
   const [shipmentHeader, setShipmentHeader] = useState(null);
   const [editRemark, setEditRemark] = useState("");
+  const [editToFarmId, setEditToFarmId] = useState("");
+  const [editDeliveryDate, setEditDeliveryDate] = useState("");
 
   const [itemRows, setItemRows] = useState([]);
   const [selectedEditItemId, setSelectedEditItemId] = useState("");
@@ -280,6 +294,7 @@ export default function EditShipmentPage() {
           id,
           shipment_no,
           selected_date,
+          delivery_date,
           from_farm_code,
           from_farm_name,
           to_farm_id,
@@ -423,6 +438,8 @@ export default function EditShipmentPage() {
       setSelectedShipmentId("");
       setShipmentHeader(null);
       setEditRemark("");
+      setEditToFarmId("");
+      setEditDeliveryDate("");
       setItemRows([]);
       setSelectedEditItemId("");
       setEditSwineQ("");
@@ -696,6 +713,7 @@ export default function EditShipmentPage() {
             id,
             shipment_no,
             selected_date,
+            delivery_date,
             from_farm_code,
             from_farm_name,
             to_farm_id,
@@ -752,6 +770,8 @@ export default function EditShipmentPage() {
 
         setShipmentHeader(data);
         setEditRemark(data.remark || "");
+        setEditToFarmId(clean(data.to_farm_id));
+        setEditDeliveryDate(clean(data.delivery_date));
         setItemRows(mappedItems);
         setSelectedEditItemId(mappedItems[0]?.id || "");
         setEditSwineQ("");
@@ -781,6 +801,8 @@ export default function EditShipmentPage() {
         console.error("openShipment error:", e);
         setShipmentHeader(null);
         setEditRemark("");
+        setEditToFarmId("");
+        setEditDeliveryDate("");
         setItemRows([]);
         setSelectedEditItemId("");
         setEditSwineQ("");
@@ -886,8 +908,10 @@ export default function EditShipmentPage() {
   function addNewSwine(swine) {
     if (!swine?.id) return;
 
-    const alreadyAdded = newItemRows.some((x) => x.swine_id === swine.id);
-    if (alreadyAdded) return;
+    const alreadyInExisting = itemRows.some((x) => x.swine_id === swine.id);
+    const alreadyInNew = newItemRows.some((x) => x.swine_id === swine.id);
+
+    if (alreadyInExisting || alreadyInNew) return;
 
     setNewItemRows((prev) => {
       const next = [
@@ -917,6 +941,14 @@ export default function EditShipmentPage() {
     });
   }
 
+  const existingItemCodeSet = useMemo(() => {
+    return new Set(itemRows.map((x) => clean(x.swine_code)).filter(Boolean));
+  }, [itemRows]);
+
+  const newItemCodeSet = useMemo(() => {
+    return new Set(newItemRows.map((x) => clean(x.swine_code)).filter(Boolean));
+  }, [newItemRows]);
+
   const houseOptions = useMemo(() => {
     const map = new Map();
 
@@ -936,7 +968,6 @@ export default function EditShipmentPage() {
     if (!addHouse) return [];
 
     const q = clean(addSwineQ).toLowerCase();
-    const newCodes = new Set(newItemRows.map((x) => clean(x.swine_code)).filter(Boolean));
 
     return (availableSwines || [])
       .filter((s) => {
@@ -948,13 +979,14 @@ export default function EditShipmentPage() {
         }
 
         const code = clean(s.swine_code);
-        if (newCodes.has(code)) return false;
+        if (existingItemCodeSet.has(code)) return false;
+        if (newItemCodeSet.has(code)) return false;
 
         if (q && !String(code).toLowerCase().includes(q)) return false;
         return true;
       })
       .slice(0, 30);
-  }, [availableSwines, addHouse, addSwineQ, newItemRows]);
+  }, [availableSwines, addHouse, addSwineQ, existingItemCodeSet, newItemCodeSet]);
 
   const filteredEditItems = useMemo(() => {
     const q = clean(editSwineQ).toLowerCase();
@@ -975,6 +1007,11 @@ export default function EditShipmentPage() {
       return;
     }
 
+    if (!clean(editToFarmId)) {
+      setMsg("กรุณาเลือกฟาร์มปลายทาง");
+      return;
+    }
+
     setSaving(true);
     let step = "เริ่มต้น";
     setMsg("กำลังเริ่มบันทึก...");
@@ -982,10 +1019,12 @@ export default function EditShipmentPage() {
     try {
       const shipmentId = shipmentHeader.id;
 
-      step = "อัปเดตหมายเหตุ shipment";
-      setMsg("กำลังอัปเดตหมายเหตุ shipment...");
+      step = "อัปเดตหัว shipment";
+      setMsg("กำลังอัปเดตหัว shipment...");
       const headerPayload = {
         remark: clean(editRemark) || null,
+        to_farm_id: clean(editToFarmId) || null,
+        delivery_date: clean(editDeliveryDate) || null,
       };
 
       const res1 = await withTimeout(
@@ -1377,6 +1416,9 @@ export default function EditShipmentPage() {
                 onChange={(e) => handleDateChange(e.target.value)}
                 style={fullInputStyle}
               />
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                แสดงผล: {formatDateDisplay(filterDate)}
+              </div>
             </div>
 
             <div>
@@ -1470,9 +1512,12 @@ export default function EditShipmentPage() {
                           {row.shipment_no || row.id}
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#444" }}>
-                          วันคัด: <b>{row.selected_date || "-"}</b> | ต้นทาง:{" "}
+                          วันคัด: <b>{formatDateDisplay(row.selected_date)}</b> | ต้นทาง:{" "}
                           <b>{row.from_farm_name || row.from_farm_code || "-"}</b> | ปลายทาง:{" "}
                           <b>{row.to_farm?.farm_name || "-"}</b>
+                        </div>
+                        <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                          วันส่ง: <b>{formatDateDisplay(row.delivery_date)}</b>
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           สถานะ: <b>{row.status || "-"}</b>
@@ -1534,7 +1579,7 @@ export default function EditShipmentPage() {
                     วันคัด
                   </div>
                   <input
-                    value={shipmentHeader.selected_date || ""}
+                    value={formatDateDisplay(shipmentHeader.selected_date)}
                     readOnly
                     style={{ ...fullInputStyle, background: "#f8fafc" }}
                   />
@@ -1557,11 +1602,35 @@ export default function EditShipmentPage() {
                   <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
                     ฟาร์มปลายทาง
                   </div>
+                  <select
+                    value={editToFarmId}
+                    onChange={(e) => setEditToFarmId(e.target.value)}
+                    style={fullInputStyle}
+                  >
+                    <option value="">
+                      {toFarmLoading ? "กำลังโหลด..." : "เลือกฟาร์มปลายทาง"}
+                    </option>
+                    {toFarmOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                    วันส่งปลายทาง
+                  </div>
                   <input
-                    value={shipmentHeader.to_farm?.farm_name || ""}
-                    readOnly
-                    style={{ ...fullInputStyle, background: "#f8fafc" }}
+                    type="date"
+                    value={editDeliveryDate}
+                    onChange={(e) => setEditDeliveryDate(e.target.value)}
+                    style={fullInputStyle}
                   />
+                  <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                    แสดงผล: {formatDateDisplay(editDeliveryDate)}
+                  </div>
                 </div>
               </div>
 
@@ -1738,7 +1807,7 @@ export default function EditShipmentPage() {
                           <div className="small" style={{ marginTop: 6, color: "#666" }}>
                             House: {selectedEditItem.house_no || "-"} | Flock:{" "}
                             {selectedEditItem.flock || "-"} | วันเกิด:{" "}
-                            {selectedEditItem.birth_date || "-"}
+                            {formatDateDisplay(selectedEditItem.birth_date)}
                           </div>
                         </div>
 
@@ -1943,7 +2012,7 @@ export default function EditShipmentPage() {
                             </div>
                             <div className="small" style={{ marginTop: 6, color: "#666" }}>
                               House: {swine.house_no || "-"} | Flock: {swine.flock || "-"} |
-                              วันเกิด: {swine.birth_date || "-"}
+                              วันเกิด: {formatDateDisplay(swine.birth_date)}
                             </div>
 
                             <div
@@ -2053,7 +2122,7 @@ export default function EditShipmentPage() {
                           </div>
                           <div className="small" style={{ marginTop: 6, color: "#666" }}>
                             House: {row.house_no || "-"} | Flock: {row.flock || "-"} |
-                            วันเกิด: {row.birth_date || "-"}
+                            วันเกิด: {formatDateDisplay(row.birth_date)}
                           </div>
                         </div>
 
