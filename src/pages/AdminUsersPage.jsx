@@ -46,6 +46,7 @@ const INITIAL_LIMIT = 1000;
 function mapProfileFromDb(row) {
   return {
     user_id: row.user_id,
+    email: normDbText(row.email),
     display_name: normDbText(row.display_name),
     username: normDbText(row.username),
     role: lower(normDbText(row.role) || "user"),
@@ -74,6 +75,16 @@ function buildSafeDisplayNameFromRow(row) {
     normDbText(row.username) ||
     (row.user_id ? `user-${String(row.user_id).slice(0, 8)}` : null)
   );
+}
+
+function buildSafeEmailFromRow(row) {
+  const safeEmail = normDbText(row.email);
+  if (safeEmail) return safeEmail;
+
+  const safeUsername = normDbText(row.username);
+  if (safeUsername) return `${safeUsername}@swine.local`;
+
+  return null;
 }
 
 export default function AdminUsersPage() {
@@ -110,7 +121,7 @@ export default function AdminUsersPage() {
       const profilesPromise = withTimeout(
         supabase
           .from("profiles")
-          .select("user_id, display_name, username, role, team_name, is_active, branch_id")
+          .select("user_id, email, display_name, username, role, team_name, is_active, branch_id")
           .order("display_name", { ascending: true })
           .limit(INITIAL_LIMIT),
         LOAD_TIMEOUT_MS,
@@ -205,6 +216,7 @@ export default function AdminUsersPage() {
       const selectedBranch = selectedBranchId ? branchMap.get(selectedBranchId) : null;
 
       const uid = lower(p.user_id);
+      const em = lower(buildSafeEmailFromRow(p));
       const dn = lower(buildSafeDisplayNameFromRow(p));
       const un = lower(buildSafeUsernameFromRow(p));
       const tn = lower(d.team_name ?? p.team_name ?? "");
@@ -214,6 +226,7 @@ export default function AdminUsersPage() {
 
       return (
         uid.includes(qq) ||
+        em.includes(qq) ||
         dn.includes(qq) ||
         un.includes(qq) ||
         tn.includes(qq) ||
@@ -368,7 +381,7 @@ export default function AdminUsersPage() {
               className="input"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="ค้นหา: display_name / username / team_name / user_id / role / branch"
+              placeholder="ค้นหา: display_name / email / username / team_name / user_id / role / branch"
               style={{ flex: "1 1 320px", minWidth: 240 }}
             />
             <div className="small">
@@ -413,7 +426,7 @@ export default function AdminUsersPage() {
                 <thead>
                   <tr>
                     <th style={thStyle}>display_name</th>
-                    <th style={thStyle}>user_id</th>
+                    <th style={thStyle}>email</th>
                     <th style={thStyle}>role</th>
                     <th style={thStyle}>team_name</th>
                     <th style={thStyle}>branch</th>
@@ -430,6 +443,7 @@ export default function AdminUsersPage() {
 
                     const safeDisplayName = buildSafeDisplayNameFromRow(p);
                     const safeUsername = buildSafeUsernameFromRow(p);
+                    const safeEmail = buildSafeEmailFromRow(p);
 
                     return (
                       <tr key={uid}>
@@ -442,8 +456,11 @@ export default function AdminUsersPage() {
                           ) : null}
                         </td>
 
-                        <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
-                          <span className="small">{dash(uid)}</span>
+                        <td style={{ ...tdStyle, whiteSpace: "nowrap", minWidth: 260 }}>
+                          <div className="small">{dash(safeEmail)}</div>
+                          <div className="small" style={{ marginTop: 4, color: "#94a3b8" }}>
+                            {uid}
+                          </div>
                         </td>
 
                         <td style={tdStyle}>
