@@ -1,3 +1,5 @@
+// src/pages/ShipmentCreatePage.jsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -15,6 +17,10 @@ function todayYmdLocal() {
   return `${y}-${m}-${day}`;
 }
 
+function sortByLabel(a, b) {
+  return String(a?.label || "").localeCompare(String(b?.label || ""), "th");
+}
+
 async function getCurrentUserId() {
   const {
     data: { user },
@@ -25,7 +31,7 @@ async function getCurrentUserId() {
   return user?.id || null;
 }
 
-function FarmSelectedCard({ title, farm, onChange }) {
+function FarmSelectedCard({ title, farm, subtitle, onChange }) {
   return (
     <div
       style={{
@@ -45,10 +51,8 @@ function FarmSelectedCard({ title, farm, onChange }) {
             {clean(farm.farm_code) || "-"} - {clean(farm.farm_name) || "-"}
           </div>
 
-          {"branch_id" in farm ? (
-            <div style={{ color: "#64748b", fontSize: 13 }}>
-              branch_id: {clean(farm.branch_id) || "-"}
-            </div>
+          {subtitle ? (
+            <div style={{ color: "#64748b", fontSize: 13 }}>{subtitle}</div>
           ) : null}
         </>
       ) : (
@@ -74,15 +78,20 @@ export default function ShipmentCreatePage() {
   const [currentUserId, setCurrentUserId] = useState("");
 
   const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
-  const [fromFarmId, setFromFarmId] = useState(null);
-  const [toFarmId, setToFarmId] = useState(null);
-  const [remark, setRemark] = useState("");
 
+  // ต้นทาง = เลือกจากเบอร์หมูที่คัดได้
+  const [fromQ, setFromQ] = useState("");
+  const [fromLoading, setFromLoading] = useState(false);
+  const [fromOptions, setFromOptions] = useState([]);
   const [fromFarm, setFromFarm] = useState(null);
-  const [toFarm, setToFarm] = useState(null);
-
   const [fromPickerOpen, setFromPickerOpen] = useState(true);
+
+  // ปลายทาง = ยังใช้ picker ปกติ
+  const [toFarmId, setToFarmId] = useState(null);
+  const [toFarm, setToFarm] = useState(null);
   const [toPickerOpen, setToPickerOpen] = useState(true);
+
+  const [remark, setRemark] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -107,40 +116,48 @@ export default function ShipmentCreatePage() {
     };
   }, []);
 
-  useEffect(() => {
-    let alive = true;
+  const loadFromFarms = useCallback(async () => {
+    setFromLoading(true);
+    setMsg("");
 
-    async function loadFromFarm() {
-      if (!fromFarmId) {
-        setFromFarm(null);
-        return;
-      }
+    try {
+      const { data, error } = await supabase
+        .from("v_swine_source_farms")
+        .select(
+          "farm_code, farm_name, flock, swine_count, first_saved_date, cutoff_date, is_selectable"
+        )
+        .eq("is_selectable", true)
+        .order("farm_code", { ascending: true });
 
-      try {
-        const { data, error } = await supabase
-          .from("swine_farms")
-          .select("id, farm_code, farm_name, branch_id")
-          .eq("id", fromFarmId)
-          .single();
+      if (error) throw error;
 
-        if (!alive) return;
-        if (error) throw error;
+      const arr = (data || [])
+        .map((r) => ({
+          farm_code: clean(r.farm_code),
+          farm_name: clean(r.farm_name) || clean(r.farm_code),
+          flock: clean(r.flock),
+          branch_id: null,
+          swine_count: Number(r.swine_count || 0),
+          first_saved_date: r.first_saved_date || null,
+          cutoff_date: r.cutoff_date || null,
+          is_selectable: r.is_selectable !== false,
+          label: `${clean(r.farm_code)} - ${clean(r.farm_name) || clean(r.farm_code)}`,
+        }))
+        .filter((x) => x.farm_code && x.is_selectable);
 
-        setFromFarm(data || null);
-      } catch (e) {
-        console.error("load fromFarm error:", e);
-        if (alive) {
-          setFromFarm(null);
-          setMsg(e?.message || "โหลดฟาร์มต้นทางไม่สำเร็จ");
-        }
-      }
+      setFromOptions(arr);
+    } catch (e) {
+      console.error("loadFromFarms error:", e);
+      setFromOptions([]);
+      setMsg(e?.message || "โหลดฟาร์มต้นทางไม่สำเร็จ");
+    } finally {
+      setFromLoading(false);
     }
+  }, []);
 
-    void loadFromFarm();
-    return () => {
-      alive = false;
-    };
-  }, [fromFarmId]);
+  useEffect(() => {
+    void loadFromFarms();
+  }, [loadFromFarms]);
 
   useEffect(() => {
     let alive = true;
@@ -152,7 +169,6 @@ export default function ShipmentCreatePage() {
       }
 
       try {
-        // ปลายทางตาม schema ล่าสุดอ้างอิง master_farms
         const { data, error } = await supabase
           .from("master_farms")
           .select("id, farm_code, farm_name")
@@ -178,9 +194,26 @@ export default function ShipmentCreatePage() {
     };
   }, [toFarmId]);
 
-  const isSame = useMemo(() => {
-    return !!fromFarmId && !!toFarmId && fromFarmId === toFarmId;
-  }, [fromFarmId, toFarmId]);
+  const filteredFromOptions = useMemo(() => {
+    const q = clean(fromQ).toLowerCase();
+    const result = !q
+      ? fromOptions.slice(0, 30)
+      : fromOptions
+          .filter((x) =>
+            `${x.farm_code} ${x.farm_name} ${x.flock}`.toLowerCase().includes(q)
+          )
+          .slice(0, 30);
+
+    return result.sort(sortByLabel);
+  }, [fromOptions, fromQ]);
+
+  const isSameFarm = useMemo(() => {
+    return (
+      !!clean(fromFarm?.farm_code) &&
+      !!clean(toFarm?.farm_code) &&
+      clean(fromFarm?.farm_code) === clean(toFarm?.farm_code)
+    );
+  }, [fromFarm?.farm_code, toFarm?.farm_code]);
 
   const hardErrors = useMemo(() => {
     const errors = [];
@@ -189,19 +222,19 @@ export default function ShipmentCreatePage() {
       errors.push("กรุณาเลือกวันคัด");
     }
 
-    if (!fromFarmId) {
-      errors.push("กรุณาเลือกฟาร์มต้นทาง");
+    if (!fromFarm?.farm_code) {
+      errors.push("กรุณาเลือกฟาร์มต้นทางจากรายการเบอร์หมูที่คัดได้");
     }
 
-    if (!toFarmId) {
+    if (!clean(toFarmId)) {
       errors.push("กรุณาเลือกฟาร์มปลายทาง");
     }
 
-    if (fromFarmId && toFarmId && fromFarmId === toFarmId) {
+    if (isSameFarm) {
       errors.push("ห้ามเลือกฟาร์มต้นทางและปลายทางซ้ำกัน");
     }
 
-    if (fromFarmId && !clean(fromFarm?.farm_code)) {
+    if (fromFarm && !clean(fromFarm?.farm_code)) {
       errors.push("ฟาร์มต้นทางไม่มี farm_code");
     }
 
@@ -210,23 +243,11 @@ export default function ShipmentCreatePage() {
     }
 
     return errors;
-  }, [selectedDate, fromFarmId, toFarmId, fromFarm?.farm_code, toFarm?.id]);
+  }, [selectedDate, fromFarm, toFarmId, toFarm?.id, isSameFarm]);
 
   const canSave = useMemo(() => {
     return !bootLoading && !saving && hardErrors.length === 0;
   }, [bootLoading, saving, hardErrors.length]);
-
-  const onChangeFromFarm = useCallback((id) => {
-    setMsg("");
-    setFromFarmId(id || null);
-    if (id) setFromPickerOpen(false);
-  }, []);
-
-  const onChangeToFarm = useCallback((id) => {
-    setMsg("");
-    setToFarmId(id || null);
-    if (id) setToPickerOpen(false);
-  }, []);
 
   const openEditPage = useCallback(
     (shipmentId) => {
@@ -234,6 +255,24 @@ export default function ShipmentCreatePage() {
     },
     [nav]
   );
+
+  const handleSelectFromFarm = useCallback((farm) => {
+    setMsg("");
+    setFromFarm(farm || null);
+    if (farm) setFromPickerOpen(false);
+  }, []);
+
+  const clearFromFarm = useCallback(() => {
+    setFromFarm(null);
+    setFromQ("");
+    setFromPickerOpen(true);
+  }, []);
+
+  const onChangeToFarm = useCallback((id) => {
+    setMsg("");
+    setToFarmId(id || null);
+    if (id) setToPickerOpen(false);
+  }, []);
 
   const saveDraft = useCallback(async () => {
     if (hardErrors.length > 0) {
@@ -250,16 +289,12 @@ export default function ShipmentCreatePage() {
         throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
       }
 
-      if (!fromFarm?.id) {
-        throw new Error("ไม่พบข้อมูลฟาร์มต้นทาง");
-      }
-
-      const fromFarmCode = clean(fromFarm.farm_code);
+      const fromFarmCode = clean(fromFarm?.farm_code);
       if (!fromFarmCode) {
         throw new Error("ฟาร์มต้นทางไม่มี farm_code");
       }
 
-      // กันซ้ำแบบเบา ๆ: ถ้ามี draft เดิมของ user คนเดิมในชุดเดียวกัน ให้เปิด draft เดิม
+      // กัน draft ซ้ำของ user เดิมในชุดเดียวกัน
       const { data: existingDraft, error: existingErr } = await supabase
         .from("swine_shipments")
         .select("id")
@@ -282,8 +317,9 @@ export default function ShipmentCreatePage() {
       const payload = {
         selected_date: selectedDate,
         from_farm_code: fromFarmCode || null,
-        from_farm_name: clean(fromFarm.farm_name) || null,
-        from_branch_id: fromFarm.branch_id || null,
+        from_farm_name: clean(fromFarm?.farm_name) || null,
+        from_flock: clean(fromFarm?.flock) || null,
+        from_branch_id: fromFarm?.branch_id || null,
         to_farm_id: toFarmId,
         remark: clean(remark) || null,
         status: "draft",
@@ -349,6 +385,7 @@ export default function ShipmentCreatePage() {
         <input
           type="date"
           value={selectedDate}
+          max={todayYmdLocal()}
           onChange={(e) => {
             setMsg("");
             setSelectedDate(e.target.value);
@@ -357,39 +394,136 @@ export default function ShipmentCreatePage() {
         />
       </label>
 
-      {fromFarmId && !fromPickerOpen ? (
+      {fromFarm && !fromPickerOpen ? (
         <FarmSelectedCard
-          title="ฟาร์มต้นทาง (คัด/ดัด/จับออก)"
+          title="ฟาร์มต้นทาง (คัด/ดัด/จับออก) — เลือกจากเบอร์หมู"
           farm={fromFarm}
+          subtitle={
+            fromFarm?.flock
+              ? `Flock: ${fromFarm.flock}${
+                  Number.isFinite(fromFarm?.swine_count)
+                    ? ` | คัดได้ ${fromFarm.swine_count} ตัว`
+                    : ""
+                }`
+              : Number.isFinite(fromFarm?.swine_count)
+              ? `คัดได้ ${fromFarm.swine_count} ตัว`
+              : ""
+          }
           onChange={() => setFromPickerOpen(true)}
         />
       ) : (
-        <FarmPickerInlineAdd
-          label="ฟาร์มต้นทาง (คัด/ดัด/จับออก)"
-          value={fromFarmId}
-          excludeId={toFarmId}
-          onChange={onChangeFromFarm}
-          requireBranch={false}
-        />
+        <div
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 14,
+            padding: 12,
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ fontWeight: 900 }}>
+              ฟาร์มต้นทาง (คัด/ดัด/จับออก) — เลือกจากเบอร์หมู
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={loadFromFarms} disabled={fromLoading}>
+                {fromLoading ? "กำลังโหลด..." : "รีเฟรช"}
+              </button>
+
+              <button type="button" onClick={clearFromFarm} disabled={fromLoading}>
+                ล้างค่า
+              </button>
+            </div>
+          </div>
+
+          <input
+            value={fromQ}
+            onChange={(e) => setFromQ(e.target.value)}
+            placeholder="พิมพ์ค้นหา farm code / farm name / flock…"
+            style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
+          />
+
+          <div
+            style={{
+              border: "1px solid #ddd",
+              borderRadius: 12,
+              overflow: "hidden",
+              maxHeight: 320,
+              overflowY: "auto",
+            }}
+          >
+            {fromLoading ? (
+              <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>
+            ) : filteredFromOptions.length > 0 ? (
+              filteredFromOptions.map((f) => {
+                const active =
+                  clean(fromFarm?.farm_code) === clean(f.farm_code) &&
+                  clean(fromFarm?.flock) === clean(f.flock);
+
+                return (
+                  <button
+                    key={`${f.farm_code}__${f.flock || "-"}__${f.farm_name}`}
+                    type="button"
+                    onClick={() => handleSelectFromFarm(f)}
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "10px 12px",
+                      border: 0,
+                      borderBottom: "1px solid #eee",
+                      background: active ? "#fef9c3" : "white",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                      {f.farm_code} - {f.farm_name}
+                    </div>
+
+                    <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+                      Flock: <b>{f.flock || "-"}</b>
+                      {Number.isFinite(f.swine_count) ? (
+                        <>
+                          {" "}
+                          | คัดได้ <b>{f.swine_count}</b> ตัว
+                        </>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })
+            ) : (
+              <div style={{ padding: 12, color: "#666" }}>ไม่พบฟาร์มต้นทาง</div>
+            )}
+          </div>
+        </div>
       )}
 
       {toFarmId && !toPickerOpen ? (
         <FarmSelectedCard
-          title="ฟาร์มปลายทาง (ส่งไป)"
+          title="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
           farm={toFarm}
           onChange={() => setToPickerOpen(true)}
         />
       ) : (
         <FarmPickerInlineAdd
-          label="ฟาร์มปลายทาง (ส่งไป)"
+          label="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
           value={toFarmId}
-          excludeId={fromFarmId}
+          excludeId={null}
           onChange={onChangeToFarm}
           requireBranch={false}
         />
       )}
 
-      {isSame ? (
+      {isSameFarm ? (
         <div style={{ color: "crimson", fontWeight: 700 }}>
           ห้ามเลือกฟาร์มต้นทางและปลายทางซ้ำกัน
         </div>
@@ -434,9 +568,9 @@ export default function ShipmentCreatePage() {
       </div>
 
       <div style={{ color: "#666", fontSize: 12, lineHeight: 1.7 }}>
-        ระบบจะตรวจ Error ก่อนบันทึก
+        ฟาร์มต้นทางจะเลือกจาก <b>v_swine_source_farms</b> ซึ่งเป็นรายการที่มีเบอร์หมูคัดได้
         <br />
-        ถ้ามี draft เดิมของ user คนเดิมในวันคัด + ต้นทาง + ปลายทาง เดียวกัน ระบบจะเปิด draft เดิมให้ทันที
+        ถ้ามี draft เดิมของ user คนเดิมในวันคัด + ต้นทาง + ปลายทาง เดียวกัน ระบบจะเปิด draft เดิมให้อัตโนมัติ
       </div>
     </div>
   );
