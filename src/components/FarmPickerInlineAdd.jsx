@@ -1,5 +1,3 @@
-// src/components/FarmPickerInlineAdd.jsx
-
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
@@ -12,6 +10,7 @@ export default function FarmPickerInlineAdd({
   value = null,
   excludeId = null,
   onChange,
+  beforeChange,
 }) {
   const [farms, setFarms] = useState([]);
   const [q, setQ] = useState("");
@@ -24,6 +23,13 @@ export default function FarmPickerInlineAdd({
     farm_code: "",
     farm_name: "",
   });
+
+  const currentValue = useMemo(() => {
+    if (!value) return null;
+    if (typeof value === "string") return clean(value) || null;
+    if (typeof value === "object") return clean(value?.id) || null;
+    return null;
+  }, [value]);
 
   async function loadFarms() {
     setLoading(true);
@@ -50,8 +56,8 @@ export default function FarmPickerInlineAdd({
   }, []);
 
   const selected = useMemo(() => {
-    return (farms || []).find((f) => f.id === value) || null;
-  }, [farms, value]);
+    return (farms || []).find((f) => f.id === currentValue) || null;
+  }, [farms, currentValue]);
 
   const options = useMemo(() => {
     const qq = clean(q).toLowerCase();
@@ -68,6 +74,30 @@ export default function FarmPickerInlineAdd({
 
   function resetAddForm() {
     setNewFarm({ farm_code: "", farm_name: "" });
+  }
+
+  async function canProceedChange(nextValue) {
+    if (clean(nextValue) === clean(currentValue)) return true;
+
+    try {
+      if (!beforeChange) return true;
+      const ok = await Promise.resolve(beforeChange());
+      return ok !== false;
+    } catch (e) {
+      console.error("beforeChange error:", e);
+      return false;
+    }
+  }
+
+  async function applyChange(nextValue) {
+    if (clean(nextValue) === clean(currentValue)) {
+      onChange?.(nextValue);
+      return;
+    }
+
+    const ok = await canProceedChange(nextValue);
+    if (!ok) return;
+    onChange?.(nextValue);
   }
 
   async function addFarmNow() {
@@ -96,11 +126,12 @@ export default function FarmPickerInlineAdd({
       if (error) throw error;
 
       setFarms((prev) => [data, ...(prev || [])]);
-      onChange?.(data.id);
 
       setOpenAdd(false);
       resetAddForm();
       setQ("");
+
+      await applyChange(data.id);
     } catch (e) {
       console.error("addFarmNow error:", e);
       alert(e?.message || "เพิ่มฟาร์มไม่สำเร็จ");
@@ -120,7 +151,7 @@ export default function FarmPickerInlineAdd({
 
   return (
     <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ fontWeight: 700 }}>{label}</div>
 
         <button type="button" onClick={() => setOpenAdd(true)}>
@@ -131,8 +162,13 @@ export default function FarmPickerInlineAdd({
           {loading ? "กำลังโหลด..." : "รีเฟรช"}
         </button>
 
-        {value && (
-          <button type="button" onClick={() => onChange?.(null)}>
+        {currentValue && (
+          <button
+            type="button"
+            onClick={() => {
+              void applyChange(null);
+            }}
+          >
             ล้างค่า
           </button>
         )}
@@ -157,14 +193,16 @@ export default function FarmPickerInlineAdd({
           <button
             key={f.id}
             type="button"
-            onClick={() => onChange?.(f.id)}
+            onClick={() => {
+              void applyChange(f.id);
+            }}
             style={{
               width: "100%",
               textAlign: "left",
               padding: "10px 12px",
               border: 0,
               borderBottom: "1px solid #eee",
-              background: f.id === value ? "#f3f4f6" : "white",
+              background: f.id === currentValue ? "#f3f4f6" : "white",
               cursor: "pointer",
             }}
             title={labelText(f)}

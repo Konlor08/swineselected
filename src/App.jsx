@@ -8,6 +8,7 @@ import AdminDashboardPage from "./pages/AdminDashboardPage.jsx";
 import AdminImportSwinesPage from "./pages/AdminImportSwinesPage.jsx";
 import AdminImportMasterFarmsPage from "./pages/AdminImportMasterFarmsPage.jsx";
 import AdminUsersPage from "./pages/AdminUsersPage.jsx";
+import AdminUploadSwineHeatPage from "./pages/AdminUploadSwineHeatPage.jsx";
 import UserDashboardPage from "./pages/UserDashboardPage.jsx";
 import UserHomePage from "./pages/UserHomePage.jsx";
 import DisabledPage from "./pages/DisabledPage.jsx";
@@ -216,6 +217,14 @@ export default function App() {
           element={
             <RequireRole roleAllow={ROLE_ADMIN}>
               <AdminUsersPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/admin/swine-heat-upload"
+          element={
+            <RequireRole roleAllow={ROLE_ADMIN}>
+              <AdminUploadSwineHeatPage />
             </RequireRole>
           }
         />

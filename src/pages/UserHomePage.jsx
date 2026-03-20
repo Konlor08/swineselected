@@ -1,6 +1,6 @@
 // src/pages/UserHomePage.jsx
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
@@ -11,7 +11,11 @@ function clean(s) {
 }
 
 function todayYmd() {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function withTimeout(promise, ms = 15000, label = "request") {
@@ -37,6 +41,10 @@ function chunkArray(arr, size = 500) {
   return out;
 }
 
+function isBlockedX(v) {
+  return clean(v).toUpperCase() === "X";
+}
+
 function normalizeSwineRow(r) {
   return {
     ...r,
@@ -44,6 +52,8 @@ function normalizeSwineRow(r) {
     swine_code: clean(r?.swine_code),
     farm_code: clean(r?.farm_code),
     house_no: clean(r?.house_no),
+    flock: clean(r?.flock),
+    block: clean(r?.block),
   };
 }
 
@@ -61,7 +71,17 @@ function toNumOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function hasAnyPickingData({ selectedSwineIds, selectedSwineMap, swineForm, remark }) {
+  return (
+    selectedSwineIds.size > 0 ||
+    Object.keys(selectedSwineMap || {}).length > 0 ||
+    Object.keys(swineForm || {}).length > 0 ||
+    clean(remark) !== ""
+  );
+}
+
 const DEBUG = true;
+const DRAFT_KEY = "user_home_draft_v1";
 
 function dlog(label, payload) {
   if (!DEBUG) return;
@@ -117,6 +137,9 @@ const cardStyle = {
 export default function UserHomePage() {
   const nav = useNavigate();
 
+  const restoringDraftRef = useRef(false);
+  const draftReadyRef = useRef(false);
+
   const [msg, setMsg] = useState("");
   const [myRole, setMyRole] = useState("user");
 
@@ -158,6 +181,26 @@ export default function UserHomePage() {
     if (typeof toFarmId === "object") return clean(toFarmId?.id);
     return "";
   }, [toFarmId]);
+
+  const hasUnsavedPicking = useMemo(() => {
+    return hasAnyPickingData({
+      selectedSwineIds,
+      selectedSwineMap,
+      swineForm,
+      remark,
+    });
+  }, [selectedSwineIds, selectedSwineMap, swineForm, remark]);
+
+  const confirmDiscardUnsavedPicking = useCallback(
+    (targetLabel) => {
+      if (!hasUnsavedPicking) return true;
+
+      return window.confirm(
+        `มีข้อมูลการคัดที่ยังไม่ save อยู่\nต้องการเปลี่ยน${targetLabel}หรือไม่?\n\nถ้าเปลี่ยน ข้อมูลที่ค้างอาจไม่ตรงกับรายการเดิม`
+      );
+    },
+    [hasUnsavedPicking]
+  );
 
   useEffect(() => {
     dlog("component mounted");
@@ -201,6 +244,120 @@ export default function UserHomePage() {
   }, [swineForm]);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) {
+        draftReadyRef.current = true;
+        return;
+      }
+
+      const saved = JSON.parse(raw);
+      restoringDraftRef.current = true;
+
+      if (saved.selectedDate) {
+        const restoredDate = clean(saved.selectedDate);
+        setSelectedDate(restoredDate > todayYmd() ? todayYmd() : restoredDate);
+      }
+
+      if (saved.fromFarm) setFromFarm(saved.fromFarm);
+
+      if (saved.toFarmId) {
+        const normalizedToFarmId =
+          typeof saved.toFarmId === "string"
+            ? clean(saved.toFarmId)
+            : clean(saved.toFarmId?.id);
+        setToFarmId(normalizedToFarmId || null);
+      }
+
+      if (saved.selectedHouse) setSelectedHouse(saved.selectedHouse);
+      if (saved.swineQ) setSwineQ(saved.swineQ);
+      if (saved.selectedSwineMap) setSelectedSwineMap(saved.selectedSwineMap);
+      if (saved.swineForm) setSwineForm(saved.swineForm);
+      if (saved.remark) setRemark(saved.remark);
+
+      if (Array.isArray(saved.selectedSwineIds)) {
+        setSelectedSwineIds(new Set(saved.selectedSwineIds));
+      }
+
+      dlog("draft restored", saved);
+    } catch (e) {
+      derr("restore draft error", e);
+    } finally {
+      draftReadyRef.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!draftReadyRef.current) return;
+
+    try {
+      const payload = {
+        selectedDate,
+        fromFarm,
+        toFarmId: selectedToFarmId || null,
+        selectedHouse,
+        swineQ,
+        selectedSwineIds: Array.from(selectedSwineIds),
+        selectedSwineMap,
+        swineForm,
+        remark,
+      };
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
+    } catch (e) {
+      derr("save draft to localStorage error", e);
+    }
+  }, [
+    selectedDate,
+    fromFarm,
+    selectedToFarmId,
+    selectedHouse,
+    swineQ,
+    selectedSwineIds,
+    selectedSwineMap,
+    swineForm,
+    remark,
+  ]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function validateRestoredToFarmId() {
+      const id = selectedToFarmId;
+      if (!id) return;
+
+      dlog("validateRestoredToFarmId:start", { id });
+
+      try {
+        const { data, error } = await supabase
+          .from("master_farms")
+          .select("id")
+          .eq("id", id)
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (!alive) return;
+
+        if (!data) {
+          dlog("validateRestoredToFarmId:stale -> clear", { id });
+          setToFarmId(null);
+          setMsg((prev) => prev || "ฟาร์มปลายทางเดิมไม่ถูกต้องหรือถูกลบไปแล้ว กรุณาเลือกใหม่");
+        } else {
+          dlog("validateRestoredToFarmId:ok", { id });
+        }
+      } catch (e) {
+        derr("validateRestoredToFarmId error", e, { id });
+      }
+    }
+
+    validateRestoredToFarmId();
+
+    return () => {
+      alive = false;
+    };
+  }, [selectedToFarmId]);
+
+  useEffect(() => {
     let alive = true;
 
     async function loadMyRole() {
@@ -241,7 +398,6 @@ export default function UserHomePage() {
     }
   }, [myRole, nav]);
 
-  // ✅ เปลี่ยนมาอ่านฟาร์มต้นทางจาก view ที่สรุปจาก swines โดยตรง
   useEffect(() => {
     let alive = true;
 
@@ -253,7 +409,8 @@ export default function UserHomePage() {
       try {
         const { data, error } = await supabase
           .from("v_swine_source_farms")
-          .select("farm_code, farm_name, swine_count")
+          .select("farm_code, farm_name, flock, swine_count, first_saved_date, cutoff_date, is_selectable")
+          .eq("is_selectable", true)
           .order("farm_code", { ascending: true });
 
         if (error) throw error;
@@ -262,10 +419,14 @@ export default function UserHomePage() {
           .map((r) => ({
             farm_code: clean(r.farm_code),
             farm_name: clean(r.farm_name) || clean(r.farm_code),
+            flock: clean(r.flock),
             branch_id: null,
             swine_count: Number(r.swine_count || 0),
+            first_saved_date: r.first_saved_date || null,
+            cutoff_date: r.cutoff_date || null,
+            is_selectable: r.is_selectable !== false,
           }))
-          .filter((x) => x.farm_code);
+          .filter((x) => x.farm_code && x.is_selectable);
 
         dlog("loadFromFarms:view result", {
           count: arr.length,
@@ -291,13 +452,41 @@ export default function UserHomePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!fromFarm?.farm_code || !fromOptions.length) return;
+
+    const match = fromOptions.find(
+      (x) =>
+        clean(x.farm_code) === clean(fromFarm.farm_code) &&
+        clean(x.flock) === clean(fromFarm.flock)
+    );
+
+    if (!match) {
+      dlog("validate fromFarm against current view -> clear stale fromFarm", {
+        fromFarm,
+      });
+
+      setFromFarm(null);
+      setSelectedHouse("");
+      setSwineQ("");
+      setSwineOptions([]);
+      setAvailableSwineCodeSet(new Set());
+      setDirectSearchResults([]);
+      setSelectedSwineIds(new Set());
+      setSelectedSwineMap({});
+      setSwineForm({});
+      setInvalidSwineIds(new Set());
+      setMsg((prev) => prev || "ฟาร์มต้นทางเดิมไม่อยู่ในชุดที่คัดได้แล้ว กรุณาเลือกใหม่");
+    }
+  }, [fromFarm, fromOptions]);
+
   const filteredFromOptions = useMemo(() => {
     const q = clean(fromQ).toLowerCase();
     const result = !q
       ? fromOptions.slice(0, 12)
       : fromOptions
           .filter((x) =>
-            `${x.farm_code} ${x.farm_name}`.toLowerCase().includes(q)
+            `${x.farm_code} ${x.farm_name} ${x.flock}`.toLowerCase().includes(q)
           )
           .slice(0, 12);
 
@@ -345,7 +534,7 @@ export default function UserHomePage() {
 
       const { data: availableRows, error } = await supabase
         .from("swine_master")
-        .select("swine_code")
+        .select("swine_code, block")
         .eq("delivery_state", "available")
         .in("swine_code", chunk);
 
@@ -359,9 +548,9 @@ export default function UserHomePage() {
 
       for (const row of availableRows || []) {
         const code = clean(row?.swine_code);
-        if (code) {
-          availableSet.add(code);
-        }
+        if (!code) continue;
+        if (isBlockedX(row?.block)) continue;
+        availableSet.add(code);
       }
     }
 
@@ -373,33 +562,40 @@ export default function UserHomePage() {
     return availableSet;
   }
 
-  async function fetchFarmSwinesWithAvailability(farmCode) {
+  async function fetchFarmSwinesWithAvailability(farmCode, fromFlock) {
     const farmCodeClean = clean(farmCode);
+    const fromFlockClean = clean(fromFlock);
 
-    dlog("fetchFarmSwinesWithAvailability:start", { farmCode: farmCodeClean });
+    dlog("fetchFarmSwinesWithAvailability:start", {
+      farmCode: farmCodeClean,
+      fromFlock: fromFlockClean,
+    });
 
-    const { data: farmSwines, error: e1 } = await supabase
+    let query = supabase
       .from("swines")
-      .select("id, swine_code, farm_code, house_no")
+      .select("id, swine_code, farm_code, house_no, flock, block, is_active")
       .eq("farm_code", farmCodeClean)
+      .eq("is_active", true)
       .order("house_no", { ascending: true })
       .order("swine_code", { ascending: true })
       .limit(5000);
 
+    if (fromFlockClean) {
+      query = query.eq("flock", fromFlockClean);
+    }
+
+    const { data: farmSwines, error: e1 } = await query;
     if (e1) throw e1;
 
-    dlog("fetchFarmSwinesWithAvailability:swines raw", {
-      farmCode: farmCodeClean,
-      count: farmSwines?.length || 0,
-      sample: (farmSwines || []).slice(0, 20),
-    });
-
-    const swines = (farmSwines || []).map(normalizeSwineRow);
+    const swinesRaw = (farmSwines || []).map(normalizeSwineRow);
+    const swines = swinesRaw.filter((x) => !isBlockedX(x.block));
     const codes = swines.map((x) => x.swine_code).filter(Boolean);
     const availableSet = await fetchAvailableCodes(codes);
 
     dlog("fetchFarmSwinesWithAvailability:done", {
       farmCode: farmCodeClean,
+      fromFlock: fromFlockClean,
+      rawCount: swinesRaw.length,
       swinesCount: swines.length,
       codesCount: codes.length,
       availableCount: availableSet.size,
@@ -416,10 +612,12 @@ export default function UserHomePage() {
       clearPicked = true,
       clearSearch = false,
       clearMessage = true,
+      fromFlock = fromFarm?.flock,
     } = opts;
 
     dlog("reloadSwinesOfFarm:start", {
       farmCode,
+      fromFlock,
       opts,
       currentSelectedHouse: selectedHouse,
       currentSelectedCount: selectedSwineIds.size,
@@ -444,10 +642,14 @@ export default function UserHomePage() {
     setSwineLoading(true);
 
     try {
-      const { swines, availableSet } = await fetchFarmSwinesWithAvailability(farmCode);
+      const { swines, availableSet } = await fetchFarmSwinesWithAvailability(
+        farmCode,
+        fromFlock
+      );
 
       dlog("reloadSwinesOfFarm:fetched", {
         farmCode,
+        fromFlock,
         swinesCount: swines.length,
         availableCount: availableSet.size,
       });
@@ -461,7 +663,9 @@ export default function UserHomePage() {
         setSelectedHouse("");
       } else {
         const houseValueSet = new Set(
-          (swines || []).map((s) => clean(s.house_no) || "__BLANK__")
+          swines
+            .filter((s) => availableSet.has(clean(s.swine_code)))
+            .map((s) => clean(s.house_no) || "__BLANK__")
         );
 
         setSelectedHouse((prev) => {
@@ -488,23 +692,29 @@ export default function UserHomePage() {
         setSwineQ("");
       }
     } catch (e) {
-      derr("reloadSwinesOfFarm error", e, { farmCode, opts });
+      derr("reloadSwinesOfFarm error", e, { farmCode, fromFlock, opts });
       setSwineOptions([]);
       setAvailableSwineCodeSet(new Set());
       setDirectSearchResults([]);
       setMsg(e?.message || "โหลดรายการหมูไม่สำเร็จ");
     } finally {
       setSwineLoading(false);
-      dlog("reloadSwinesOfFarm:finish", { farmCode });
+      dlog("reloadSwinesOfFarm:finish", { farmCode, fromFlock });
     }
   }
 
   useEffect(() => {
-    dlog("effect fromFarm.farm_code changed", {
+    dlog("effect fromFarm changed", {
       farmCode: fromFarm?.farm_code || null,
+      flock: fromFarm?.flock || null,
     });
 
     if (!fromFarm?.farm_code) {
+      if (restoringDraftRef.current) {
+        dlog("effect fromFarm empty during restore -> skip reset");
+        return;
+      }
+
       dlog("effect fromFarm empty -> reset swine-related state");
       setSwineOptions([]);
       setAvailableSwineCodeSet(new Set());
@@ -518,24 +728,31 @@ export default function UserHomePage() {
       return;
     }
 
+    const restoring = restoringDraftRef.current;
+
     reloadSwinesOfFarm(fromFarm.farm_code, {
-      preserveHouse: false,
-      clearPicked: true,
-      clearSearch: true,
+      fromFlock: fromFarm.flock,
+      preserveHouse: restoring,
+      clearPicked: !restoring,
+      clearSearch: !restoring,
       clearMessage: true,
     });
-  }, [fromFarm?.farm_code]);
+
+    restoringDraftRef.current = false;
+  }, [fromFarm?.farm_code, fromFarm?.flock]);
 
   useEffect(() => {
     let alive = true;
 
     async function runDirectSearch() {
       const farmCode = clean(fromFarm?.farm_code);
+      const fromFlock = clean(fromFarm?.flock);
       const house = clean(selectedHouse);
       const q = clean(swineQ);
 
       dlog("runDirectSearch:trigger", {
         farmCode,
+        fromFlock,
         house,
         q,
       });
@@ -543,6 +760,7 @@ export default function UserHomePage() {
       if (!farmCode || !house || !q) {
         dlog("runDirectSearch:skip because missing farmCode/house/q", {
           farmCode,
+          fromFlock,
           house,
           q,
         });
@@ -556,8 +774,13 @@ export default function UserHomePage() {
       try {
         let query = supabase
           .from("swines")
-          .select("id, swine_code, farm_code, house_no")
-          .eq("farm_code", farmCode);
+          .select("id, swine_code, farm_code, house_no, flock, block, is_active")
+          .eq("farm_code", farmCode)
+          .eq("is_active", true);
+
+        if (fromFlock) {
+          query = query.eq("flock", fromFlock);
+        }
 
         if (house === "__BLANK__") {
           query = query.or("house_no.is.null,house_no.eq.");
@@ -569,6 +792,7 @@ export default function UserHomePage() {
 
         dlog("runDirectSearch:query prepared", {
           farmCode,
+          fromFlock,
           house,
           q,
         });
@@ -576,13 +800,17 @@ export default function UserHomePage() {
         const { data, error } = await query;
         if (error) throw error;
 
-        const rows = (data || []).map(normalizeSwineRow);
+        const rows = (data || [])
+          .map(normalizeSwineRow)
+          .filter((r) => !isBlockedX(r.block));
+
         const codes = rows.map((x) => x.swine_code).filter(Boolean);
         const availableSet = await fetchAvailableCodes(codes);
         const availableRows = rows.filter((r) => availableSet.has(clean(r.swine_code)));
 
         dlog("runDirectSearch:result", {
           farmCode,
+          fromFlock,
           house,
           q,
           rawCount: rows.length,
@@ -597,6 +825,7 @@ export default function UserHomePage() {
       } catch (e) {
         derr("runDirectSearch error", e, {
           farmCode,
+          fromFlock,
           house,
           q,
         });
@@ -609,6 +838,7 @@ export default function UserHomePage() {
         }
         dlog("runDirectSearch:finish", {
           farmCode,
+          fromFlock,
           house,
           q,
         });
@@ -620,12 +850,14 @@ export default function UserHomePage() {
     return () => {
       alive = false;
     };
-  }, [fromFarm?.farm_code, selectedHouse, swineQ]);
+  }, [fromFarm?.farm_code, fromFarm?.flock, selectedHouse, swineQ]);
 
   const houseOptions = useMemo(() => {
     const map = new Map();
 
-    for (const s of swineOptions || []) {
+    for (const s of swineOptions.filter((x) =>
+      availableSwineCodeSet.has(clean(x.swine_code))
+    )) {
       const raw = clean(s.house_no);
       const value = raw || "__BLANK__";
       const label = raw || "(ไม่ระบุ House)";
@@ -637,7 +869,7 @@ export default function UserHomePage() {
     return Array.from(map.values()).sort((a, b) =>
       String(a.label).localeCompare(String(b.label), "th")
     );
-  }, [swineOptions]);
+  }, [swineOptions, availableSwineCodeSet]);
 
   useEffect(() => {
     dlog("houseOptions recalculated", {
@@ -709,35 +941,62 @@ export default function UserHomePage() {
     });
   }, [swineSourceMap]);
 
-  const handleSelectFromFarm = useCallback((farm) => {
-    dlog("handleSelectFromFarm", { farm });
-    setFromFarm(farm);
-    setSelectedHouse("");
-    setSwineQ("");
-    setSwineOptions([]);
-    setAvailableSwineCodeSet(new Set());
-    setDirectSearchResults([]);
-    setSelectedSwineIds(new Set());
-    setSelectedSwineMap({});
-    setSwineForm({});
-    setInvalidSwineIds(new Set());
-    setMsg("");
-  }, []);
+  const handleSelectFromFarm = useCallback(
+    (farm) => {
+      const isSameFarmAndFlock =
+        clean(fromFarm?.farm_code) === clean(farm?.farm_code) &&
+        clean(fromFarm?.flock) === clean(farm?.flock);
 
-  const handleHouseChange = useCallback((value) => {
-    dlog("handleHouseChange", {
-      previousHouse: selectedHouse,
-      nextHouse: value,
-    });
-    setSelectedHouse(value);
-    setSwineQ("");
-    setDirectSearchResults([]);
-    setSelectedSwineIds(new Set());
-    setSelectedSwineMap({});
-    setSwineForm({});
-    setInvalidSwineIds(new Set());
-    setMsg("");
-  }, [selectedHouse]);
+      if (fromFarm?.farm_code && !isSameFarmAndFlock && !confirmDiscardUnsavedPicking("ฟาร์มต้นทาง")) {
+        dlog("handleSelectFromFarm:cancel by user", {
+          currentFromFarm: fromFarm,
+          nextFarm: farm,
+        });
+        return;
+      }
+
+      dlog("handleSelectFromFarm", { farm });
+      setFromFarm(farm);
+      setSelectedHouse("");
+      setSwineQ("");
+      setSwineOptions([]);
+      setAvailableSwineCodeSet(new Set());
+      setDirectSearchResults([]);
+      setSelectedSwineIds(new Set());
+      setSelectedSwineMap({});
+      setSwineForm({});
+      setInvalidSwineIds(new Set());
+      setMsg("");
+    },
+    [fromFarm, confirmDiscardUnsavedPicking]
+  );
+
+  const handleHouseChange = useCallback(
+    (value) => {
+      if (selectedHouse && selectedHouse !== value && !confirmDiscardUnsavedPicking("House")) {
+        dlog("handleHouseChange:cancel by user", {
+          previousHouse: selectedHouse,
+          nextHouse: value,
+        });
+        return;
+      }
+
+      dlog("handleHouseChange", {
+        previousHouse: selectedHouse,
+        nextHouse: value,
+      });
+
+      setSelectedHouse(value);
+      setSwineQ("");
+      setDirectSearchResults([]);
+      setSelectedSwineIds(new Set());
+      setSelectedSwineMap({});
+      setSwineForm({});
+      setInvalidSwineIds(new Set());
+      setMsg("");
+    },
+    [selectedHouse, confirmDiscardUnsavedPicking]
+  );
 
   const toggleSwine = useCallback((swineRow) => {
     const id = swineRow?.id;
@@ -788,6 +1047,8 @@ export default function UserHomePage() {
           swine_code: clean(swineRow?.swine_code),
           farm_code: clean(swineRow?.farm_code),
           house_no: clean(swineRow?.house_no),
+          flock: clean(swineRow?.flock),
+          block: clean(swineRow?.block),
         };
       }
 
@@ -836,6 +1097,7 @@ export default function UserHomePage() {
   const canSave = useMemo(() => {
     return (
       !!selectedDate &&
+      selectedDate <= todayYmd() &&
       !!fromFarm?.farm_code &&
       !!selectedToFarmId &&
       !!selectedHouse &&
@@ -848,6 +1110,7 @@ export default function UserHomePage() {
       canSave,
       selectedDate,
       fromFarmCode: fromFarm?.farm_code || null,
+      fromFlock: fromFarm?.flock || null,
       selectedToFarmId,
       selectedHouse,
       selectedCount: selectedSwineIds.size,
@@ -901,16 +1164,8 @@ export default function UserHomePage() {
     });
   }, [previewSummary, savePreviewRows]);
 
-  const okRows = useMemo(
-    () => savePreviewRows.filter((x) => x.ok),
-    [savePreviewRows]
-  );
-
-  const badRows = useMemo(
-    () => savePreviewRows.filter((x) => !x.ok),
-    [savePreviewRows]
-  );
-
+  const okRows = useMemo(() => savePreviewRows.filter((x) => x.ok), [savePreviewRows]);
+  const badRows = useMemo(() => savePreviewRows.filter((x) => !x.ok), [savePreviewRows]);
   const hasPreviewError = badRows.length > 0;
 
   const openSavePreview = useCallback(() => {
@@ -925,6 +1180,11 @@ export default function UserHomePage() {
       selectedSwineMap,
       swineForm,
     });
+
+    if (selectedDate > todayYmd()) {
+      setMsg("วันคัดห้ามเป็นวันล่วงหน้า");
+      return;
+    }
 
     if (!canSave) {
       dlog("openSavePreview:block because canSave=false");
@@ -971,6 +1231,8 @@ export default function UserHomePage() {
     }
 
     try {
+      localStorage.removeItem(DRAFT_KEY);
+
       for (const k of Object.keys(localStorage)) {
         if (k.startsWith("sb-")) localStorage.removeItem(k);
       }
@@ -999,6 +1261,12 @@ export default function UserHomePage() {
       selectedSwineMap,
       swineForm,
     });
+
+    if (selectedDate > todayYmd()) {
+      dlog("saveDraft:block because selectedDate is future");
+      setMsg("วันคัดห้ามเป็นวันล่วงหน้า");
+      return;
+    }
 
     if (!canSave) {
       dlog("saveDraft:block because canSave=false");
@@ -1060,6 +1328,7 @@ export default function UserHomePage() {
         selected_date: selectedDate || null,
         from_farm_code: clean(fromFarm.farm_code),
         from_farm_name: clean(fromFarm.farm_name) || null,
+        from_flock: clean(fromFarm.flock) || null,
         from_branch_id: fromFarm.branch_id || null,
         to_farm_id: selectedToFarmId || null,
         remark: clean(remark) || null,
@@ -1085,6 +1354,7 @@ export default function UserHomePage() {
         const fallback = swineSourceMap.get(swine_id) || null;
         const swine_code =
           clean(picked?.swine_code) || clean(fallback?.swine_code) || null;
+        const block = clean(picked?.block) || clean(fallback?.block) || null;
 
         return {
           shipment_id: shipmentId,
@@ -1094,6 +1364,7 @@ export default function UserHomePage() {
           teats_right: toIntOrNull(f.teats_right),
           backfat: toNumOrNull(f.backfat),
           weight: toNumOrNull(f.weight),
+          block: block || null,
         };
       });
 
@@ -1145,7 +1416,12 @@ export default function UserHomePage() {
         const res3 = await withTimeout(
           supabase
             .from("swine_master")
-            .update({ delivery_state: "reserved" })
+            .update({
+              delivery_state: "reserved",
+              reserved_shipment_id: shipmentId,
+              reserved_at: new Date().toISOString(),
+              reserved_by: user.id,
+            })
             .in("swine_code", pickedCodes),
           15000,
           "update swine_master"
@@ -1165,6 +1441,8 @@ export default function UserHomePage() {
         selectedCount,
       });
 
+      localStorage.removeItem(DRAFT_KEY);
+
       setRemark("");
       setSelectedSwineIds(new Set());
       setSelectedSwineMap({});
@@ -1174,6 +1452,7 @@ export default function UserHomePage() {
       setSavePreviewRows([]);
 
       await reloadSwinesOfFarm(fromFarm.farm_code, {
+        fromFlock: fromFarm.flock,
         preserveHouse: true,
         clearPicked: true,
         clearSearch: false,
@@ -1420,6 +1699,7 @@ export default function UserHomePage() {
           <input
             type="date"
             value={selectedDate}
+            max={todayYmd()}
             onChange={(e) => {
               dlog("selectedDate:onChange", { value: e.target.value });
               setSelectedDate(e.target.value);
@@ -1434,7 +1714,7 @@ export default function UserHomePage() {
         </div>
 
         <div className="card" style={{ display: "grid", gap: 8, ...cardStyle }}>
-          <div style={{ fontWeight: 800 }}>ฟาร์มต้นทาง (จากข้อมูลหมูใน swines)</div>
+          <div style={{ fontWeight: 800 }}>ฟาร์มต้นทาง (จากข้อมูลหมูที่คัดได้)</div>
 
           <input
             value={fromQ}
@@ -1442,7 +1722,7 @@ export default function UserHomePage() {
               dlog("fromQ:onChange", { value: e.target.value });
               setFromQ(e.target.value);
             }}
-            placeholder="พิมพ์ค้นหา farm code / farm name…"
+            placeholder="พิมพ์ค้นหา farm code / farm name / flock…"
             style={fullInputStyle}
           />
 
@@ -1461,11 +1741,12 @@ export default function UserHomePage() {
             {!fromLoading &&
               filteredFromOptions.map((f) => {
                 const active =
-                  fromFarm?.farm_code === f.farm_code && fromFarm?.farm_name === f.farm_name;
+                  clean(fromFarm?.farm_code) === clean(f.farm_code) &&
+                  clean(fromFarm?.flock) === clean(f.flock);
 
                 return (
                   <button
-                    key={`${f.farm_code}__${f.farm_name}`}
+                    key={`${f.farm_code}__${f.flock || "-"}__${f.farm_name}`}
                     type="button"
                     onClick={() => handleSelectFromFarm(f)}
                     style={{
@@ -1482,6 +1763,9 @@ export default function UserHomePage() {
                   >
                     <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
                       {f.farm_code} - {f.farm_name} ({f.swine_count} ตัว)
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+                      Flock: <b>{f.flock || "-"}</b>
                     </div>
                   </button>
                 );
@@ -1513,18 +1797,24 @@ export default function UserHomePage() {
                   }`
                 : "-"}
             </b>
+            {fromFarm?.flock ? (
+              <>
+                {" "}
+                | Flock: <b>{fromFarm.flock}</b>
+              </>
+            ) : null}
           </div>
         </div>
 
         <div className="card" style={cardStyle}>
           <FarmPickerInlineAdd
             label="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
-            value={toFarmId}
+            value={selectedToFarmId || null}
             onChange={(value) => {
               dlog("FarmPickerInlineAdd:onChange", { value });
               setToFarmId(value);
             }}
-            requireBranch={false}
+            beforeChange={() => confirmDiscardUnsavedPicking("ฟาร์มปลายทาง")}
           />
         </div>
 
@@ -1543,14 +1833,17 @@ export default function UserHomePage() {
             <button
               type="button"
               className="linkbtn"
-              onClick={() =>
+              onClick={() => {
+                if (!confirmDiscardUnsavedPicking("รายการหมูใน House นี้")) return;
+
                 reloadSwinesOfFarm(fromFarm?.farm_code, {
+                  fromFlock: fromFarm?.flock,
                   preserveHouse: true,
                   clearPicked: true,
                   clearSearch: false,
                   clearMessage: true,
-                })
-              }
+                });
+              }}
               disabled={!fromFarm?.farm_code || swineLoading || saving || submitting}
             >
               {swineLoading ? "กำลังโหลด..." : "Reload หมู"}
@@ -1907,6 +2200,8 @@ export default function UserHomePage() {
                 selectedIds: Array.from(selectedSwineIds),
                 swineForm,
               });
+
+              localStorage.removeItem(DRAFT_KEY);
 
               setSaving(false);
               setSubmitting(false);

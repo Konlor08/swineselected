@@ -36,6 +36,11 @@ export default function AdminDashboardPage() {
         desc: "นำเข้า/อัปเดต master_farms จาก MFarm.xlsx",
       },
       {
+        path: "/admin/swine-heat-upload",
+        title: "Upload Swine Heat",
+        desc: "อัปโหลดไฟล์ Heat Excel เพื่อบันทึก history, rebuild heat events และออกรายงาน",
+      },
+      {
         path: "/admin/users",
         title: "Users / Roles",
         desc: "จัดการผู้ใช้: role, team, branch, เปิด/ปิดการใช้งาน",

@@ -22,10 +22,18 @@ function isAllDigits(s) {
   return /^[0-9]+$/.test(clean(s));
 }
 
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
 function toISODateMaybe(x) {
   if (!x) return null;
 
-  if (x instanceof Date && !isNaN(x.getTime())) {
+  if (x instanceof Date && !Number.isNaN(x.getTime())) {
     return x.toISOString().slice(0, 10);
   }
 
@@ -41,7 +49,7 @@ function toISODateMaybe(x) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
   const dt = new Date(s);
-  if (!isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
 
   return null;
 }
@@ -59,8 +67,13 @@ function parseFarmText(farmText) {
   const first = tokens[0];
   const last = tokens[tokens.length - 1];
 
-  if (first.length === 7) return { farm_code: first, farm_name: tokens.slice(1).join(" ") || null };
-  if (last.length === 7) return { farm_code: last, farm_name: tokens.slice(0, -1).join(" ") || null };
+  if (first.length === 7) {
+    return { farm_code: first, farm_name: tokens.slice(1).join(" ") || null };
+  }
+
+  if (last.length === 7) {
+    return { farm_code: last, farm_name: tokens.slice(0, -1).join(" ") || null };
+  }
 
   const idx = tokens.findIndex((t) => t.length === 7);
   if (idx >= 0) {
@@ -73,8 +86,8 @@ function parseFarmText(farmText) {
 }
 
 /** HouseText เช่น
- * "RE ... 1001" หรือ "1001 RE ..."
- * => house_no = token เลขล้วน
+ * "kk กิตติพัฒน์ อุปัชฌาย์ 1001" => 1001
+ * "1001 kk กิตติพัฒน์ ..." => 1001
  */
 function parseHouseNo(houseText) {
   const s = clean(houseText).replace(/\s+/g, " ");
@@ -102,6 +115,7 @@ async function readFirstSheetRows(file) {
 
 function detectABTypeFromRows(rows) {
   const keys = new Set();
+
   for (let i = 0; i < Math.min(rows.length, 30); i++) {
     Object.keys(rows[i] || {}).forEach((k) => keys.add(k));
   }
@@ -113,36 +127,29 @@ function detectABTypeFromRows(rows) {
   if (hasB && !hasA) return { type: "B", reason: 'พบคอลัมน์ "FarmFarm Code/HouseHouse No"' };
   if (hasA && hasB) return { type: "B", reason: 'พบทั้ง 2 แบบ → ใช้ "Type B" เป็นหลัก' };
 
-  return { type: null, reason: "ไม่พบคอลัมน์ Farm/House หรือ FarmFarm Code/HouseHouse No" };
+  return {
+    type: null,
+    reason: "ไม่พบคอลัมน์ Farm/House หรือ FarmFarm Code/HouseHouse No",
+  };
 }
 
 function pickColumnsAuto(row, detectedType) {
-  if (detectedType === "A") {
-    return {
-      swine_code: row["Swine Code"],
-      farm_text: row["Farm"],
-      house_text: row["House"],
-      flock: row["Flock"],
-      birth_date: row["Birth Date"],
-    };
-  }
-
-  if (detectedType === "B") {
-    return {
-      swine_code: row["Swine Code"],
-      farm_text: row["FarmFarm Code"],
-      house_text: row["HouseHouse No"],
-      flock: row["Flock"],
-      birth_date: row["Birth Date"],
-    };
-  }
+  const gender = row["Gender"] ?? row["GenderGender Code"] ?? "";
+  const farmText = detectedType === "A" ? row["Farm"] : row["FarmFarm Code"];
+  const houseText = detectedType === "A" ? row["House"] : row["HouseHouse No"];
 
   return {
     swine_code: row["Swine Code"],
-    farm_text: "",
-    house_text: "",
+    farm_text: farmText,
+    house_text: houseText,
     flock: row["Flock"],
     birth_date: row["Birth Date"],
+    gender,
+    birth_lot: row["Birth Lot"],
+    dam_code: row["Dam Code"],
+    sire_code: row["Sire Code"],
+    swine_breed: row["Swine Breed"],
+    block: row["Block"],
   };
 }
 
@@ -156,14 +163,26 @@ function transformRow(picked) {
   const house_no = house ? String(house) : "";
   const flock = clean(picked.flock) || "";
   const birth_date = toISODateMaybe(picked.birth_date) || "";
+  const gender = clean(picked.gender) || "";
+  const birth_lot = clean(picked.birth_lot) || "";
+  const dam_code = clean(picked.dam_code) || "";
+  const sire_code = clean(picked.sire_code) || "";
+  const swine_breed = clean(picked.swine_breed) || "";
+  const block = clean(picked.block) || "";
 
   return {
     swine_code,
-    farm_code: farm_code ? farm_code : undefined,
-    farm_name: farm_name ? farm_name : undefined,
-    house_no: house_no ? house_no : undefined,
-    flock: flock ? flock : undefined,
-    birth_date: birth_date ? birth_date : undefined,
+    farm_code: farm_code || undefined,
+    farm_name: farm_name || undefined,
+    house_no: house_no || undefined,
+    flock: flock || undefined,
+    birth_date: birth_date || undefined,
+    gender: gender || undefined,
+    birth_lot: birth_lot || undefined,
+    dam_code: dam_code || undefined,
+    sire_code: sire_code || undefined,
+    swine_breed: swine_breed || undefined,
+    block: block || null,
   };
 }
 
@@ -176,6 +195,7 @@ export default function AdminImportSwinesPage() {
   const [bad, setBad] = useState([]);
   const [detectedType, setDetectedType] = useState(null);
   const [detectReason, setDetectReason] = useState("");
+  const [sourceFilename, setSourceFilename] = useState("");
 
   const preview = useMemo(() => rows.slice(0, 50), [rows]);
 
@@ -183,7 +203,18 @@ export default function AdminImportSwinesPage() {
     const hasFarm = rows.filter((r) => !!r.farm_code).length;
     const hasHouse = rows.filter((r) => !!r.house_no).length;
     const hasBirth = rows.filter((r) => !!r.birth_date).length;
-    return { total: rows.length, bad: bad.length, hasFarm, hasHouse, hasBirth };
+    const hasFlock = rows.filter((r) => !!r.flock).length;
+    const hasBlock = rows.filter((r) => clean(r.block) !== "").length;
+
+    return {
+      total: rows.length,
+      bad: bad.length,
+      hasFarm,
+      hasHouse,
+      hasBirth,
+      hasFlock,
+      hasBlock,
+    };
   }, [rows, bad]);
 
   const onPickFileAB = useCallback(async (e) => {
@@ -192,12 +223,15 @@ export default function AdminImportSwinesPage() {
     setBad([]);
     setDetectedType(null);
     setDetectReason("");
+    setSourceFilename("");
 
     const f = e.target.files?.[0];
     if (!f) return;
 
     setBusy(true);
     try {
+      setSourceFilename(f.name);
+
       const raw = await readFirstSheetRows(f);
 
       const det = detectABTypeFromRows(raw);
@@ -211,6 +245,7 @@ export default function AdminImportSwinesPage() {
 
       const ok = [];
       const invalid = [];
+      const seen = new Set();
 
       for (let i = 0; i < raw.length; i++) {
         const picked = pickColumnsAuto(raw[i], det.type);
@@ -227,6 +262,16 @@ export default function AdminImportSwinesPage() {
           continue;
         }
 
+        if (seen.has(tr.swine_code)) {
+          invalid.push({
+            row: i + 2,
+            swine_code: tr.swine_code,
+            reason: "swine_code ซ้ำในไฟล์เดียวกัน",
+          });
+          continue;
+        }
+
+        seen.add(tr.swine_code);
         ok.push(tr);
       }
 
@@ -234,9 +279,13 @@ export default function AdminImportSwinesPage() {
       setBad(invalid);
 
       setMsg(
-        `✅ ตรวจไฟล์แล้ว: Type ${det.type} (${det.reason}) | OK=${ok.length} | BAD=${invalid.length} | FarmCode=${ok.filter(
+        `✅ ตรวจไฟล์แล้ว: Type ${det.type} (${det.reason}) | OK=${ok.length} | BAD=${invalid.length} | Farm=${ok.filter(
           (x) => x.farm_code
-        ).length} | House=${ok.filter((x) => x.house_no).length} | BirthDate=${ok.filter((x) => x.birth_date).length}`
+        ).length} | Flock=${ok.filter((x) => x.flock).length} | House=${ok.filter(
+          (x) => x.house_no
+        ).length} | BirthDate=${ok.filter((x) => x.birth_date).length} | Block=${ok.filter(
+          (x) => clean(x.block) !== ""
+        ).length}`
       );
     } catch (err) {
       setMsg(`อ่านไฟล์ไม่สำเร็จ: ${err?.message || String(err)}`);
@@ -253,43 +302,122 @@ export default function AdminImportSwinesPage() {
     setMsg("");
 
     try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      const { data: batchRow, error: batchErr } = await supabase
+        .from("swine_import_batches")
+        .insert([
+          {
+            source_filename: sourceFilename || `manual-import-${new Date().toISOString()}.xlsx`,
+            imported_by: user?.id || null,
+            note: "Import from AdminImportSwinesPage",
+          },
+        ])
+        .select("id")
+        .single();
+
+      if (batchErr) throw batchErr;
+      const batchId = batchRow.id;
+
       const farmCodes = [...new Set(rows.map((x) => x.farm_code).filter(Boolean))];
       let farmMap = new Map();
 
       if (farmCodes.length) {
         const { data: masters, error: e1 } = await supabase
           .from("master_farms")
-          .select("id,farm_code")
+          .select("id, farm_code")
           .in("farm_code", farmCodes);
 
         if (e1) throw e1;
         farmMap = new Map((masters ?? []).map((m) => [m.farm_code, m.id]));
       }
 
-      const payload = rows.map((x) => ({
+      const batchItems = rows.map((x) => ({
+        batch_id: batchId,
         swine_code: x.swine_code,
-        farm_code: x.farm_code,
-        farm_name: x.farm_name,
-        house_no: x.house_no,
-        flock: x.flock,
-        birth_date: x.birth_date,
-        master_farm_id: x.farm_code ? farmMap.get(x.farm_code) ?? null : null,
+        farm_code: x.farm_code ?? null,
+        flock: x.flock ?? null,
+        house_no: x.house_no ?? null,
+        birth_date: x.birth_date ?? null,
+        gender: x.gender ?? null,
+        birth_lot: x.birth_lot ?? null,
+        dam_code: x.dam_code ?? null,
+        sire_code: x.sire_code ?? null,
+        swine_breed: x.swine_breed ?? null,
+        block: clean(x.block) || null,
       }));
 
-      const { error: e2 } = await supabase
-        .from("swines")
-        .upsert(payload, { onConflict: "swine_code" });
+      for (const chunk of chunkArray(batchItems, 500)) {
+        const { error } = await supabase.from("swine_import_batch_items").insert(chunk);
+        if (error) throw error;
+      }
 
-      if (e2) throw e2;
+      const swinePayload = rows.map((x) => ({
+        swine_code: x.swine_code,
+        farm_code: x.farm_code ?? null,
+        farm_name: x.farm_name ?? null,
+        house_no: x.house_no ?? null,
+        flock: x.flock ?? null,
+        birth_date: x.birth_date ?? null,
+        master_farm_id: x.farm_code ? farmMap.get(x.farm_code) ?? null : null,
+        gender: x.gender ?? null,
+        birth_lot: x.birth_lot ?? null,
+        dam_code: x.dam_code ?? null,
+        sire_code: x.sire_code ?? null,
+        swine_breed: x.swine_breed ?? null,
+        block: clean(x.block) || null,
+        is_active: true,
+      }));
 
-      setMsg(`✅ Import สำเร็จ: ${payload.length} แถว (ไม่ทับค่าเดิมด้วยค่าว่าง/null)`);
+      for (const chunk of chunkArray(swinePayload, 500)) {
+        const { error } = await supabase
+          .from("swines")
+          .upsert(chunk, { onConflict: "swine_code" });
+
+        if (error) throw error;
+      }
+
+      const masterPayload = rows.map((x) => ({
+        swine_code: x.swine_code,
+        block: clean(x.block) || null,
+      }));
+
+      for (const chunk of chunkArray(masterPayload, 500)) {
+        const { error } = await supabase
+          .from("swine_master")
+          .upsert(chunk, { onConflict: "swine_code" });
+
+        if (error) throw error;
+      }
+
+      const { data: applyResult, error: applyErr } = await supabase.rpc(
+        "apply_swine_import_batch",
+        {
+          p_batch_id: batchId,
+          p_archive_reason: "missing from latest import file",
+        }
+      );
+
+      if (applyErr) throw applyErr;
+
+      const summary = Array.isArray(applyResult) ? applyResult[0] : applyResult;
+
+      setMsg(
+        `✅ Import สำเร็จ: ${rows.length} แถว | batch=${batchId} | present=${summary?.present_rows ?? 0} | reactivated=${
+          summary?.reactivated_rows ?? 0
+        } | archived=${summary?.archived_rows ?? 0} | skipped reserved/issued=${
+          summary?.skipped_reserved_or_issued ?? 0
+        }`
+      );
     } catch (err) {
       console.error("onImport error:", err);
       setMsg(`❌ Import ไม่สำเร็จ: ${err?.message || String(err)}`);
     } finally {
       setBusy(false);
     }
-  }, [busy, rows]);
+  }, [busy, rows, sourceFilename]);
 
   return (
     <div className="page">
@@ -304,7 +432,7 @@ export default function AdminImportSwinesPage() {
         <div>
           <div style={{ fontSize: 20, fontWeight: 900 }}>Import Swines (Excel)</div>
           <div className="small" style={{ lineHeight: 1.6 }}>
-            ระบบตรวจไฟล์ AB เอง (ไม่ต้องเลือก Type) → map Farm/House/Flock/Birth Date ลง DB: <b>swines</b>
+            ตรวจไฟล์ AB อัตโนมัติ → import ลง <b>swines</b>, overwrite <b>block</b>, และ archive ตัวที่หายจากไฟล์ใน flock เดียวกัน
           </div>
         </div>
 
@@ -330,7 +458,15 @@ export default function AdminImportSwinesPage() {
               alignItems: "center",
             }}
           >
-            <label className="small" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+            <label
+              className="small"
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: 6,
+                alignItems: "center",
+              }}
+            >
               <span>File AB:</span>
               <input type="file" accept=".xlsx,.xls" onChange={onPickFileAB} disabled={busy} />
             </label>
@@ -346,10 +482,17 @@ export default function AdminImportSwinesPage() {
             </button>
 
             <div className="small" style={{ lineHeight: 1.6 }}>
-              OK: <b>{stat.total}</b> | BAD: <b>{stat.bad}</b> | Farm: <b>{stat.hasFarm}</b> | House:{" "}
-              <b>{stat.hasHouse}</b> | Birth: <b>{stat.hasBirth}</b>
+              OK: <b>{stat.total}</b> | BAD: <b>{stat.bad}</b> | Farm: <b>{stat.hasFarm}</b> | Flock:{" "}
+              <b>{stat.hasFlock}</b> | House: <b>{stat.hasHouse}</b> | Birth: <b>{stat.hasBirth}</b> | Block:{" "}
+              <b>{stat.hasBlock}</b>
             </div>
           </div>
+
+          {sourceFilename ? (
+            <div className="small" style={{ marginTop: 8, lineHeight: 1.6 }}>
+              ไฟล์: <b>{sourceFilename}</b>
+            </div>
+          ) : null}
 
           {detectedType ? (
             <div className="small" style={{ marginTop: 8, lineHeight: 1.6 }}>
@@ -392,7 +535,20 @@ export default function AdminImportSwinesPage() {
               <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["swine_code", "farm_code", "farm_name", "house_no", "flock", "birth_date"].map((h) => (
+                    {[
+                      "swine_code",
+                      "farm_code",
+                      "farm_name",
+                      "flock",
+                      "house_no",
+                      "birth_date",
+                      "gender",
+                      "birth_lot",
+                      "dam_code",
+                      "sire_code",
+                      "swine_breed",
+                      "block",
+                    ].map((h) => (
                       <th
                         key={h}
                         style={{
@@ -411,24 +567,18 @@ export default function AdminImportSwinesPage() {
                 <tbody>
                   {preview.map((r, idx) => (
                     <tr key={idx}>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>
-                        {dash(r.swine_code)}
-                      </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>
-                        {dash(r.farm_code)}
-                      </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", minWidth: 180 }}>
-                        {dash(r.farm_name)}
-                      </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>
-                        {dash(r.house_no)}
-                      </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>
-                        {dash(r.flock)}
-                      </td>
-                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>
-                        {dash(r.birth_date)}
-                      </td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.swine_code)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.farm_code)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", minWidth: 180 }}>{dash(r.farm_name)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.flock)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.house_no)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.birth_date)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.gender)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.birth_lot)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.dam_code)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.sire_code)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.swine_breed)}</td>
+                      <td style={{ padding: 8, borderBottom: "1px solid #f1f1f1", whiteSpace: "nowrap" }}>{dash(r.block)}</td>
                     </tr>
                   ))}
                 </tbody>
