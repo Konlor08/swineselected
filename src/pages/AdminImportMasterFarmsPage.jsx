@@ -14,9 +14,25 @@ function dash(v) {
   return s ? s : "-";
 }
 
+function normalizeHeaderKey(v) {
+  return clean(v)
+    .replace(/^\uFEFF/, "")
+    .replace(/\s+/g, "")
+    .replace(/[_-]+/g, "")
+    .toLowerCase();
+}
+
+function normalizeRowKeys(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row || {})) {
+    out[normalizeHeaderKey(k)] = v;
+  }
+  return out;
+}
+
 function pickFirst(row, keys) {
   for (const k of keys) {
-    const v = clean(row?.[k]);
+    const v = clean(row?.[normalizeHeaderKey(k)]);
     if (v) return v;
   }
   return "";
@@ -35,27 +51,70 @@ async function readFirstSheetRows(file) {
   const wb = XLSX.read(buf, { type: "array", cellDates: true });
   const sheetName = wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
-  return XLSX.utils.sheet_to_json(ws, { defval: "" });
+  const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
+  return raw.map(normalizeRowKeys);
 }
 
-// รองรับทั้งหัวคอลัมน์แบบเก่า + แบบใหม่
+// รองรับหัวคอลัมน์ทั้งแบบใหม่ + แบบเก่า + แบบมีช่องว่าง/ขีด/underscore
 function mapToRow(row) {
-  const farm_code = pickFirst(row, ["FarmCode", "farm_code", "FCode", "fcode"]);
-  const farm_name31 = pickFirst(row, ["farmName31", "FarmName31", "FarmName", "farm_name31", "farm_name"]);
+  const farm_code = pickFirst(row, [
+    "FarmCode",
+    "farm_code",
+    "FCode",
+    "fcode",
+  ]);
+
+  const farm_name31 = pickFirst(row, [
+    "farmName31",
+    "FarmName31",
+    "FarmName",
+    "farm_name31",
+    "farm_name",
+  ]);
+
   const farm_name = farm_name31 || farm_code;
 
-  const livestock = pickFirst(row, ["Livestock", "livestock"]);
-  const livestock_type_text = pickFirst(row, ["LivestockTypeText", "livestock_type_text"]);
-  const livestock_type = pickFirst(row, ["livestocktype", "Livestock_type", "livestock_type"]);
+  const livestock = pickFirst(row, [
+    "Livestock",
+    "livestock",
+  ]);
 
-  const office_code = pickFirst(row, ["OfficeCode", "office_code", "รหัสสำนักงาน"]);
-  const office_name = pickFirst(row, ["OfficeName", "office_name", "สำนักงาน"]);
+  const livestock_type_text = pickFirst(row, [
+    "LivestockTypeText",
+    "livestock_type_text",
+    "LivestockType",
+  ]);
 
-  const region_text = pickFirst(row, ["RegionText", "region_text", "แผนกงาน-ภาค"]);
+  const livestock_type = pickFirst(row, [
+    "livestocktype",
+    "Livestock_type",
+    "livestock_type",
+  ]);
 
-  const fcode = pickFirst(row, ["FCode", "fcode"]) || farm_code;
+  const office_code = pickFirst(row, [
+    "OfficeCode",
+    "office_code",
+    "รหัสสำนักงาน",
+  ]);
 
-  // ถ้าไฟล์ไม่มี office_code ให้ใช้ office_name เป็น branch_code ชั่วคราว
+  const office_name = pickFirst(row, [
+    "OfficeName",
+    "office_name",
+    "สำนักงาน",
+  ]);
+
+  const region_text = pickFirst(row, [
+    "RegionText",
+    "region_text",
+    "แผนกงาน-ภาค",
+    "แผนกงานภาค",
+  ]);
+
+  const fcode = pickFirst(row, [
+    "FCode",
+    "fcode",
+  ]) || farm_code;
+
   const branch_code = office_code || office_name || null;
   const branch_name = office_name || office_code || null;
 
@@ -112,7 +171,6 @@ export default function AdminImportMasterFarmsPage() {
           continue;
         }
 
-        // last row wins
         dedupMap.set(r.farm_code, r);
       }
 
@@ -245,7 +303,7 @@ export default function AdminImportMasterFarmsPage() {
           <div className="small" style={{ lineHeight: 1.6 }}>
             Import พร้อมกัน: <b>master_farms</b> + <b>swine_branches</b>
             <br />
-            รองรับทั้งไฟล์หัวคอลัมน์แบบเก่าและแบบใหม่
+            รองรับหัวคอลัมน์แบบใหม่ เช่น FarmCode / farmName31 / Livestock / LivestockTypeText / OfficeName / RegionText / livestocktype
           </div>
         </div>
 
@@ -364,7 +422,7 @@ export default function AdminImportMasterFarmsPage() {
         </div>
 
         <div className="small" style={{ maxWidth: 1200, margin: "0 auto", lineHeight: 1.7 }}>
-          หลังรัน SQL แล้ว ถ้ายังเจอ schema cache เก่า ให้ refresh หน้าใหม่ 1 ครั้ง
+          ถ้ายัง import ไม่ได้ ให้เช็กว่าใน DB มีคอลัมน์ <b>farm_name31</b>, <b>livestock</b>, <b>livestock_type_text</b> แล้ว
         </div>
       </div>
     </div>
