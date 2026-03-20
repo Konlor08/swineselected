@@ -14,6 +14,22 @@ function dash(v) {
   return s ? s : "-";
 }
 
+function pickFirst(row, keys) {
+  for (const k of keys) {
+    const v = clean(row?.[k]);
+    if (v) return v;
+  }
+  return "";
+}
+
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
 async function readFirstSheetRows(file) {
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: "array", cellDates: true });
@@ -22,26 +38,40 @@ async function readFirstSheetRows(file) {
   return XLSX.utils.sheet_to_json(ws, { defval: "" });
 }
 
-// อ่านตามหัวคอลัมน์จริงใน MFarm.xlsx
+// รองรับทั้งหัวคอลัมน์แบบเก่า + แบบใหม่
 function mapToRow(row) {
-  const farm_code = clean(row["FarmCode"]);
-  const fcode = clean(row["FCode"]);
-  const farm_name = clean(row["FarmName"]);
+  const farm_code = pickFirst(row, ["FarmCode", "farm_code", "FCode", "fcode"]);
+  const farm_name31 = pickFirst(row, ["farmName31", "FarmName31", "FarmName", "farm_name31", "farm_name"]);
+  const farm_name = farm_name31 || farm_code;
 
-  const office_code = clean(row["รหัสสำนักงาน"]);
-  const office_name = clean(row["สำนักงาน"]);
+  const livestock = pickFirst(row, ["Livestock", "livestock"]);
+  const livestock_type_text = pickFirst(row, ["LivestockTypeText", "livestock_type_text"]);
+  const livestock_type = pickFirst(row, ["livestocktype", "Livestock_type", "livestock_type"]);
 
-  const region_text = clean(row["แผนกงาน-ภาค"]);
-  const livestock_type = clean(row["Livestock_type"]);
+  const office_code = pickFirst(row, ["OfficeCode", "office_code", "รหัสสำนักงาน"]);
+  const office_name = pickFirst(row, ["OfficeName", "office_name", "สำนักงาน"]);
+
+  const region_text = pickFirst(row, ["RegionText", "region_text", "แผนกงาน-ภาค"]);
+
+  const fcode = pickFirst(row, ["FCode", "fcode"]) || farm_code;
+
+  // ถ้าไฟล์ไม่มี office_code ให้ใช้ office_name เป็น branch_code ชั่วคราว
+  const branch_code = office_code || office_name || null;
+  const branch_name = office_name || office_code || null;
 
   return {
     farm_code,
     farm_name,
+    farm_name31: farm_name31 || null,
+    livestock: livestock || null,
+    livestock_type_text: livestock_type_text || null,
+    livestock_type: livestock_type || null,
     office_code: office_code || null,
     office_name: office_name || null,
     region_text: region_text || null,
-    livestock_type: livestock_type || null,
     fcode: fcode || null,
+    branch_code,
+    branch_name,
     is_active: true,
   };
 }
@@ -70,6 +100,7 @@ export default function AdminImportMasterFarmsPage() {
 
       const ok = [];
       const invalid = [];
+      const dedupMap = new Map();
 
       for (let i = 0; i < raw.length; i++) {
         const r = mapToRow(raw[i]);
@@ -80,11 +111,12 @@ export default function AdminImportMasterFarmsPage() {
           invalid.push({ row: i + 2, farm_code: "", reason: "ไม่มี FarmCode" });
           continue;
         }
-        if (!r.farm_name) {
-          invalid.push({ row: i + 2, farm_code: r.farm_code, reason: "ไม่มี FarmName" });
-          continue;
-        }
 
+        // last row wins
+        dedupMap.set(r.farm_code, r);
+      }
+
+      for (const r of dedupMap.values()) {
         ok.push(r);
       }
 
@@ -108,30 +140,37 @@ export default function AdminImportMasterFarmsPage() {
     try {
       const masterPayload = rows.map((r) => ({
         farm_code: r.farm_code,
-        farm_name: r.farm_name,
+        farm_name: r.farm_name || r.farm_code,
+        farm_name31: r.farm_name31 || r.farm_name || r.farm_code,
+        livestock: r.livestock || null,
+        livestock_type_text: r.livestock_type_text || null,
+        livestock_type: r.livestock_type || null,
         region_text: r.region_text || null,
-        fcode: r.fcode || null,
+        fcode: r.fcode || r.farm_code,
         office_code: r.office_code || null,
         office_name: r.office_name || null,
-        livestock_type: r.livestock_type || null,
-        branch_code: r.office_code || null,
-        branch_name: r.office_name || null,
+        branch_code: r.branch_code || null,
+        branch_name: r.branch_name || null,
         is_active: true,
       }));
 
-      const { error: e1 } = await supabase
-        .from("master_farms")
-        .upsert(masterPayload, { onConflict: "farm_code" });
+      const masterChunks = chunkArray(masterPayload, 500);
+      for (const chunk of masterChunks) {
+        const { error } = await supabase
+          .from("master_farms")
+          .upsert(chunk, { onConflict: "farm_code" });
 
-      if (e1) throw e1;
+        if (error) throw error;
+      }
 
-      const m = new Map();
+      const branchMap = new Map();
       for (const r of rows) {
-        const code = clean(r.office_code);
-        const name = clean(r.office_name);
+        const code = clean(r.branch_code);
+        const name = clean(r.branch_name);
+
         if (!code || !name) continue;
 
-        m.set(code, {
+        branchMap.set(code, {
           branch_code: code,
           branch_name: name,
           region_text: r.region_text || null,
@@ -139,14 +178,15 @@ export default function AdminImportMasterFarmsPage() {
         });
       }
 
-      const branches = Array.from(m.values());
+      const branches = Array.from(branchMap.values());
+      const branchChunks = chunkArray(branches, 500);
 
-      if (branches.length) {
-        const { error: e2 } = await supabase
+      for (const chunk of branchChunks) {
+        const { error } = await supabase
           .from("swine_branches")
-          .upsert(branches, { onConflict: "branch_code" });
+          .upsert(chunk, { onConflict: "branch_code" });
 
-        if (e2) throw e2;
+        if (error) throw error;
       }
 
       setMsg(
@@ -162,10 +202,15 @@ export default function AdminImportMasterFarmsPage() {
   const previewHeaders = [
     "farm_code",
     "farm_name",
+    "farm_name31",
+    "livestock",
+    "livestock_type_text",
+    "livestock_type",
     "office_code",
     "office_name",
     "region_text",
-    "livestock_type",
+    "branch_code",
+    "branch_name",
     "fcode",
     "is_active",
   ];
@@ -196,9 +241,11 @@ export default function AdminImportMasterFarmsPage() {
         }}
       >
         <div>
-          <div style={{ fontSize: 20, fontWeight: 900 }}>Import Master Farms (MFarm.xlsx)</div>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>Import Master Farms</div>
           <div className="small" style={{ lineHeight: 1.6 }}>
-            Import 2 ตารางพร้อมกัน: master_farms + swine_branches (จาก รหัสสำนักงาน/สำนักงาน/แผนกงาน-ภาค)
+            Import พร้อมกัน: <b>master_farms</b> + <b>swine_branches</b>
+            <br />
+            รองรับทั้งไฟล์หัวคอลัมน์แบบเก่าและแบบใหม่
           </div>
         </div>
 
@@ -209,7 +256,7 @@ export default function AdminImportMasterFarmsPage() {
 
       <div
         style={{
-          maxWidth: 1100,
+          maxWidth: 1200,
           margin: "14px auto 0",
           display: "grid",
           gap: 14,
@@ -264,7 +311,7 @@ export default function AdminImportMasterFarmsPage() {
           <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 10 }}>Preview (50 rows)</div>
 
           {!preview.length ? (
-            <div className="small">ยังไม่มี preview — เลือกไฟล์ MFarm.xlsx ก่อน</div>
+            <div className="small">ยังไม่มี preview — เลือกไฟล์ก่อน</div>
           ) : (
             <div
               style={{
@@ -295,10 +342,15 @@ export default function AdminImportMasterFarmsPage() {
                     <tr key={idx}>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{dash(r.farm_code)}</td>
                       <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.farm_name)}</td>
+                      <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.farm_name31)}</td>
+                      <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.livestock)}</td>
+                      <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.livestock_type_text)}</td>
+                      <td style={{ ...tdStyle, minWidth: 120 }}>{dash(r.livestock_type)}</td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{dash(r.office_code)}</td>
                       <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.office_name)}</td>
                       <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.region_text)}</td>
-                      <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{dash(r.livestock_type)}</td>
+                      <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{dash(r.branch_code)}</td>
+                      <td style={{ ...tdStyle, minWidth: 180 }}>{dash(r.branch_name)}</td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>{dash(r.fcode)}</td>
                       <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
                         {r.is_active ? "true" : "false"}
@@ -311,9 +363,8 @@ export default function AdminImportMasterFarmsPage() {
           )}
         </div>
 
-        <div className="small" style={{ maxWidth: 1100, margin: "0 auto", lineHeight: 1.7 }}>
-          ✅ ถ้าเพิ่งเพิ่มคอลัมน์ใน DB แล้ว import ยัง error เรื่อง schema cache ให้รัน SQL:{" "}
-          <b>NOTIFY pgrst, 'reload schema';</b>
+        <div className="small" style={{ maxWidth: 1200, margin: "0 auto", lineHeight: 1.7 }}>
+          หลังรัน SQL แล้ว ถ้ายังเจอ schema cache เก่า ให้ refresh หน้าใหม่ 1 ครั้ง
         </div>
       </div>
     </div>
