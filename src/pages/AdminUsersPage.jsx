@@ -8,13 +8,23 @@ function clean(v) {
   return String(v ?? "").trim();
 }
 
+function lower(v) {
+  return clean(v).toLowerCase();
+}
+
 function dash(v) {
   const s = clean(v);
   return s ? s : "-";
 }
 
-function lower(v) {
-  return clean(v).toLowerCase();
+function isInvalidDbText(v) {
+  const s = clean(v).toLowerCase();
+  return !s || s === "-" || s === "null" || s === "undefined";
+}
+
+function normDbText(v) {
+  const s = clean(v);
+  return isInvalidDbText(s) ? null : s;
 }
 
 function withTimeout(promise, ms, label) {
@@ -32,6 +42,39 @@ function withTimeout(promise, ms, label) {
 const ROLE_OPTIONS = ["admin", "user"];
 const LOAD_TIMEOUT_MS = 15000;
 const INITIAL_LIMIT = 1000;
+
+function mapProfileFromDb(row) {
+  return {
+    user_id: row.user_id,
+    display_name: normDbText(row.display_name),
+    username: normDbText(row.username),
+    role: lower(normDbText(row.role) || "user"),
+    team_name: normDbText(row.team_name),
+    is_active: row.is_active !== false,
+    branch_id: row.branch_id || "",
+  };
+}
+
+function buildDraftFromProfile(p) {
+  return {
+    role: lower(normDbText(p.role) || "user"),
+    team_name: clean(normDbText(p.team_name) || ""),
+    is_active: p.is_active !== false,
+    branch_id: p.branch_id || "",
+  };
+}
+
+function buildSafeUsernameFromRow(row) {
+  return normDbText(row.username) || (row.user_id ? `user_${String(row.user_id).slice(0, 8)}` : null);
+}
+
+function buildSafeDisplayNameFromRow(row) {
+  return (
+    normDbText(row.display_name) ||
+    normDbText(row.username) ||
+    (row.user_id ? `user-${String(row.user_id).slice(0, 8)}` : null)
+  );
+}
 
 export default function AdminUsersPage() {
   const nav = useNavigate();
@@ -67,7 +110,7 @@ export default function AdminUsersPage() {
       const profilesPromise = withTimeout(
         supabase
           .from("profiles")
-          .select("user_id, display_name, role, team_name, is_active, branch_id")
+          .select("user_id, display_name, username, role, team_name, is_active, branch_id")
           .order("display_name", { ascending: true })
           .limit(INITIAL_LIMIT),
         LOAD_TIMEOUT_MS,
@@ -95,18 +138,12 @@ export default function AdminUsersPage() {
       const { data: p, error: pe } = profilesRes.value;
       if (pe) throw pe;
 
-      const list = Array.isArray(p) ? p : [];
+      const list = (Array.isArray(p) ? p : []).map(mapProfileFromDb);
       setProfiles(list);
 
       const nextDraft = {};
       for (const it of list) {
-        const uid = it.user_id;
-        nextDraft[uid] = {
-          role: lower(it.role || "user"),
-          team_name: clean(it.team_name || ""),
-          is_active: it.is_active !== false,
-          branch_id: it.branch_id || "",
-        };
+        nextDraft[it.user_id] = buildDraftFromProfile(it);
       }
 
       setDraft(nextDraft);
@@ -163,16 +200,22 @@ export default function AdminUsersPage() {
     if (!qq) return profiles;
 
     return profiles.filter((p) => {
+      const d = draft[p.user_id] || {};
+      const selectedBranchId = d.branch_id || p.branch_id || "";
+      const selectedBranch = selectedBranchId ? branchMap.get(selectedBranchId) : null;
+
       const uid = lower(p.user_id);
-      const dn = lower(p.display_name);
-      const tn = lower(p.team_name);
-      const role = lower(p.role);
-      const branch = lower(branchMap.get((draft[p.user_id] || {}).branch_id || p.branch_id)?.branch_name);
-      const branchCode = lower(branchMap.get((draft[p.user_id] || {}).branch_id || p.branch_id)?.branch_code);
+      const dn = lower(buildSafeDisplayNameFromRow(p));
+      const un = lower(buildSafeUsernameFromRow(p));
+      const tn = lower(d.team_name ?? p.team_name ?? "");
+      const role = lower(d.role ?? p.role ?? "user");
+      const branch = lower(selectedBranch?.branch_name);
+      const branchCode = lower(selectedBranch?.branch_code);
 
       return (
         uid.includes(qq) ||
         dn.includes(qq) ||
+        un.includes(qq) ||
         tn.includes(qq) ||
         role.includes(qq) ||
         branch.includes(qq) ||
@@ -195,20 +238,17 @@ export default function AdminUsersPage() {
 
     setDraft((prev) => ({
       ...prev,
-      [user_id]: {
-        role: lower(p.role || "user"),
-        team_name: clean(p.team_name || ""),
-        is_active: p.is_active !== false,
-        branch_id: p.branch_id || "",
-      },
+      [user_id]: buildDraftFromProfile(p),
     }));
 
     setRowErr((prev) => ({ ...prev, [user_id]: "" }));
   }
 
-  async function saveRow(user_id) {
-    const d = draft[user_id];
-    if (!d) return;
+  async function saveRow(user_id, overrideDraft = null) {
+    const base = profiles.find((x) => x.user_id === user_id);
+    const d = overrideDraft || draft[user_id];
+
+    if (!base || !d) return;
 
     const role = lower(d.role);
     if (!ROLE_OPTIONS.includes(role)) {
@@ -222,9 +262,9 @@ export default function AdminUsersPage() {
     try {
       const payload = {
         role,
-        team_name: clean(d.team_name || "") || null,
+        team_name: normDbText(d.team_name),
         is_active: d.is_active === true,
-        branch_id: clean(d.branch_id || "") || null,
+        branch_id: normDbText(d.branch_id) || null,
       };
 
       const { error } = await supabase.from("profiles").update(payload).eq("user_id", user_id);
@@ -233,16 +273,25 @@ export default function AdminUsersPage() {
       setProfiles((prev) =>
         prev.map((p) =>
           p.user_id === user_id
-            ? {
+            ? mapProfileFromDb({
                 ...p,
-                role: payload.role,
-                team_name: payload.team_name,
-                is_active: payload.is_active,
-                branch_id: payload.branch_id,
-              }
+                display_name: buildSafeDisplayNameFromRow(p),
+                username: buildSafeUsernameFromRow(p),
+                ...payload,
+              })
             : p
         )
       );
+
+      setDraft((prev) => ({
+        ...prev,
+        [user_id]: {
+          role: payload.role,
+          team_name: clean(payload.team_name || ""),
+          is_active: payload.is_active,
+          branch_id: payload.branch_id || "",
+        },
+      }));
     } catch (e) {
       setRowErr((prev) => ({ ...prev, [user_id]: e?.message || String(e) }));
     } finally {
@@ -251,8 +300,18 @@ export default function AdminUsersPage() {
   }
 
   async function quickDisable(user_id, nextActive) {
-    setDraftField(user_id, "is_active", nextActive);
-    await saveRow(user_id);
+    const nextDraft = {
+      ...(draft[user_id] || {}),
+      is_active: nextActive,
+    };
+
+    setDraft((prev) => ({
+      ...prev,
+      [user_id]: nextDraft,
+    }));
+    setRowErr((prev) => ({ ...prev, [user_id]: "" }));
+
+    await saveRow(user_id, nextDraft);
   }
 
   const thStyle = {
@@ -309,7 +368,7 @@ export default function AdminUsersPage() {
               className="input"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="ค้นหา: display_name / team_name / user_id / role / branch"
+              placeholder="ค้นหา: display_name / username / team_name / user_id / role / branch"
               style={{ flex: "1 1 320px", minWidth: 240 }}
             />
             <div className="small">
@@ -366,14 +425,27 @@ export default function AdminUsersPage() {
                   {filtered.map((p) => {
                     const uid = p.user_id;
                     const d = draft[uid] || {};
-                    const b = d.branch_id ? branchMap.get(d.branch_id) : null;
+                    const currentBranchId = d.branch_id || p.branch_id || "";
+                    const b = currentBranchId ? branchMap.get(currentBranchId) : null;
+
+                    const safeDisplayName = buildSafeDisplayNameFromRow(p);
+                    const safeUsername = buildSafeUsernameFromRow(p);
 
                     return (
                       <tr key={uid}>
-                        <td style={{ ...tdStyle, fontWeight: 800 }}>{dash(p.display_name)}</td>
+                        <td style={{ ...tdStyle, fontWeight: 800, minWidth: 220 }}>
+                          <div>{dash(safeDisplayName)}</div>
+                          {safeUsername && safeUsername !== safeDisplayName ? (
+                            <div className="small" style={{ marginTop: 4, color: "#64748b" }}>
+                              username: {safeUsername}
+                            </div>
+                          ) : null}
+                        </td>
+
                         <td style={{ ...tdStyle, whiteSpace: "nowrap" }}>
                           <span className="small">{dash(uid)}</span>
                         </td>
+
                         <td style={tdStyle}>
                           <select
                             className="input"
@@ -388,6 +460,7 @@ export default function AdminUsersPage() {
                             ))}
                           </select>
                         </td>
+
                         <td style={tdStyle}>
                           <input
                             className="input"
@@ -397,6 +470,7 @@ export default function AdminUsersPage() {
                             style={{ width: 220 }}
                           />
                         </td>
+
                         <td style={tdStyle}>
                           <select
                             className="input"
@@ -411,6 +485,7 @@ export default function AdminUsersPage() {
                               </option>
                             ))}
                           </select>
+
                           <div className="small" style={{ marginTop: 6 }}>
                             {b ? (
                               <>
@@ -421,6 +496,7 @@ export default function AdminUsersPage() {
                             )}
                           </div>
                         </td>
+
                         <td style={tdStyle}>
                           <label style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                             <input
@@ -450,6 +526,7 @@ export default function AdminUsersPage() {
                             </button>
                           </div>
                         </td>
+
                         <td style={tdStyle}>
                           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <button
@@ -461,6 +538,7 @@ export default function AdminUsersPage() {
                             >
                               {saving[uid] ? "Saving..." : "Save"}
                             </button>
+
                             <button
                               className="linkbtn"
                               type="button"
@@ -470,6 +548,7 @@ export default function AdminUsersPage() {
                               Reset
                             </button>
                           </div>
+
                           {rowErr[uid] ? (
                             <div className="err" style={{ marginTop: 8 }}>
                               {rowErr[uid]}

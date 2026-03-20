@@ -11,14 +11,54 @@ function clean(v) {
   return String(v ?? "").trim();
 }
 
-async function ensureProfileAfterLogin({ userId, email, username }) {
-  const fallbackName =
-    clean(username) || String(email ?? "").split("@")[0] || "-";
+function isInvalidProfileText(v) {
+  const s = clean(v).toLowerCase();
+  return !s || s === "-" || s === "null" || s === "undefined";
+}
+
+function normalizeProfileText(v) {
+  const s = clean(v);
+  return isInvalidProfileText(s) ? null : s;
+}
+
+function emailPrefix(email) {
+  const s = clean(email);
+  if (!s.includes("@")) return null;
+  return normalizeProfileText(s.split("@")[0]);
+}
+
+function buildSafeUsername({ username, email, userId }) {
+  return (
+    normalizeProfileText(username) ||
+    emailPrefix(email) ||
+    (userId ? `user_${String(userId).slice(0, 8)}` : null)
+  );
+}
+
+function buildSafeDisplayName({ displayName, username, email, userId }) {
+  return (
+    normalizeProfileText(displayName) ||
+    normalizeProfileText(username) ||
+    emailPrefix(email) ||
+    (userId ? `user-${String(userId).slice(0, 8)}` : null)
+  );
+}
+
+async function ensureProfileAfterLogin({ userId, email, username, displayName }) {
+  if (!userId) return;
+
+  const safeUsername = buildSafeUsername({ username, email, userId });
+  const safeDisplayName = buildSafeDisplayName({
+    displayName,
+    username: safeUsername,
+    email,
+    userId,
+  });
 
   try {
     const { data: existing, error: readError } = await supabase
       .from("profiles")
-      .select("user_id, display_name, role, team_name, branch_id, is_active")
+      .select("user_id, display_name, username, role, team_name, branch_id, is_active")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -30,7 +70,8 @@ async function ensureProfileAfterLogin({ userId, email, username }) {
     if (!existing) {
       const payload = {
         user_id: userId,
-        display_name: fallbackName,
+        display_name: safeDisplayName,
+        username: safeUsername,
         role: "user",
         team_name: null,
         branch_id: null,
@@ -39,9 +80,7 @@ async function ensureProfileAfterLogin({ userId, email, username }) {
 
       console.log("ensureProfileAfterLogin insert payload:", payload);
 
-      const { error: insertError } = await supabase
-        .from("profiles")
-        .insert([payload]);
+      const { error: insertError } = await supabase.from("profiles").insert([payload]);
 
       if (insertError) {
         console.error("ensureProfileAfterLogin insert error:", insertError);
@@ -49,19 +88,33 @@ async function ensureProfileAfterLogin({ userId, email, username }) {
       return;
     }
 
-    if (!clean(existing.display_name)) {
-      const payload = {
-        display_name: fallbackName,
-      };
+    const patch = {};
 
-      console.log("ensureProfileAfterLogin update display_name payload:", {
+    if (isInvalidProfileText(existing.display_name) && safeDisplayName) {
+      patch.display_name = safeDisplayName;
+    }
+
+    if (isInvalidProfileText(existing.username) && safeUsername) {
+      patch.username = safeUsername;
+    }
+
+    if (isInvalidProfileText(existing.role)) {
+      patch.role = "user";
+    }
+
+    if (typeof existing.is_active !== "boolean") {
+      patch.is_active = true;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      console.log("ensureProfileAfterLogin update payload:", {
         user_id: userId,
-        ...payload,
+        ...patch,
       });
 
       const { error: updateError } = await supabase
         .from("profiles")
-        .update(payload)
+        .update(patch)
         .eq("user_id", userId);
 
       if (updateError) {
@@ -91,7 +144,12 @@ export default function LoginPage() {
 
     async function checkSession() {
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error("checkSession getSession error:", error);
+          return;
+        }
+
         const session = data?.session;
         if (!alive) return;
 
@@ -99,14 +157,16 @@ export default function LoginPage() {
           nav("/", { replace: true });
         }
       } catch (err) {
-        console.error("checkSession error:", err);
+        console.error("checkSession unexpected error:", err);
       }
     }
 
     checkSession();
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user?.id) {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!alive) return;
+
+      if (event === "SIGNED_IN" && session?.user?.id) {
         nav("/", { replace: true });
       }
     });
@@ -123,21 +183,42 @@ export default function LoginPage() {
     return `${u}@swine.local`;
   }, [username]);
 
+  const validateUsername = useCallback((u) => {
+    if (u.length < 3 || u.length > 20) {
+      return "Username ต้องยาว 3-20 ตัวอักษร";
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(u)) {
+      return "Username ใช้ได้เฉพาะ a-z A-Z 0-9 _";
+    }
+    return "";
+  }, []);
+
+  const validatePassword = useCallback((p) => {
+    if (p.length < 6) {
+      return "Password อย่างน้อย 6 ตัวอักษร";
+    }
+    return "";
+  }, []);
+
   const onLogin = useCallback(
     async (e) => {
       e?.preventDefault?.();
       if (busy) return;
 
       setMsg("");
+
       const u = clean(username);
       const p = String(password ?? "");
 
-      if (u.length < 3 || u.length > 20) {
-        setMsg("Username ต้องยาว 3-20 ตัวอักษร");
+      const userError = validateUsername(u);
+      if (userError) {
+        setMsg(userError);
         return;
       }
-      if (p.length < 6) {
-        setMsg("Password อย่างน้อย 6 ตัวอักษร");
+
+      const passwordError = validatePassword(p);
+      if (passwordError) {
+        setMsg(passwordError);
         return;
       }
 
@@ -157,6 +238,11 @@ export default function LoginPage() {
             userId: loggedInUser.id,
             email: loggedInUser.email,
             username: u,
+            displayName:
+              loggedInUser?.user_metadata?.display_name ||
+              loggedInUser?.user_metadata?.full_name ||
+              loggedInUser?.user_metadata?.name ||
+              null,
           });
         }
 
@@ -168,7 +254,7 @@ export default function LoginPage() {
         setBusy(false);
       }
     },
-    [busy, email, nav, password, username]
+    [busy, email, nav, password, username, validatePassword, validateUsername]
   );
 
   const onRegister = useCallback(
@@ -177,21 +263,28 @@ export default function LoginPage() {
       if (busy) return;
 
       setMsg("");
+
       const u = clean(username);
       const p = String(password ?? "");
 
-      if (u.length < 3 || u.length > 20) {
-        setMsg("Username ต้องยาว 3-20 ตัวอักษร");
+      const userError = validateUsername(u);
+      if (userError) {
+        setMsg(userError);
         return;
       }
-      if (!/^[a-zA-Z0-9_]+$/.test(u)) {
-        setMsg("Username ใช้ได้เฉพาะ a-z A-Z 0-9 _");
+
+      const passwordError = validatePassword(p);
+      if (passwordError) {
+        setMsg(passwordError);
         return;
       }
-      if (p.length < 6) {
-        setMsg("Password อย่างน้อย 6 ตัวอักษร");
-        return;
-      }
+
+      const safeUsername = buildSafeUsername({ username: u, email });
+      const safeDisplayName = buildSafeDisplayName({
+        displayName: u,
+        username: safeUsername,
+        email,
+      });
 
       setBusy(true);
       try {
@@ -200,7 +293,10 @@ export default function LoginPage() {
           password: p,
           options: {
             data: {
-              display_name: u,
+              display_name: safeDisplayName,
+              username: safeUsername,
+              full_name: safeDisplayName,
+              name: safeDisplayName,
             },
           },
         });
@@ -209,30 +305,18 @@ export default function LoginPage() {
 
         console.log("signUp result:", data);
 
-        const newUserId = data?.user?.id || null;
+        const newUser = data?.user || null;
+        const newUserId = newUser?.id || null;
 
+        // ให้ DB trigger เป็นตัวหลักในการสร้าง profiles
+        // แต่ยังเรียก ensureProfileAfterLogin เป็น safety net
         if (newUserId) {
-          const profilePayload = {
-            user_id: newUserId,
-            display_name: u,
-            role: "user",
-            team_name: null,
-            branch_id: null,
-            is_active: true,
-          };
-
-          console.log("upsert profile payload:", profilePayload);
-
-          const { error: profileError } = await supabase
-            .from("profiles")
-            .upsert([profilePayload], {
-              onConflict: "user_id",
-            });
-
-          if (profileError) {
-            console.error("upsert profile error:", profileError);
-            throw profileError;
-          }
+          await ensureProfileAfterLogin({
+            userId: newUserId,
+            email: newUser.email || email,
+            username: safeUsername,
+            displayName: safeDisplayName,
+          });
         }
 
         setMsg("✅ Register สำเร็จ");
@@ -243,7 +327,7 @@ export default function LoginPage() {
         setBusy(false);
       }
     },
-    [busy, email, password, username]
+    [busy, email, password, username, validatePassword, validateUsername]
   );
 
   const activeBtnStyle = (active) => ({
