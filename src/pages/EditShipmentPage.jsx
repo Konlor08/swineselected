@@ -1,3 +1,5 @@
+// src/pages/EditShipmentPage.jsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -357,6 +359,7 @@ export default function EditShipmentPage() {
           remark,
           status,
           created_at,
+          updated_at,
           to_farm:master_farms!swine_shipments_to_farm_id_fkey (
             id,
             farm_code,
@@ -486,7 +489,8 @@ export default function EditShipmentPage() {
     try {
       const rows = await fetchShipmentListByFilters({
         selectedDate: args?.selectedDate || newGroupKey?.selectedDate || filterDate,
-        fromFarmCode: args?.fromFarmCode || newGroupKey?.fromFarmCode || filterFromFarmCode,
+        fromFarmCode:
+          args?.fromFarmCode || newGroupKey?.fromFarmCode || filterFromFarmCode,
         toFarmId: args?.toFarmId || newGroupKey?.toFarmId || filterToFarmId,
       });
       setShipmentList(rows);
@@ -551,6 +555,7 @@ export default function EditShipmentPage() {
       const availableOnly = swines.filter((x) =>
         availableCodeSet.has(clean(x.swine_code))
       );
+
       setAvailableSwines(availableOnly);
     } catch (e) {
       console.error("loadAvailableSwinesOfFarm error:", e);
@@ -585,6 +590,7 @@ export default function EditShipmentPage() {
             remark,
             status,
             created_at,
+            updated_at,
             to_farm:master_farms!swine_shipments_to_farm_id_fkey (
               id,
               farm_code,
@@ -599,6 +605,8 @@ export default function EditShipmentPage() {
               teats_right,
               backfat,
               weight,
+              created_at,
+              updated_at,
               swine:swines!swine_shipment_items_swine_id_fkey (
                 id,
                 house_no,
@@ -692,7 +700,10 @@ export default function EditShipmentPage() {
 
   useEffect(() => {
     if (pageLoading || !canUsePage || !shipmentIdFromUrl) return;
-    if (selectedShipmentId === shipmentIdFromUrl && shipmentHeader?.id === shipmentIdFromUrl) {
+    if (
+      selectedShipmentId === shipmentIdFromUrl &&
+      shipmentHeader?.id === shipmentIdFromUrl
+    ) {
       return;
     }
 
@@ -781,7 +792,9 @@ export default function EditShipmentPage() {
 
   function setNewField(tempId, field, value) {
     setNewItemRows((prev) =>
-      prev.map((row) => (row.temp_id === tempId ? { ...row, [field]: value } : row))
+      prev.map((row) =>
+        row.temp_id === tempId ? { ...row, [field]: value } : row
+      )
     );
   }
 
@@ -849,8 +862,9 @@ export default function EditShipmentPage() {
 
   const selectedCandidateSwine = useMemo(() => {
     return (
-      addCandidateSwines.find((x) => String(x.id) === String(selectedCandidateSwineId)) ||
-      null
+      addCandidateSwines.find(
+        (x) => String(x.id) === String(selectedCandidateSwineId)
+      ) || null
     );
   }, [addCandidateSwines, selectedCandidateSwineId]);
 
@@ -957,11 +971,14 @@ export default function EditShipmentPage() {
 
     try {
       const shipmentId = shipmentHeader.id;
+      const nowIso = new Date().toISOString();
+
       const oldGroup = {
         selectedDate: clean(shipmentHeader.selected_date),
         fromFarmCode: clean(shipmentHeader.from_farm_code),
         toFarmId: clean(shipmentHeader.to_farm_id),
       };
+
       const nextGroup = {
         selectedDate: clean(shipmentHeader.selected_date),
         fromFarmCode: clean(shipmentHeader.from_farm_code),
@@ -976,6 +993,7 @@ export default function EditShipmentPage() {
             to_farm_id: clean(editToFarmId) || null,
             delivery_date: clean(editDeliveryDate) || null,
             remark: clean(editRemark) || null,
+            updated_at: nowIso,
           })
           .eq("id", shipmentId)
           .eq("status", "draft")
@@ -990,6 +1008,7 @@ export default function EditShipmentPage() {
             remark,
             status,
             created_at,
+            updated_at,
             to_farm:master_farms!swine_shipments_to_farm_id_fkey (
               id,
               farm_code,
@@ -1017,6 +1036,7 @@ export default function EditShipmentPage() {
               teats_right: toIntOrNull(row.teats_right),
               backfat: toNumOrNull(row.backfat),
               weight: toNumOrNull(row.weight),
+              updated_at: nowIso,
             })
             .eq("id", row.id)
             .select("id"),
@@ -1030,14 +1050,16 @@ export default function EditShipmentPage() {
 
       if (newItemRows.length) {
         step = "เพิ่มรายการหมูใหม่";
-        const insertRows = newItemRows.map((row) => ({
+        const insertRows = newItemRows.map((row, idx) => ({
           shipment_id: shipmentId,
           swine_id: row.swine_id,
           swine_code: clean(row.swine_code),
+          selection_no: previewStartNo + idx,
           teats_left: toIntOrNull(row.teats_left),
           teats_right: toIntOrNull(row.teats_right),
           backfat: toNumOrNull(row.backfat),
           weight: toNumOrNull(row.weight),
+          updated_at: nowIso,
         }));
 
         const insertRes = await withTimeout(
@@ -1064,7 +1086,10 @@ export default function EditShipmentPage() {
           const reserveRes = await withTimeout(
             supabase
               .from("swine_master")
-              .update({ delivery_state: "reserved" })
+              .update({
+                delivery_state: "reserved",
+                updated_at: nowIso,
+              })
               .in("swine_code", newCodes)
               .select("swine_code"),
             15000,
@@ -1084,7 +1109,9 @@ export default function EditShipmentPage() {
 
       if (removedItemRows.length) {
         const removedIds = removedItemRows.map((x) => x.id).filter(Boolean);
-        const removedCodes = removedItemRows.map((x) => clean(x.swine_code)).filter(Boolean);
+        const removedCodes = removedItemRows
+          .map((x) => clean(x.swine_code))
+          .filter(Boolean);
 
         if (removedIds.length) {
           step = "ลบรายการหมูที่เอาออก";
@@ -1113,7 +1140,10 @@ export default function EditShipmentPage() {
           const releaseRes = await withTimeout(
             supabase
               .from("swine_master")
-              .update({ delivery_state: "available" })
+              .update({
+                delivery_state: "available",
+                updated_at: nowIso,
+              })
               .in("swine_code", removedCodes)
               .select("swine_code"),
             15000,
@@ -1208,7 +1238,8 @@ export default function EditShipmentPage() {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 18, fontWeight: 800 }}>Edit Shipment (Draft)</div>
           <div className="small" style={{ wordBreak: "break-word" }}>
-            บันทึกครั้งเดียวครบ: header + ค่าหมู + เพิ่ม/ลบหมู + reserve/release + resequence
+            บันทึกครั้งเดียวครบ: header + ค่าหมู + เพิ่ม/ลบหมู + reserve/release +
+            resequence
           </div>
         </div>
 
@@ -1364,8 +1395,8 @@ export default function EditShipmentPage() {
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#444" }}>
                           วันคัด: <b>{formatDateDisplay(row.selected_date)}</b> | ต้นทาง:{" "}
-                          <b>{row.from_farm_name || row.from_farm_code || "-"}</b> | ปลายทาง:{" "}
-                          <b>{row.to_farm?.farm_name || "-"}</b>
+                          <b>{row.from_farm_name || row.from_farm_code || "-"}</b> |
+                          ปลายทาง: <b>{row.to_farm?.farm_name || "-"}</b>
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           วันส่ง: <b>{formatDateDisplay(row.delivery_date)}</b>
@@ -1375,6 +1406,9 @@ export default function EditShipmentPage() {
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           สร้างเมื่อ: {formatDateTimeDisplay(row.created_at)}
+                        </div>
+                        <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                          แก้ไขล่าสุด: {formatDateTimeDisplay(row.updated_at)}
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           หมายเหตุ: {row.remark || "-"}
@@ -1440,7 +1474,11 @@ export default function EditShipmentPage() {
                     ฟาร์มต้นทาง
                   </div>
                   <input
-                    value={shipmentHeader.from_farm_name || shipmentHeader.from_farm_code || ""}
+                    value={
+                      shipmentHeader.from_farm_name ||
+                      shipmentHeader.from_farm_code ||
+                      ""
+                    }
                     readOnly
                     style={{ ...fullInputStyle, background: "#f8fafc" }}
                   />
@@ -1496,9 +1534,7 @@ export default function EditShipmentPage() {
             </div>
 
             <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-              <div style={{ fontWeight: 800 }}>
-                เบอร์หมูใน Draft ({itemRows.length})
-              </div>
+              <div style={{ fontWeight: 800 }}>เบอร์หมูใน Draft ({itemRows.length})</div>
 
               {itemRows.length === 0 ? (
                 <div className="small" style={{ color: "#666" }}>
@@ -1554,28 +1590,36 @@ export default function EditShipmentPage() {
                       >
                         <input
                           value={row.teats_left}
-                          onChange={(e) => setExistingField(row.id, "teats_left", e.target.value)}
+                          onChange={(e) =>
+                            setExistingField(row.id, "teats_left", e.target.value)
+                          }
                           placeholder="เต้าซ้าย"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.teats_right}
-                          onChange={(e) => setExistingField(row.id, "teats_right", e.target.value)}
+                          onChange={(e) =>
+                            setExistingField(row.id, "teats_right", e.target.value)
+                          }
                           placeholder="เต้าขวา"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.backfat}
-                          onChange={(e) => setExistingField(row.id, "backfat", e.target.value)}
+                          onChange={(e) =>
+                            setExistingField(row.id, "backfat", e.target.value)
+                          }
                           placeholder="Backfat"
                           inputMode="decimal"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.weight}
-                          onChange={(e) => setExistingField(row.id, "weight", e.target.value)}
+                          onChange={(e) =>
+                            setExistingField(row.id, "weight", e.target.value)
+                          }
                           placeholder="น้ำหนัก"
                           inputMode="decimal"
                           style={smallInputStyle}
@@ -1799,28 +1843,36 @@ export default function EditShipmentPage() {
                       >
                         <input
                           value={row.teats_left}
-                          onChange={(e) => setNewField(row.temp_id, "teats_left", e.target.value)}
+                          onChange={(e) =>
+                            setNewField(row.temp_id, "teats_left", e.target.value)
+                          }
                           placeholder="เต้าซ้าย"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.teats_right}
-                          onChange={(e) => setNewField(row.temp_id, "teats_right", e.target.value)}
+                          onChange={(e) =>
+                            setNewField(row.temp_id, "teats_right", e.target.value)
+                          }
                           placeholder="เต้าขวา"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.backfat}
-                          onChange={(e) => setNewField(row.temp_id, "backfat", e.target.value)}
+                          onChange={(e) =>
+                            setNewField(row.temp_id, "backfat", e.target.value)
+                          }
                           placeholder="Backfat"
                           inputMode="decimal"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.weight}
-                          onChange={(e) => setNewField(row.temp_id, "weight", e.target.value)}
+                          onChange={(e) =>
+                            setNewField(row.temp_id, "weight", e.target.value)
+                          }
                           placeholder="น้ำหนัก"
                           inputMode="decimal"
                           style={smallInputStyle}
