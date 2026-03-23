@@ -222,8 +222,10 @@ export default function UserHomePage() {
           <div className="small" style={{ wordBreak: "break-word", marginTop: 4 }}>
             ผู้ใช้งาน: <b>{displayName || "User"}</b>
           </div>
-          <div className="small" style={{ color: "#64748b", marginTop: 4 }}>
-            เริ่มงานจากการสร้าง Draft ก่อน แล้วจึงคัดหมูในหน้าแก้ไข
+          <div className="small" style={{ color: "#64748b", marginTop: 4, lineHeight: 1.7 }}>
+            <b>Create</b> = ใช้คัดหมูเริ่มต้น
+            <br />
+            <b>Edit</b> = ใช้แก้ draft และเพิ่มหมูได้ถ้าคัดไม่พอ
           </div>
         </div>
 
@@ -244,7 +246,7 @@ export default function UserHomePage() {
               nav("/shipment-create");
             }}
           >
-            สร้าง Shipment
+            Create
           </button>
 
           <button
@@ -255,7 +257,7 @@ export default function UserHomePage() {
               nav("/edit-shipment");
             }}
           >
-            แก้ไข Draft
+            Edit Draft
           </button>
 
           <button
@@ -326,13 +328,13 @@ export default function UserHomePage() {
         >
           <div style={{ fontSize: 18, fontWeight: 900 }}>ลำดับการใช้งาน</div>
           <div className="small" style={{ color: "#475569", lineHeight: 1.8 }}>
-            1) กด <b>สร้าง Shipment</b>
+            1) กด <b>Create</b> เพื่อเริ่มคัดหมู
             <br />
-            2) เลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง แล้ว Save Draft
+            2) เลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง
             <br />
-            3) ระบบจะพาไปหน้า <b>แก้ไข Draft</b> อัตโนมัติ
+            3) เลือก House และรายการหมู แล้วกด Save Draft หรือ Submit
             <br />
-            4) จากนั้นค่อยเลือกเบอร์หมูและบันทึกลำดับการคัด
+            4) ถ้าต้องการกลับมาแก้ draft หรือเพิ่มหมูภายหลัง ให้เข้า <b>Edit Draft</b>
           </div>
         </div>
 
@@ -344,9 +346,9 @@ export default function UserHomePage() {
           }}
         >
           <ActionCard
-            title="สร้าง Shipment"
-            desc="เริ่มต้นสร้าง Draft ใหม่ ระบบจะตรวจ Error ก่อน และกัน draft ซ้ำของ user คนเดิมแบบเบา ๆ"
-            buttonText="ไปหน้าสร้าง Shipment"
+            title="Create"
+            desc="ใช้คัดหมูเริ่มต้น สร้างรายการใหม่ เลือกวันคัด ต้นทาง ปลายทาง House และรายการหมู"
+            buttonText="ไปหน้า Create"
             onClick={() => {
               dlog("card navigate:/shipment-create");
               nav("/shipment-create");
@@ -355,9 +357,9 @@ export default function UserHomePage() {
           />
 
           <ActionCard
-            title="แก้ไข Draft"
-            desc="เปิดหน้าแก้ไข Draft เพื่อคัดหมู เพิ่ม/ลบรายการ และบันทึกลำดับการคัด"
-            buttonText="ไปหน้าแก้ไข Draft"
+            title="Edit Draft"
+            desc="ใช้เปิด draft เดิม เพื่อแก้ปลายทาง วันส่ง หมายเหตุ รายการหมู และค่าหมู รวมถึงเพิ่มหมูได้ถ้าคัดไม่พอ"
+            buttonText="ไปหน้า Edit"
             onClick={() => {
               dlog("card navigate:/edit-shipment");
               nav("/edit-shipment");

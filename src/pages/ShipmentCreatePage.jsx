@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
+import { formatDateDisplay } from "../lib/dateFormat";
 import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
 
 function clean(v) {
@@ -76,17 +77,16 @@ export default function ShipmentCreatePage() {
   const [msg, setMsg] = useState("");
 
   const [currentUserId, setCurrentUserId] = useState("");
+  const [lastDraftId, setLastDraftId] = useState("");
 
   const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
 
-  // ต้นทาง = เลือกจากเบอร์หมูที่คัดได้
   const [fromQ, setFromQ] = useState("");
   const [fromLoading, setFromLoading] = useState(false);
   const [fromOptions, setFromOptions] = useState([]);
   const [fromFarm, setFromFarm] = useState(null);
   const [fromPickerOpen, setFromPickerOpen] = useState(true);
 
-  // ปลายทาง = ยังใช้ picker ปกติ
   const [toFarmId, setToFarmId] = useState(null);
   const [toFarm, setToFarm] = useState(null);
   const [toPickerOpen, setToPickerOpen] = useState(true);
@@ -180,7 +180,7 @@ export default function ShipmentCreatePage() {
 
         setToFarm(data || null);
       } catch (e) {
-        console.error("load toFarm error:", e);
+        console.error("loadToFarm error:", e);
         if (alive) {
           setToFarm(null);
           setMsg(e?.message || "โหลดฟาร์มปลายทางไม่สำเร็จ");
@@ -249,13 +249,6 @@ export default function ShipmentCreatePage() {
     return !bootLoading && !saving && hardErrors.length === 0;
   }, [bootLoading, saving, hardErrors.length]);
 
-  const openEditPage = useCallback(
-    (shipmentId) => {
-      nav(`/edit-shipment?shipmentId=${encodeURIComponent(shipmentId)}`);
-    },
-    [nav]
-  );
-
   const handleSelectFromFarm = useCallback((farm) => {
     setMsg("");
     setFromFarm(farm || null);
@@ -266,12 +259,14 @@ export default function ShipmentCreatePage() {
     setFromFarm(null);
     setFromQ("");
     setFromPickerOpen(true);
+    setLastDraftId("");
   }, []);
 
   const onChangeToFarm = useCallback((id) => {
     setMsg("");
     setToFarmId(id || null);
     if (id) setToPickerOpen(false);
+    setLastDraftId("");
   }, []);
 
   const saveDraft = useCallback(async () => {
@@ -282,6 +277,7 @@ export default function ShipmentCreatePage() {
 
     setSaving(true);
     setMsg("");
+    setLastDraftId("");
 
     try {
       const uid = currentUserId || (await getCurrentUserId());
@@ -294,7 +290,6 @@ export default function ShipmentCreatePage() {
         throw new Error("ฟาร์มต้นทางไม่มี farm_code");
       }
 
-      // กัน draft ซ้ำของ user เดิมในชุดเดียวกัน
       const { data: existingDraft, error: existingErr } = await supabase
         .from("swine_shipments")
         .select("id")
@@ -310,7 +305,10 @@ export default function ShipmentCreatePage() {
       if (existingErr) throw existingErr;
 
       if (existingDraft?.id) {
-        openEditPage(existingDraft.id);
+        setLastDraftId(existingDraft.id);
+        setMsg(
+          "พบ Draft เดิมของชุดนี้แล้ว ระบบยังไม่พาไปหน้า Edit อัตโนมัติ กรุณากดปุ่มไปหน้า Edit Draft เอง"
+        );
         return;
       }
 
@@ -335,7 +333,10 @@ export default function ShipmentCreatePage() {
       if (error) throw error;
       if (!data?.id) throw new Error("สร้าง draft ไม่สำเร็จ");
 
-      openEditPage(data.id);
+      setLastDraftId(data.id);
+      setMsg(
+        "บันทึก Draft สำเร็จ ✅ ระบบยังไม่พาไปหน้า Edit อัตโนมัติ กรุณากดปุ่มไปหน้า Edit Draft เอง"
+      );
     } catch (e) {
       console.error("saveDraft error:", e);
       setMsg(e?.message || "บันทึกไม่สำเร็จ");
@@ -346,7 +347,6 @@ export default function ShipmentCreatePage() {
     currentUserId,
     fromFarm,
     hardErrors,
-    openEditPage,
     remark,
     selectedDate,
     toFarmId,
@@ -362,16 +362,33 @@ export default function ShipmentCreatePage() {
 
   return (
     <div style={{ padding: 16, display: "grid", gap: 14 }}>
-      <h2 style={{ margin: 0 }}>สร้าง Shipment</h2>
+      <h2 style={{ margin: 0 }}>Create Shipment</h2>
+
+      <div
+        style={{
+          padding: 12,
+          borderRadius: 12,
+          border: "1px solid #dbe4ea",
+          background: "#f8fafc",
+          color: "#334155",
+          lineHeight: 1.7,
+        }}
+      >
+        หน้านี้ใช้สำหรับสร้าง Draft เริ่มต้นของ Shipment ก่อน
+        <br />
+        เมื่อกด <b>Save Draft</b> แล้ว ระบบจะยังคงอยู่หน้านี้ และให้ผู้ใช้กดปุ่มไปหน้า <b>Edit Draft</b> เอง
+      </div>
 
       {msg ? (
         <div
           style={{
             padding: 12,
             borderRadius: 12,
-            border: "1px solid #fecaca",
-            background: "#fef2f2",
-            color: "#991b1b",
+            border: msg.includes("สำเร็จ")
+              ? "1px solid #bbf7d0"
+              : "1px solid #fecaca",
+            background: msg.includes("สำเร็จ") ? "#f0fdf4" : "#fef2f2",
+            color: msg.includes("สำเร็จ") ? "#166534" : "#991b1b",
             fontWeight: 700,
             lineHeight: 1.7,
           }}
@@ -388,10 +405,14 @@ export default function ShipmentCreatePage() {
           max={todayYmdLocal()}
           onChange={(e) => {
             setMsg("");
+            setLastDraftId("");
             setSelectedDate(e.target.value);
           }}
           style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
         />
+        <div style={{ color: "#64748b", fontSize: 12 }}>
+          แสดงผล: {formatDateDisplay(selectedDate)}
+        </div>
       </label>
 
       {fromFarm && !fromPickerOpen ? (
@@ -565,12 +586,25 @@ export default function ShipmentCreatePage() {
         <button type="button" onClick={saveDraft} disabled={!canSave}>
           {saving ? "กำลังบันทึก..." : "Save Draft"}
         </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (lastDraftId) {
+              nav(`/edit-shipment?id=${encodeURIComponent(lastDraftId)}`);
+            } else {
+              nav("/edit-shipment");
+            }
+          }}
+        >
+          {lastDraftId ? "เปิด Draft ที่เพิ่งบันทึก" : "ไปหน้า Edit Draft"}
+        </button>
       </div>
 
       <div style={{ color: "#666", fontSize: 12, lineHeight: 1.7 }}>
         ฟาร์มต้นทางจะเลือกจาก <b>v_swine_source_farms</b> ซึ่งเป็นรายการที่มีเบอร์หมูคัดได้
         <br />
-        ถ้ามี draft เดิมของ user คนเดิมในวันคัด + ต้นทาง + ปลายทาง เดียวกัน ระบบจะเปิด draft เดิมให้อัตโนมัติ
+        ถ้ามี Draft เดิมของ user คนเดิมในวันคัด + ต้นทาง + ปลายทาง เดียวกัน ระบบจะไม่สร้างซ้ำ และให้กดปุ่มไปหน้า Edit เอง
       </div>
     </div>
   );

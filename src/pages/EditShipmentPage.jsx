@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
+import { formatDateDisplay, formatDateTimeDisplay } from "../lib/dateFormat";
+import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
 
 function clean(s) {
   return String(s ?? "").trim();
@@ -15,14 +17,6 @@ function todayYmdLocal() {
   return `${y}-${m}-${day}`;
 }
 
-function formatDateDisplay(v) {
-  const s = clean(v);
-  if (!s) return "-";
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!m) return s;
-  return `${m[3]}-${m[2]}-${m[1]}`;
-}
-
 function withTimeout(promise, ms = 20000, label = "request") {
   return Promise.race([
     promise,
@@ -30,26 +24,6 @@ function withTimeout(promise, ms = 20000, label = "request") {
       setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms)
     ),
   ]);
-}
-
-function qrUrl(text) {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(
-    text || ""
-  )}`;
-}
-
-function toIntOrNull(v) {
-  const s = clean(v);
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? Math.trunc(n) : null;
-}
-
-function toNumOrNull(v) {
-  const s = clean(v);
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
 }
 
 function sortByLabel(a, b) {
@@ -76,6 +50,20 @@ function ensureAffectedRows(data, label, expectedMin = 1) {
     throw new Error(`NO_ROWS_AFFECTED: ${label}`);
   }
   return affected;
+}
+
+function toIntOrNull(v) {
+  const s = clean(v);
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function toNumOrNull(v) {
+  const s = clean(v);
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 function sortShipmentItems(a, b) {
@@ -131,11 +119,12 @@ export default function EditShipmentPage() {
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const shipmentIdFromUrl = clean(searchParams.get("shipmentId"));
+  const shipmentIdFromUrl = clean(
+    searchParams.get("id") || searchParams.get("shipmentId")
+  );
 
   const [pageLoading, setPageLoading] = useState(true);
   const [myRole, setMyRole] = useState("");
-  const [currentUserId, setCurrentUserId] = useState("");
   const [msg, setMsg] = useState("");
 
   const [filterDate, setFilterDate] = useState(todayYmdLocal());
@@ -147,9 +136,7 @@ export default function EditShipmentPage() {
   const [shipmentListLoading, setShipmentListLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [availableLoading, setAvailableLoading] = useState(false);
-  const [groupLoading, setGroupLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
 
   const [fromFarmOptions, setFromFarmOptions] = useState([]);
   const [toFarmOptions, setToFarmOptions] = useState([]);
@@ -159,19 +146,17 @@ export default function EditShipmentPage() {
   const [shipmentHeader, setShipmentHeader] = useState(null);
   const [editRemark, setEditRemark] = useState("");
   const [editToFarmId, setEditToFarmId] = useState("");
+  const [editToFarmMeta, setEditToFarmMeta] = useState(null);
   const [editDeliveryDate, setEditDeliveryDate] = useState("");
 
   const [itemRows, setItemRows] = useState([]);
-  const [selectedEditItemId, setSelectedEditItemId] = useState("");
-  const [editSwineQ, setEditSwineQ] = useState("");
   const [removedItemRows, setRemovedItemRows] = useState([]);
   const [newItemRows, setNewItemRows] = useState([]);
 
   const [availableSwines, setAvailableSwines] = useState([]);
   const [addHouse, setAddHouse] = useState("");
   const [addSwineQ, setAddSwineQ] = useState("");
-
-  const [groupSelectedItems, setGroupSelectedItems] = useState([]);
+  const [selectedCandidateSwineId, setSelectedCandidateSwineId] = useState("");
 
   const canUsePage = myRole === "admin" || myRole === "user";
   const canSearch = !!filterDate && !!filterFromFarmCode && !!filterToFarmId;
@@ -187,17 +172,13 @@ export default function EditShipmentPage() {
         const { data } = await supabase.auth.getSession();
         const uid = data?.session?.user?.id;
         if (!uid) {
-          if (alive) {
-            setMyRole("");
-            setCurrentUserId("");
-          }
+          if (alive) setMyRole("");
           return;
         }
 
         const profile = await fetchMyProfile(uid);
         if (!alive) return;
 
-        setCurrentUserId(uid);
         setMyRole(String(profile?.role || "user").toLowerCase());
       } catch (e) {
         console.error("EditShipmentPage init error:", e);
@@ -212,36 +193,6 @@ export default function EditShipmentPage() {
       alive = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (!canUsePage || !filterDate) {
-      setFromFarmOptions([]);
-      return;
-    }
-    void loadFromFarmOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUsePage, filterDate, myRole]);
-
-  useEffect(() => {
-    if (!canUsePage || !filterDate || !filterFromFarmCode) {
-      setToFarmOptions([]);
-      return;
-    }
-    void loadToFarmOptions();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUsePage, filterDate, filterFromFarmCode, myRole]);
-
-  useEffect(() => {
-    if (!itemRows.length) {
-      setSelectedEditItemId("");
-      return;
-    }
-
-    setSelectedEditItemId((prev) => {
-      if (prev && itemRows.some((x) => x.id === prev)) return prev;
-      return itemRows[0].id;
-    });
-  }, [itemRows]);
 
   async function getCurrentUserId() {
     const {
@@ -270,6 +221,7 @@ export default function EditShipmentPage() {
   const clearShipmentIdFromUrl = useCallback(() => {
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
+      next.delete("id");
       next.delete("shipmentId");
       return next;
     });
@@ -279,12 +231,116 @@ export default function EditShipmentPage() {
     (shipmentId) => {
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
-        next.set("shipmentId", shipmentId);
+        next.set("id", shipmentId);
+        next.delete("shipmentId");
         return next;
       });
     },
     [setSearchParams]
   );
+
+  const clearEditor = useCallback(
+    ({ clearUrl = true } = {}) => {
+      setSelectedShipmentId("");
+      setShipmentHeader(null);
+      setEditRemark("");
+      setEditToFarmId("");
+      setEditToFarmMeta(null);
+      setEditDeliveryDate("");
+
+      setItemRows([]);
+      setRemovedItemRows([]);
+      setNewItemRows([]);
+      setAvailableSwines([]);
+      setAddHouse("");
+      setAddSwineQ("");
+      setSelectedCandidateSwineId("");
+
+      if (clearUrl) {
+        clearShipmentIdFromUrl();
+      }
+    },
+    [clearShipmentIdFromUrl]
+  );
+
+  const editIsSameFarm = useMemo(() => {
+    return (
+      !!clean(shipmentHeader?.from_farm_code) &&
+      !!clean(editToFarmMeta?.farm_code) &&
+      clean(shipmentHeader?.from_farm_code) === clean(editToFarmMeta?.farm_code)
+    );
+  }, [shipmentHeader?.from_farm_code, editToFarmMeta?.farm_code]);
+
+  const newGroupKey = useMemo(() => {
+    if (!shipmentHeader?.id) return null;
+    return {
+      selectedDate: clean(shipmentHeader.selected_date),
+      fromFarmCode: clean(shipmentHeader.from_farm_code),
+      toFarmId: clean(editToFarmId),
+    };
+  }, [shipmentHeader, editToFarmId]);
+
+  const existingItemCodeSet = useMemo(() => {
+    return new Set(itemRows.map((x) => clean(x.swine_code)).filter(Boolean));
+  }, [itemRows]);
+
+  const newItemCodeSet = useMemo(() => {
+    return new Set(newItemRows.map((x) => clean(x.swine_code)).filter(Boolean));
+  }, [newItemRows]);
+
+  const previewStartNo = useMemo(() => itemRows.length + 1, [itemRows.length]);
+
+  useEffect(() => {
+    setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
+  }, [previewStartNo]);
+
+  useEffect(() => {
+    if (!canUsePage || !filterDate) {
+      setFromFarmOptions([]);
+      return;
+    }
+    void loadFromFarmOptions();
+  }, [canUsePage, filterDate, myRole]);
+
+  useEffect(() => {
+    if (!canUsePage || !filterDate || !filterFromFarmCode) {
+      setToFarmOptions([]);
+      return;
+    }
+    void loadToFarmOptions();
+  }, [canUsePage, filterDate, filterFromFarmCode, myRole]);
+
+  useEffect(() => {
+    let alive = true;
+
+    async function loadEditToFarmMeta() {
+      if (!editToFarmId) {
+        setEditToFarmMeta(null);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("master_farms")
+          .select("id, farm_code, farm_name")
+          .eq("id", editToFarmId)
+          .single();
+
+        if (!alive) return;
+        if (error) throw error;
+
+        setEditToFarmMeta(data || null);
+      } catch (e) {
+        console.error("loadEditToFarmMeta error:", e);
+        if (alive) setEditToFarmMeta(null);
+      }
+    }
+
+    void loadEditToFarmMeta();
+    return () => {
+      alive = false;
+    };
+  }, [editToFarmId]);
 
   const fetchShipmentListByFilters = useCallback(
     async ({ selectedDate, fromFarmCode, toFarmId }) => {
@@ -305,9 +361,6 @@ export default function EditShipmentPage() {
             id,
             farm_code,
             farm_name
-          ),
-          items:swine_shipment_items (
-            id
           )
         `)
         .eq("selected_date", selectedDate)
@@ -321,168 +374,10 @@ export default function EditShipmentPage() {
       const { data, error } = await query;
       if (error) throw error;
 
-      return (data || []).map((row) => ({
-        ...row,
-        item_count: Array.isArray(row.items) ? row.items.length : 0,
-      }));
+      return data || [];
     },
     [applyRoleFilter]
   );
-
-  const loadGroupSelectedItems = useCallback(
-    async (headerArg = null, opts = {}) => {
-      const silent = !!opts.silent;
-      const header = headerArg || shipmentHeader;
-
-      const selectedDate = clean(header?.selected_date);
-      const fromFarmCode = clean(header?.from_farm_code);
-      const toFarmId = clean(header?.to_farm_id);
-
-      if (!selectedDate || !fromFarmCode || !toFarmId) {
-        setGroupSelectedItems([]);
-        return;
-      }
-
-      setGroupLoading(true);
-
-      try {
-        const { data, error } = await supabase.rpc("get_selected_swines_for_group", {
-          p_selected_date: selectedDate,
-          p_from_farm_code: fromFarmCode,
-          p_to_farm_id: toFarmId,
-        });
-
-        if (error) throw error;
-
-        const rows = (data || []).map((row) => ({
-          ...row,
-          selection_no: row.selection_no ?? null,
-          swine_code: clean(row.swine_code),
-          shipment_status: clean(row.shipment_status),
-          created_by_name: clean(row.created_by_name),
-          is_mine:
-            typeof row.is_mine === "boolean"
-              ? row.is_mine
-              : clean(row.created_by) === clean(currentUserId),
-        }));
-
-        setGroupSelectedItems(rows);
-      } catch (e) {
-        console.error("loadGroupSelectedItems error:", e);
-        if (!silent) {
-          setMsg(e?.message || "โหลดรายการคัดแล้วในชุดนี้ไม่สำเร็จ");
-        }
-      } finally {
-        setGroupLoading(false);
-      }
-    },
-    [shipmentHeader, currentUserId]
-  );
-
-  const removedItemIdSet = useMemo(() => {
-    return new Set(removedItemRows.map((x) => x.id).filter(Boolean));
-  }, [removedItemRows]);
-
-  const effectiveGroupSelectedItems = useMemo(() => {
-    return groupSelectedItems.filter((x) => !removedItemIdSet.has(x.item_id));
-  }, [groupSelectedItems, removedItemIdSet]);
-
-  const previewStartNo = useMemo(() => {
-    return effectiveGroupSelectedItems.length + 1;
-  }, [effectiveGroupSelectedItems]);
-
-  const nextPendingSelectionNo = useMemo(() => {
-    return previewStartNo + newItemRows.length;
-  }, [previewStartNo, newItemRows.length]);
-
-  useEffect(() => {
-    setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
-  }, [previewStartNo]);
-
-  useEffect(() => {
-    if (!shipmentHeader?.id) {
-      setGroupSelectedItems([]);
-      return;
-    }
-
-    let alive = true;
-
-    async function run() {
-      try {
-        await loadGroupSelectedItems(shipmentHeader, { silent: true });
-      } catch (e) {
-        console.error("group auto refresh error:", e);
-      }
-    }
-
-    void run();
-
-    const timer = setInterval(() => {
-      if (alive) void run();
-    }, 4000);
-
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [
-    shipmentHeader?.id,
-    shipmentHeader?.selected_date,
-    shipmentHeader?.from_farm_code,
-    shipmentHeader?.to_farm_id,
-    loadGroupSelectedItems,
-  ]);
-
-  const clearEditor = useCallback(
-    ({ clearUrl = true } = {}) => {
-      setSelectedShipmentId("");
-      setShipmentHeader(null);
-      setEditRemark("");
-      setEditToFarmId("");
-      setEditDeliveryDate("");
-      setItemRows([]);
-      setSelectedEditItemId("");
-      setEditSwineQ("");
-      setRemovedItemRows([]);
-      setNewItemRows([]);
-      setAvailableSwines([]);
-      setAddHouse("");
-      setAddSwineQ("");
-      setGroupSelectedItems([]);
-
-      if (clearUrl) {
-        clearShipmentIdFromUrl();
-      }
-    },
-    [clearShipmentIdFromUrl]
-  );
-
-  function handleDateChange(value) {
-    setFilterDate(value);
-    setFilterFromFarmCode("");
-    setFilterToFarmId("");
-    setFromFarmOptions([]);
-    setToFarmOptions([]);
-    setShipmentList([]);
-    clearEditor();
-    setMsg("");
-  }
-
-  function handleFromFarmChange(value) {
-    setFilterFromFarmCode(value);
-    setFilterToFarmId("");
-    setToFarmOptions([]);
-    setShipmentList([]);
-    clearEditor();
-    setMsg("");
-  }
-
-  function handleToFarmChange(value) {
-    setFilterToFarmId(value);
-    setShipmentList([]);
-    clearEditor();
-    setMsg("");
-  }
 
   async function loadFromFarmOptions() {
     setFromFarmLoading(true);
@@ -587,40 +482,12 @@ export default function EditShipmentPage() {
     });
   }
 
-  async function handleSearch() {
-    if (!canSearch) {
-      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง");
-      return;
-    }
-
-    setShipmentListLoading(true);
-    setMsg("");
-    clearEditor();
-
-    try {
-      const rows = await fetchShipmentList();
-      setShipmentList(rows);
-
-      if (!rows.length) {
-        setMsg("ไม่พบ shipment สถานะ draft ตามเงื่อนไขที่เลือก");
-      }
-    } catch (e) {
-      console.error("handleSearch error:", e);
-      setShipmentList([]);
-      setMsg(e?.message || "ค้นหา shipment ไม่สำเร็จ");
-    } finally {
-      setShipmentListLoading(false);
-    }
-  }
-
-  async function refreshShipmentList() {
-    if (!canSearch && !shipmentHeader?.id) return;
-
+  async function refreshShipmentList(args = null) {
     try {
       const rows = await fetchShipmentListByFilters({
-        selectedDate: shipmentHeader?.selected_date || filterDate,
-        fromFarmCode: shipmentHeader?.from_farm_code || filterFromFarmCode,
-        toFarmId: shipmentHeader?.to_farm_id || filterToFarmId,
+        selectedDate: args?.selectedDate || newGroupKey?.selectedDate || filterDate,
+        fromFarmCode: args?.fromFarmCode || newGroupKey?.fromFarmCode || filterFromFarmCode,
+        toFarmId: args?.toFarmId || newGroupKey?.toFarmId || filterToFarmId,
       });
       setShipmentList(rows);
     } catch (e) {
@@ -630,7 +497,7 @@ export default function EditShipmentPage() {
     }
   }
 
-  async function loadAvailableSwinesOfFarm(fromFarmCode) {
+  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode) => {
     if (!fromFarmCode) {
       setAvailableSwines([]);
       return;
@@ -677,9 +544,7 @@ export default function EditShipmentPage() {
 
         for (const row of availableRows || []) {
           const code = clean(row?.swine_code);
-          if (code) {
-            availableCodeSet.add(code);
-          }
+          if (code) availableCodeSet.add(code);
         }
       }
 
@@ -694,7 +559,7 @@ export default function EditShipmentPage() {
     } finally {
       setAvailableLoading(false);
     }
-  }
+  }, []);
 
   const openShipment = useCallback(
     async (shipmentId, opts = {}) => {
@@ -771,14 +636,15 @@ export default function EditShipmentPage() {
         setShipmentHeader(data);
         setEditRemark(data.remark || "");
         setEditToFarmId(clean(data.to_farm_id));
+        setEditToFarmMeta(data.to_farm || null);
         setEditDeliveryDate(clean(data.delivery_date));
+
         setItemRows(mappedItems);
-        setSelectedEditItemId(mappedItems[0]?.id || "");
-        setEditSwineQ("");
         setRemovedItemRows([]);
         setNewItemRows([]);
         setAddHouse("");
         setAddSwineQ("");
+        setSelectedCandidateSwineId("");
 
         setFilterDate(data.selected_date || "");
         setFilterFromFarmCode(data.from_farm_code || "");
@@ -793,7 +659,6 @@ export default function EditShipmentPage() {
             toFarmId: data.to_farm_id,
           }),
           loadAvailableSwinesOfFarm(data.from_farm_code),
-          loadGroupSelectedItems(data, { silent: true }),
         ]);
 
         setShipmentList(rows);
@@ -802,23 +667,27 @@ export default function EditShipmentPage() {
         setShipmentHeader(null);
         setEditRemark("");
         setEditToFarmId("");
+        setEditToFarmMeta(null);
         setEditDeliveryDate("");
         setItemRows([]);
-        setSelectedEditItemId("");
-        setEditSwineQ("");
         setRemovedItemRows([]);
         setNewItemRows([]);
         setAvailableSwines([]);
-        setGroupSelectedItems([]);
-        if (!silent) {
-          setMsg(e?.message || "เปิด shipment เพื่อแก้ไขไม่สำเร็จ");
-        }
+        setAddHouse("");
+        setAddSwineQ("");
+        setSelectedCandidateSwineId("");
+        if (!silent) setMsg(e?.message || "เปิด shipment เพื่อแก้ไขไม่สำเร็จ");
         throw e;
       } finally {
         setDetailLoading(false);
       }
     },
-    [applyRoleFilter, fetchShipmentListByFilters, loadGroupSelectedItems, setShipmentIdToUrl]
+    [
+      applyRoleFilter,
+      fetchShipmentListByFilters,
+      loadAvailableSwinesOfFarm,
+      setShipmentIdToUrl,
+    ]
   );
 
   useEffect(() => {
@@ -834,9 +703,7 @@ export default function EditShipmentPage() {
         await openShipment(shipmentIdFromUrl, { silent: true });
       } catch (e) {
         console.error("auto open by url error:", e);
-        if (alive) {
-          setMsg(e?.message || "เปิด draft จาก URL ไม่สำเร็จ");
-        }
+        if (alive) setMsg(e?.message || "เปิด draft จาก URL ไม่สำเร็จ");
       }
     }
 
@@ -844,7 +711,67 @@ export default function EditShipmentPage() {
     return () => {
       alive = false;
     };
-  }, [pageLoading, canUsePage, shipmentIdFromUrl, selectedShipmentId, shipmentHeader?.id, openShipment]);
+  }, [
+    pageLoading,
+    canUsePage,
+    shipmentIdFromUrl,
+    selectedShipmentId,
+    shipmentHeader?.id,
+    openShipment,
+  ]);
+
+  function handleDateChange(value) {
+    setFilterDate(value);
+    setFilterFromFarmCode("");
+    setFilterToFarmId("");
+    setFromFarmOptions([]);
+    setToFarmOptions([]);
+    setShipmentList([]);
+    clearEditor();
+    setMsg("");
+  }
+
+  function handleFromFarmChange(value) {
+    setFilterFromFarmCode(value);
+    setFilterToFarmId("");
+    setToFarmOptions([]);
+    setShipmentList([]);
+    clearEditor();
+    setMsg("");
+  }
+
+  function handleToFarmChange(value) {
+    setFilterToFarmId(value);
+    setShipmentList([]);
+    clearEditor();
+    setMsg("");
+  }
+
+  async function handleSearch() {
+    if (!canSearch) {
+      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง");
+      return;
+    }
+
+    setShipmentListLoading(true);
+    setMsg("");
+    clearEditor();
+
+    try {
+      const rows = await fetchShipmentList();
+      setShipmentList(rows);
+
+      if (!rows.length) {
+        setMsg("ไม่พบ shipment สถานะ draft ตามเงื่อนไขที่เลือก");
+      }
+    } catch (e) {
+      console.error("handleSearch error:", e);
+      setShipmentList([]);
+      setMsg(e?.message || "ค้นหา shipment ไม่สำเร็จ");
+    } finally {
+      setShipmentListLoading(false);
+    }
+  }
 
   function setExistingField(itemId, field, value) {
     setItemRows((prev) =>
@@ -858,43 +785,17 @@ export default function EditShipmentPage() {
     );
   }
 
-  function handleEditSwineSearch(value) {
-    setEditSwineQ(value);
-
-    const q = clean(value).toLowerCase();
-    if (!q) {
-      setSelectedEditItemId(itemRows[0]?.id || "");
-      return;
-    }
-
-    const exact = itemRows.find(
-      (row) => String(row.swine_code || "").toLowerCase() === q
-    );
-    if (exact) {
-      setSelectedEditItemId(exact.id);
-      return;
-    }
-
-    const firstMatched = itemRows.find((row) =>
-      String(row.swine_code || "").toLowerCase().includes(q)
-    );
-    setSelectedEditItemId(firstMatched?.id || "");
-  }
-
   function removeExistingItem(itemId) {
     const row = itemRows.find((x) => x.id === itemId);
     if (!row) return;
 
-    if (!window.confirm(`ลบหมู ${row.swine_code} ออกจาก shipment นี้ใช่หรือไม่`)) {
+    if (!window.confirm(`ลบหมู ${row.swine_code} ออกจาก draft นี้ใช่หรือไม่`)) {
       return;
     }
 
     const nextItems = itemRows.filter((x) => x.id !== itemId);
-
     setItemRows(nextItems);
     setRemovedItemRows((prev) => [...prev, row].sort(sortShipmentItems));
-    setSelectedEditItemId(nextItems[0]?.id || "");
-    setEditSwineQ("");
   }
 
   function undoRemoveExistingItem(itemId) {
@@ -904,6 +805,54 @@ export default function EditShipmentPage() {
     setRemovedItemRows((prev) => prev.filter((x) => x.id !== itemId));
     setItemRows((prev) => [...prev, row].sort(sortShipmentItems));
   }
+
+  const houseOptions = useMemo(() => {
+    const map = new Map();
+
+    for (const s of availableSwines || []) {
+      const raw = clean(s.house_no);
+      const value = raw || "__BLANK__";
+      const label = raw || "(ไม่ระบุ House)";
+      if (!map.has(value)) {
+        map.set(value, { value, label });
+      }
+    }
+
+    return Array.from(map.values()).sort(sortByLabel);
+  }, [availableSwines]);
+
+  const addCandidateSwines = useMemo(() => {
+    if (!addHouse) return [];
+
+    const q = clean(addSwineQ).toLowerCase();
+
+    return (availableSwines || [])
+      .filter((s) => {
+        const houseValue = clean(s.house_no);
+
+        if (addHouse === "__BLANK__") {
+          if (houseValue) return false;
+        } else if (houseValue !== addHouse) {
+          return false;
+        }
+
+        const code = clean(s.swine_code);
+        if (!code) return false;
+        if (existingItemCodeSet.has(code)) return false;
+        if (newItemCodeSet.has(code)) return false;
+        if (q && !code.toLowerCase().includes(q)) return false;
+
+        return true;
+      })
+      .slice(0, 100);
+  }, [availableSwines, addHouse, addSwineQ, existingItemCodeSet, newItemCodeSet]);
+
+  const selectedCandidateSwine = useMemo(() => {
+    return (
+      addCandidateSwines.find((x) => String(x.id) === String(selectedCandidateSwineId)) ||
+      null
+    );
+  }, [addCandidateSwines, selectedCandidateSwineId]);
 
   function addNewSwine(swine) {
     if (!swine?.id) return;
@@ -932,6 +881,8 @@ export default function EditShipmentPage() {
 
       return applyNewItemPreviewNumbers(next, previewStartNo);
     });
+
+    setSelectedCandidateSwineId("");
   }
 
   function removeNewSwine(tempId) {
@@ -941,67 +892,50 @@ export default function EditShipmentPage() {
     });
   }
 
-  const existingItemCodeSet = useMemo(() => {
-    return new Set(itemRows.map((x) => clean(x.swine_code)).filter(Boolean));
-  }, [itemRows]);
+  async function resequenceAfterSave({ shipmentId, oldGroup, newGroup }) {
+    const sameGroup =
+      clean(oldGroup?.selectedDate) === clean(newGroup?.selectedDate) &&
+      clean(oldGroup?.fromFarmCode) === clean(newGroup?.fromFarmCode) &&
+      clean(oldGroup?.toFarmId) === clean(newGroup?.toFarmId);
 
-  const newItemCodeSet = useMemo(() => {
-    return new Set(newItemRows.map((x) => clean(x.swine_code)).filter(Boolean));
-  }, [newItemRows]);
-
-  const houseOptions = useMemo(() => {
-    const map = new Map();
-
-    for (const s of availableSwines || []) {
-      const raw = clean(s.house_no);
-      const value = raw || "__BLANK__";
-      const label = raw || "(ไม่ระบุ House)";
-      if (!map.has(value)) {
-        map.set(value, { value, label });
+    const runGroupResequenceAppendEnd = async (group, priorityShipmentId, label) => {
+      if (
+        !clean(group?.selectedDate) ||
+        !clean(group?.fromFarmCode) ||
+        !clean(group?.toFarmId)
+      ) {
+        return;
       }
+
+      const res = await withTimeout(
+        supabase.rpc("resequence_shipment_group_append_end", {
+          p_selected_date: group.selectedDate,
+          p_from_farm_code: group.fromFarmCode,
+          p_to_farm_id: group.toFarmId,
+          p_priority_shipment_id: priorityShipmentId || null,
+        }),
+        15000,
+        label
+      );
+
+      if (res.error) throw res.error;
+    };
+
+    if (sameGroup) {
+      await runGroupResequenceAppendEnd(newGroup, null, "resequence current group");
+      return;
     }
 
-    return Array.from(map.values()).sort(sortByLabel);
-  }, [availableSwines]);
-
-  const addCandidateSwines = useMemo(() => {
-    if (!addHouse) return [];
-
-    const q = clean(addSwineQ).toLowerCase();
-
-    return (availableSwines || [])
-      .filter((s) => {
-        const houseValue = clean(s.house_no);
-        if (addHouse === "__BLANK__") {
-          if (houseValue) return false;
-        } else if (houseValue !== addHouse) {
-          return false;
-        }
-
-        const code = clean(s.swine_code);
-        if (existingItemCodeSet.has(code)) return false;
-        if (newItemCodeSet.has(code)) return false;
-
-        if (q && !String(code).toLowerCase().includes(q)) return false;
-        return true;
-      })
-      .slice(0, 30);
-  }, [availableSwines, addHouse, addSwineQ, existingItemCodeSet, newItemCodeSet]);
-
-  const filteredEditItems = useMemo(() => {
-    const q = clean(editSwineQ).toLowerCase();
-    if (!q) return itemRows;
-
-    return itemRows.filter((row) =>
-      String(row.swine_code || "").toLowerCase().includes(q)
+    await runGroupResequenceAppendEnd(
+      newGroup,
+      shipmentId,
+      "resequence new group append end"
     );
-  }, [itemRows, editSwineQ]);
 
-  const selectedEditItem = useMemo(() => {
-    return itemRows.find((x) => x.id === selectedEditItemId) || null;
-  }, [itemRows, selectedEditItemId]);
+    await runGroupResequenceAppendEnd(oldGroup, null, "resequence old group");
+  }
 
-  async function handleSaveChanges() {
+  async function handleSaveAll() {
     if (!shipmentHeader?.id) {
       setMsg("กรุณาเลือก shipment ก่อน");
       return;
@@ -1012,35 +946,68 @@ export default function EditShipmentPage() {
       return;
     }
 
+    if (editIsSameFarm) {
+      setMsg("ห้ามเลือกฟาร์มต้นทางและปลายทางซ้ำกัน");
+      return;
+    }
+
     setSaving(true);
+    setMsg("");
     let step = "เริ่มต้น";
-    setMsg("กำลังเริ่มบันทึก...");
 
     try {
       const shipmentId = shipmentHeader.id;
-
-      step = "อัปเดตหัว shipment";
-      setMsg("กำลังอัปเดตหัว shipment...");
-      const headerPayload = {
-        remark: clean(editRemark) || null,
-        to_farm_id: clean(editToFarmId) || null,
-        delivery_date: clean(editDeliveryDate) || null,
+      const oldGroup = {
+        selectedDate: clean(shipmentHeader.selected_date),
+        fromFarmCode: clean(shipmentHeader.from_farm_code),
+        toFarmId: clean(shipmentHeader.to_farm_id),
+      };
+      const nextGroup = {
+        selectedDate: clean(shipmentHeader.selected_date),
+        fromFarmCode: clean(shipmentHeader.from_farm_code),
+        toFarmId: clean(editToFarmId),
       };
 
-      const res1 = await withTimeout(
+      step = "อัปเดตหัว shipment";
+      const headerRes = await withTimeout(
         supabase
           .from("swine_shipments")
-          .update(headerPayload)
+          .update({
+            to_farm_id: clean(editToFarmId) || null,
+            delivery_date: clean(editDeliveryDate) || null,
+            remark: clean(editRemark) || null,
+          })
           .eq("id", shipmentId)
-          .select("id"),
+          .eq("status", "draft")
+          .select(`
+            id,
+            shipment_no,
+            selected_date,
+            delivery_date,
+            from_farm_code,
+            from_farm_name,
+            to_farm_id,
+            remark,
+            status,
+            created_at,
+            to_farm:master_farms!swine_shipments_to_farm_id_fkey (
+              id,
+              farm_code,
+              farm_name
+            )
+          `),
         15000,
-        "update swine_shipments"
+        "update shipment header"
       );
-      if (res1.error) throw res1.error;
-      ensureAffectedRows(res1.data, "update swine_shipments");
 
-      step = "อัปเดตรายการหมูเดิม";
-      setMsg("กำลังอัปเดตรายการหมูเดิม...");
+      if (headerRes.error) throw headerRes.error;
+      ensureAffectedRows(headerRes.data, "update shipment header");
+
+      const updatedHeader = Array.isArray(headerRes.data)
+        ? headerRes.data[0]
+        : headerRes.data;
+
+      step = "อัปเดตค่าหมูเดิม";
       for (const row of itemRows) {
         const res = await withTimeout(
           supabase
@@ -1056,13 +1023,13 @@ export default function EditShipmentPage() {
           15000,
           `update swine_shipment_items ${row.id}`
         );
+
         if (res.error) throw res.error;
         ensureAffectedRows(res.data, `update swine_shipment_items ${row.id}`);
       }
 
       if (newItemRows.length) {
         step = "เพิ่มรายการหมูใหม่";
-        setMsg("กำลังเพิ่มรายการหมูใหม่...");
         const insertRows = newItemRows.map((row) => ({
           shipment_id: shipmentId,
           swine_id: row.swine_id,
@@ -1073,16 +1040,20 @@ export default function EditShipmentPage() {
           weight: toNumOrNull(row.weight),
         }));
 
-        const res2 = await withTimeout(
-          supabase.from("swine_shipment_items").insert(insertRows).select("id, swine_code"),
+        const insertRes = await withTimeout(
+          supabase
+            .from("swine_shipment_items")
+            .insert(insertRows)
+            .select("id, swine_code"),
           15000,
           "insert swine_shipment_items"
         );
-        if (res2.error) throw res2.error;
-        if (countAffectedRows(res2.data) !== insertRows.length) {
+
+        if (insertRes.error) throw insertRes.error;
+        if (countAffectedRows(insertRes.data) !== insertRows.length) {
           throw new Error(
             `INSERT_MISMATCH: swine_shipment_items inserted ${countAffectedRows(
-              res2.data
+              insertRes.data
             )}/${insertRows.length}`
           );
         }
@@ -1090,8 +1061,7 @@ export default function EditShipmentPage() {
         const newCodes = insertRows.map((x) => clean(x.swine_code)).filter(Boolean);
         if (newCodes.length) {
           step = "เปลี่ยนสถานะหมูใหม่เป็น reserved";
-          setMsg("กำลังเปลี่ยนสถานะหมูใหม่เป็น reserved...");
-          const res3 = await withTimeout(
+          const reserveRes = await withTimeout(
             supabase
               .from("swine_master")
               .update({ delivery_state: "reserved" })
@@ -1100,11 +1070,12 @@ export default function EditShipmentPage() {
             15000,
             "reserve new swines"
           );
-          if (res3.error) throw res3.error;
-          if (countAffectedRows(res3.data) !== newCodes.length) {
+
+          if (reserveRes.error) throw reserveRes.error;
+          if (countAffectedRows(reserveRes.data) !== newCodes.length) {
             throw new Error(
               `RESERVE_MISMATCH: swine_master updated ${countAffectedRows(
-                res3.data
+                reserveRes.data
               )}/${newCodes.length}`
             );
           }
@@ -1117,8 +1088,7 @@ export default function EditShipmentPage() {
 
         if (removedIds.length) {
           step = "ลบรายการหมูที่เอาออก";
-          setMsg("กำลังลบรายการหมูที่เอาออก...");
-          const res4 = await withTimeout(
+          const deleteRes = await withTimeout(
             supabase
               .from("swine_shipment_items")
               .delete()
@@ -1127,11 +1097,12 @@ export default function EditShipmentPage() {
             15000,
             "delete removed swine_shipment_items"
           );
-          if (res4.error) throw res4.error;
-          if (countAffectedRows(res4.data) !== removedIds.length) {
+
+          if (deleteRes.error) throw deleteRes.error;
+          if (countAffectedRows(deleteRes.data) !== removedIds.length) {
             throw new Error(
               `DELETE_MISMATCH: swine_shipment_items deleted ${countAffectedRows(
-                res4.data
+                deleteRes.data
               )}/${removedIds.length}`
             );
           }
@@ -1139,8 +1110,7 @@ export default function EditShipmentPage() {
 
         if (removedCodes.length) {
           step = "ปล่อยสถานะหมูกลับเป็น available";
-          setMsg("กำลังปล่อยสถานะหมูกลับเป็น available...");
-          const res5 = await withTimeout(
+          const releaseRes = await withTimeout(
             supabase
               .from("swine_master")
               .update({ delivery_state: "available" })
@@ -1149,43 +1119,40 @@ export default function EditShipmentPage() {
             15000,
             "release removed swines"
           );
-          if (res5.error) throw res5.error;
-          if (countAffectedRows(res5.data) !== removedCodes.length) {
+
+          if (releaseRes.error) throw releaseRes.error;
+          if (countAffectedRows(releaseRes.data) !== removedCodes.length) {
             throw new Error(
               `RELEASE_MISMATCH: swine_master updated ${countAffectedRows(
-                res5.data
+                releaseRes.data
               )}/${removedCodes.length}`
             );
           }
         }
       }
 
-      step = "จัดลำดับการคัดใหม่";
-      setMsg("กำลังจัดลำดับการคัดใหม่...");
-      const resSeq = await withTimeout(
-        supabase.rpc("resequence_shipment_group_by_shipment", {
-          p_shipment_id: shipmentId,
-        }),
-        15000,
-        "resequence_shipment_group_by_shipment"
-      );
-      if (resSeq.error) throw resSeq.error;
+      step = "จัดลำดับกลุ่มใหม่";
+      await resequenceAfterSave({
+        shipmentId,
+        oldGroup,
+        newGroup: nextGroup,
+      });
 
       step = "รีโหลด shipment หลังบันทึก";
-      setMsg("กำลังรีโหลด shipment หลังบันทึก...");
       await openShipment(shipmentId, { silent: true });
+      await refreshShipmentList({
+        selectedDate: nextGroup.selectedDate,
+        fromFarmCode: nextGroup.fromFarmCode,
+        toFarmId: nextGroup.toFarmId,
+      });
 
-      step = "รีโหลดรายการคัดแล้วในชุดนี้";
-      setMsg("กำลังรีโหลดรายการคัดแล้วในชุดนี้...");
-      await loadGroupSelectedItems(null, { silent: true });
-
-      step = "รีเฟรชรายการ draft";
-      setMsg("กำลังรีเฟรชรายการ draft...");
-      await refreshShipmentList();
-
-      setMsg("บันทึกการแก้ไขสำเร็จ ✅ สถานะยังคงเป็น draft");
+      if (updatedHeader?.id) {
+        setShipmentHeader(updatedHeader);
+      }
+      setFilterToFarmId(nextGroup.toFarmId);
+      setMsg("บันทึกข้อมูลสำเร็จ ✅");
     } catch (e) {
-      console.error("handleSaveChanges error:", {
+      console.error("handleSaveAll error:", {
         step,
         message: e?.message,
         code: e?.code,
@@ -1203,122 +1170,6 @@ export default function EditShipmentPage() {
       );
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleCancelShipment() {
-    if (!shipmentHeader?.id) {
-      setMsg("กรุณาเลือก shipment ก่อน");
-      return;
-    }
-
-    const ok = window.confirm(
-      "ยืนยันยกเลิก shipment นี้ใช่หรือไม่\nระบบจะเปลี่ยนสถานะเป็น cancelled และปล่อยเบอร์หมูกลับเป็น available"
-    );
-    if (!ok) return;
-
-    setCancelling(true);
-    let step = "เริ่มต้น";
-    setMsg("");
-
-    try {
-      const shipmentId = shipmentHeader.id;
-
-      step = "โหลดรายการหมูใน shipment";
-      setMsg("กำลังโหลดรายการหมูใน shipment...");
-      const { data: currentItems, error: e1 } = await supabase
-        .from("swine_shipment_items")
-        .select("id, swine_code")
-        .eq("shipment_id", shipmentId);
-
-      if (e1) throw e1;
-
-      const codes = (currentItems || [])
-        .map((x) => clean(x.swine_code))
-        .filter(Boolean);
-
-      if (codes.length) {
-        step = "ปล่อยสถานะหมูกลับเป็น available";
-        setMsg("กำลังปล่อยสถานะหมูกลับเป็น available...");
-        const rel = await withTimeout(
-          supabase
-            .from("swine_master")
-            .update({ delivery_state: "available" })
-            .in("swine_code", codes)
-            .select("swine_code"),
-          15000,
-          "release shipment swines"
-        );
-        if (rel.error) throw rel.error;
-        if (countAffectedRows(rel.data) !== codes.length) {
-          throw new Error(
-            `RELEASE_MISMATCH: swine_master updated ${countAffectedRows(
-              rel.data
-            )}/${codes.length}`
-          );
-        }
-      }
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      step = "เปลี่ยนสถานะ shipment เป็น cancelled";
-      setMsg("กำลังเปลี่ยนสถานะ shipment เป็น cancelled...");
-      const payload = {
-        status: "cancelled",
-        cancelled_at: new Date().toISOString(),
-        cancelled_by: user?.id || null,
-      };
-
-      const res2 = await withTimeout(
-        supabase
-          .from("swine_shipments")
-          .update(payload)
-          .eq("id", shipmentId)
-          .eq("status", "draft")
-          .select("id"),
-        15000,
-        "cancel shipment"
-      );
-      if (res2.error) throw res2.error;
-      ensureAffectedRows(res2.data, "cancel shipment");
-
-      step = "จัดลำดับการคัดใหม่หลังยกเลิก";
-      setMsg("กำลังจัดลำดับการคัดใหม่หลังยกเลิก...");
-      const resSeq = await withTimeout(
-        supabase.rpc("resequence_shipment_group_by_shipment", {
-          p_shipment_id: shipmentId,
-        }),
-        15000,
-        "resequence after cancel"
-      );
-      if (resSeq.error) throw resSeq.error;
-
-      setShipmentList((prev) => prev.filter((row) => row.id !== shipmentId));
-      clearEditor();
-      await refreshShipmentList();
-
-      setMsg("ยกเลิก shipment สำเร็จ ✅");
-    } catch (e) {
-      console.error("handleCancelShipment error:", {
-        step,
-        message: e?.message,
-        code: e?.code,
-        details: e?.details,
-        hint: e?.hint,
-        raw: e,
-      });
-
-      setMsg(
-        `ยกเลิก shipment ไม่สำเร็จ ที่ขั้นตอน: ${step}${
-          e?.message ? ` | ${e.message}` : ""
-        }${e?.details ? ` | details: ${e.details}` : ""}${
-          e?.hint ? ` | hint: ${e.hint}` : ""
-        }`
-      );
-    } finally {
-      setCancelling(false);
     }
   }
 
@@ -1355,9 +1206,9 @@ export default function EditShipmentPage() {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>แก้ไข Shipment (Draft)</div>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>Edit Shipment (Draft)</div>
           <div className="small" style={{ wordBreak: "break-word" }}>
-            ค้นหาจากวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง แล้วเลือก draft ที่ต้องการแก้ไข
+            บันทึกครั้งเดียวครบ: header + ค่าหมู + เพิ่ม/ลบหมู + reserve/release + resequence
           </div>
         </div>
 
@@ -1523,8 +1374,7 @@ export default function EditShipmentPage() {
                           สถานะ: <b>{row.status || "-"}</b>
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                          สร้างเมื่อ: {row.created_at || "-"} | จำนวนหมู:{" "}
-                          <b>{row.item_count}</b> ตัว
+                          สร้างเมื่อ: {formatDateTimeDisplay(row.created_at)}
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           หมายเหตุ: {row.remark || "-"}
@@ -1590,32 +1440,23 @@ export default function EditShipmentPage() {
                     ฟาร์มต้นทาง
                   </div>
                   <input
-                    value={
-                      shipmentHeader.from_farm_name || shipmentHeader.from_farm_code || ""
-                    }
+                    value={shipmentHeader.from_farm_name || shipmentHeader.from_farm_code || ""}
                     readOnly
                     style={{ ...fullInputStyle, background: "#f8fafc" }}
                   />
                 </div>
 
-                <div>
-                  <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                    ฟาร์มปลายทาง
-                  </div>
-                  <select
+                <div style={{ minWidth: 0 }}>
+                  <FarmPickerInlineAdd
+                    label="ฟาร์มปลายทาง"
                     value={editToFarmId}
-                    onChange={(e) => setEditToFarmId(e.target.value)}
-                    style={fullInputStyle}
-                  >
-                    <option value="">
-                      {toFarmLoading ? "กำลังโหลด..." : "เลือกฟาร์มปลายทาง"}
-                    </option>
-                    {toFarmOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                    excludeId={null}
+                    onChange={(id) => {
+                      setMsg("");
+                      setEditToFarmId(id || "");
+                    }}
+                    requireBranch={false}
+                  />
                 </div>
 
                 <div>
@@ -1634,6 +1475,12 @@ export default function EditShipmentPage() {
                 </div>
               </div>
 
+              {editIsSameFarm ? (
+                <div style={{ color: "crimson", fontWeight: 700 }}>
+                  ห้ามเลือกฟาร์มต้นทางและปลายทางซ้ำกัน
+                </div>
+              ) : null}
+
               <div>
                 <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
                   หมายเหตุ
@@ -1649,142 +1496,19 @@ export default function EditShipmentPage() {
             </div>
 
             <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ fontWeight: 800 }}>
-                  คัดแล้วในชุดนี้ ({groupSelectedItems.length})
-                </div>
-                <div className="small" style={{ color: "#666" }}>
-                  {groupLoading ? "กำลังรีเฟรช..." : `ลำดับถัดไปถ้าบันทึกตอนนี้: #${nextPendingSelectionNo}`}
-                </div>
-              </div>
-
-              {!groupSelectedItems.length ? (
-                <div className="small" style={{ color: "#666" }}>
-                  ยังไม่มีรายการที่คัดแล้วในชุดนี้
-                </div>
-              ) : (
-                <div style={{ display: "grid", gap: 8 }}>
-                  {groupSelectedItems.map((it) => {
-                    const pendingRemove = removedItemIdSet.has(it.item_id);
-                    return (
-                      <div
-                        key={it.item_id}
-                        style={{
-                          border: "1px solid #e5e7eb",
-                          borderRadius: 12,
-                          padding: 10,
-                          background: pendingRemove
-                            ? "#fffbeb"
-                            : it.is_mine
-                            ? "#ecfccb"
-                            : "#f8fafc",
-                          opacity: pendingRemove ? 0.85 : 1,
-                        }}
-                      >
-                        <div
-                          style={{
-                            display: "flex",
-                            gap: 10,
-                            flexWrap: "wrap",
-                            alignItems: "center",
-                          }}
-                        >
-                          <div style={{ fontWeight: 900 }}>
-                            #{it.selection_no || "-"} — {it.swine_code || "-"}
-                          </div>
-
-                          <div className="small" style={{ color: "#475569" }}>
-                            โดย: {it.created_by_name || "-"}
-                          </div>
-
-                          <div className="small" style={{ color: "#475569" }}>
-                            สถานะ: {it.shipment_status || "-"}
-                          </div>
-
-                          <div
-                            className="small"
-                            style={{
-                              padding: "2px 8px",
-                              borderRadius: 999,
-                              background: pendingRemove
-                                ? "#fde68a"
-                                : it.is_mine
-                                ? "#bbf7d0"
-                                : "#e2e8f0",
-                            }}
-                          >
-                            {pendingRemove
-                              ? "รอลบ"
-                              : it.is_mine
-                              ? "ของฉัน"
-                              : "user อื่น"}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
               <div style={{ fontWeight: 800 }}>
-                เบอร์หมูที่คัดแล้วใน draft นี้ ({itemRows.length})
+                เบอร์หมูใน Draft ({itemRows.length})
               </div>
 
               {itemRows.length === 0 ? (
                 <div className="small" style={{ color: "#666" }}>
-                  ยังไม่มีหมูใน shipment นี้
+                  ยังไม่มีหมูใน draft นี้
                 </div>
               ) : (
-                <>
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                      gap: 10,
-                    }}
-                  >
-                    <div>
-                      <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                        ค้นหาเบอร์หมู
-                      </div>
-                      <input
-                        value={editSwineQ}
-                        onChange={(e) => handleEditSwineSearch(e.target.value)}
-                        placeholder="พิมพ์เบอร์หมู..."
-                        style={fullInputStyle}
-                      />
-                    </div>
-
-                    <div>
-                      <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                        หรือเลือกจากรายการ
-                      </div>
-                      <select
-                        value={selectedEditItemId}
-                        onChange={(e) => {
-                          setSelectedEditItemId(e.target.value);
-                        }}
-                        style={fullInputStyle}
-                      >
-                        <option value="">เลือกเบอร์หมู</option>
-                        {filteredEditItems.map((row) => (
-                          <option key={row.id} value={row.id}>
-                            {row.selection_no ? `#${row.selection_no} — ` : ""}
-                            {row.swine_code}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="small" style={{ color: "#666" }}>
-                    พบ <b>{filteredEditItems.length}</b> รายการ
-                  </div>
-
-                  {selectedEditItem ? (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {itemRows.map((row) => (
                     <div
+                      key={row.id}
                       style={{
                         border: "1px solid #e5e7eb",
                         borderRadius: 14,
@@ -1802,21 +1526,21 @@ export default function EditShipmentPage() {
                       >
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                            #{selectedEditItem.selection_no || "-"} — {selectedEditItem.swine_code}
+                            #{row.selection_no || "-"} — {row.swine_code}
                           </div>
                           <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                            House: {selectedEditItem.house_no || "-"} | Flock:{" "}
-                            {selectedEditItem.flock || "-"} | วันเกิด:{" "}
-                            {formatDateDisplay(selectedEditItem.birth_date)}
+                            House: {row.house_no || "-"} | Flock: {row.flock || "-"} |
+                            วันเกิด: {formatDateDisplay(row.birth_date)}
                           </div>
                         </div>
 
                         <button
                           className="linkbtn"
                           type="button"
-                          onClick={() => removeExistingItem(selectedEditItem.id)}
+                          onClick={() => removeExistingItem(row.id)}
+                          disabled={saving}
                         >
-                          ลบออกจาก shipment
+                          ลบออกจาก draft
                         </button>
                       </div>
 
@@ -1829,49 +1553,37 @@ export default function EditShipmentPage() {
                         }}
                       >
                         <input
-                          value={selectedEditItem.teats_left}
-                          onChange={(e) =>
-                            setExistingField(selectedEditItem.id, "teats_left", e.target.value)
-                          }
+                          value={row.teats_left}
+                          onChange={(e) => setExistingField(row.id, "teats_left", e.target.value)}
                           placeholder="เต้าซ้าย"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
-                          value={selectedEditItem.teats_right}
-                          onChange={(e) =>
-                            setExistingField(selectedEditItem.id, "teats_right", e.target.value)
-                          }
+                          value={row.teats_right}
+                          onChange={(e) => setExistingField(row.id, "teats_right", e.target.value)}
                           placeholder="เต้าขวา"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
-                          value={selectedEditItem.backfat}
-                          onChange={(e) =>
-                            setExistingField(selectedEditItem.id, "backfat", e.target.value)
-                          }
+                          value={row.backfat}
+                          onChange={(e) => setExistingField(row.id, "backfat", e.target.value)}
                           placeholder="Backfat"
                           inputMode="decimal"
                           style={smallInputStyle}
                         />
                         <input
-                          value={selectedEditItem.weight}
-                          onChange={(e) =>
-                            setExistingField(selectedEditItem.id, "weight", e.target.value)
-                          }
+                          value={row.weight}
+                          onChange={(e) => setExistingField(row.id, "weight", e.target.value)}
                           placeholder="น้ำหนัก"
                           inputMode="decimal"
                           style={smallInputStyle}
                         />
                       </div>
                     </div>
-                  ) : (
-                    <div className="small" style={{ color: "#666" }}>
-                      ไม่พบเบอร์หมูตามคำค้น
-                    </div>
-                  )}
-                </>
+                  ))}
+                </div>
               )}
 
               {removedItemRows.length > 0 ? (
@@ -1910,6 +1622,7 @@ export default function EditShipmentPage() {
                           className="linkbtn"
                           type="button"
                           onClick={() => undoRemoveExistingItem(row.id)}
+                          disabled={saving}
                         >
                           Undo
                         </button>
@@ -1922,10 +1635,6 @@ export default function EditShipmentPage() {
 
             <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
               <div style={{ fontWeight: 800 }}>เพิ่มเบอร์หมู</div>
-
-              <div className="small" style={{ color: "#666" }}>
-                ถ้าเพิ่มตัวถัดไปตอนนี้ จะได้ลำดับ <b>#{nextPendingSelectionNo}</b>
-              </div>
 
               <div
                 style={{
@@ -1943,6 +1652,7 @@ export default function EditShipmentPage() {
                     onChange={(e) => {
                       setAddHouse(e.target.value);
                       setAddSwineQ("");
+                      setSelectedCandidateSwineId("");
                     }}
                     disabled={availableLoading}
                     style={fullInputStyle}
@@ -1964,11 +1674,36 @@ export default function EditShipmentPage() {
                   </div>
                   <input
                     value={addSwineQ}
-                    onChange={(e) => setAddSwineQ(e.target.value)}
+                    onChange={(e) => {
+                      setAddSwineQ(e.target.value);
+                      setSelectedCandidateSwineId("");
+                    }}
                     placeholder="พิมพ์ swine code..."
                     disabled={!addHouse}
                     style={fullInputStyle}
                   />
+                </div>
+
+                <div>
+                  <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                    เลือกเบอร์หมู
+                  </div>
+                  <select
+                    value={selectedCandidateSwineId}
+                    onChange={(e) => setSelectedCandidateSwineId(e.target.value)}
+                    disabled={!addHouse}
+                    style={fullInputStyle}
+                  >
+                    <option value="">
+                      {!addHouse ? "เลือก House ก่อน" : "เลือกเบอร์หมู"}
+                    </option>
+                    {addCandidateSwines.map((swine) => (
+                      <option key={swine.id} value={swine.id}>
+                        {swine.swine_code}
+                        {clean(swine.house_no) ? ` | House ${clean(swine.house_no)}` : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1976,120 +1711,38 @@ export default function EditShipmentPage() {
                 <div className="small" style={{ color: "#666" }}>
                   * กรุณาเลือก House ก่อน เพื่อแสดงเบอร์หมูสำหรับเพิ่ม
                 </div>
-              ) : (
+              ) : addCandidateSwines.length === 0 ? (
+                <div className="small" style={{ color: "#666" }}>
+                  ไม่พบหมู available ใน House นี้ หรือหมูถูกเลือกไปแล้ว
+                </div>
+              ) : selectedCandidateSwine ? (
                 <div
                   style={{
-                    border: "1px solid #ddd",
+                    border: "1px solid #dbeafe",
                     borderRadius: 12,
-                    maxHeight: 420,
-                    overflowY: "auto",
-                    overflowX: "hidden",
                     padding: 10,
+                    background: "#f8fbff",
                   }}
                 >
-                  {addCandidateSwines.length === 0 ? (
-                    <div className="small" style={{ color: "#666" }}>
-                      ไม่พบหมู available ใน House นี้
-                    </div>
-                  ) : (
-                    <div style={{ display: "grid", gap: 10 }}>
-                      {addCandidateSwines.map((swine) => (
-                        <div
-                          key={swine.id}
-                          style={{
-                            border: "1px solid #e5e7eb",
-                            borderRadius: 14,
-                            padding: 12,
-                            display: "grid",
-                            gridTemplateColumns: "1fr auto",
-                            gap: 12,
-                            alignItems: "start",
-                          }}
-                        >
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                              {swine.swine_code}
-                            </div>
-                            <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                              House: {swine.house_no || "-"} | Flock: {swine.flock || "-"} |
-                              วันเกิด: {formatDateDisplay(swine.birth_date)}
-                            </div>
+                  <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
+                  <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                    House: {clean(selectedCandidateSwine.house_no) || "-"} | Flock:{" "}
+                    {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
+                    {formatDateDisplay(selectedCandidateSwine.birth_date)}
+                  </div>
 
-                            <div
-                              style={{
-                                marginTop: 10,
-                                background: "#fff",
-                                border: "1px solid #e5e7eb",
-                                borderRadius: 12,
-                                padding: 10,
-                                width: "fit-content",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontSize: 12,
-                                  fontWeight: 700,
-                                  color: "#555",
-                                  marginBottom: 8,
-                                }}
-                              >
-                                QR Code
-                              </div>
-                              <img
-                                src={qrUrl(swine.swine_code)}
-                                alt={`QR ${swine.swine_code}`}
-                                loading="lazy"
-                                style={{
-                                  width: 140,
-                                  height: 140,
-                                  display: "block",
-                                  borderRadius: 8,
-                                  background: "#fff",
-                                }}
-                              />
-                              <div
-                                style={{
-                                  marginTop: 8,
-                                  fontSize: 12,
-                                  color: "#555",
-                                  wordBreak: "break-word",
-                                  textAlign: "center",
-                                }}
-                              >
-                                {swine.swine_code}
-                              </div>
-                            </div>
-                          </div>
-
-                          <div style={{ display: "grid", gap: 8 }}>
-                            <div
-                              className="small"
-                              style={{
-                                padding: "4px 8px",
-                                borderRadius: 999,
-                                background: "#eef2ff",
-                                color: "#3730a3",
-                                fontWeight: 700,
-                                textAlign: "center",
-                              }}
-                            >
-                              ถ้าเพิ่มตอนนี้ = #{nextPendingSelectionNo}
-                            </div>
-
-                            <button
-                              className="linkbtn"
-                              type="button"
-                              onClick={() => addNewSwine(swine)}
-                            >
-                              เพิ่มเข้า shipment
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div style={{ marginTop: 10 }}>
+                    <button
+                      className="linkbtn"
+                      type="button"
+                      onClick={() => addNewSwine(selectedCandidateSwine)}
+                      disabled={saving}
+                    >
+                      เพิ่มเข้า Draft
+                    </button>
+                  </div>
                 </div>
-              )}
+              ) : null}
 
               {newItemRows.length > 0 ? (
                 <div style={{ display: "grid", gap: 10 }}>
@@ -2130,6 +1783,7 @@ export default function EditShipmentPage() {
                           className="linkbtn"
                           type="button"
                           onClick={() => removeNewSwine(row.temp_id)}
+                          disabled={saving}
                         >
                           เอาออก
                         </button>
@@ -2145,36 +1799,28 @@ export default function EditShipmentPage() {
                       >
                         <input
                           value={row.teats_left}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "teats_left", e.target.value)
-                          }
+                          onChange={(e) => setNewField(row.temp_id, "teats_left", e.target.value)}
                           placeholder="เต้าซ้าย"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.teats_right}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "teats_right", e.target.value)
-                          }
+                          onChange={(e) => setNewField(row.temp_id, "teats_right", e.target.value)}
                           placeholder="เต้าขวา"
                           inputMode="numeric"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.backfat}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "backfat", e.target.value)
-                          }
+                          onChange={(e) => setNewField(row.temp_id, "backfat", e.target.value)}
                           placeholder="Backfat"
                           inputMode="decimal"
                           style={smallInputStyle}
                         />
                         <input
                           value={row.weight}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "weight", e.target.value)
-                          }
+                          onChange={(e) => setNewField(row.temp_id, "weight", e.target.value)}
                           placeholder="น้ำหนัก"
                           inputMode="decimal"
                           style={smallInputStyle}
@@ -2186,33 +1832,26 @@ export default function EditShipmentPage() {
               ) : null}
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                gap: 10,
-                flexWrap: "wrap",
-                width: "100%",
-                minWidth: 0,
-              }}
-            >
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button
                 className="linkbtn"
                 type="button"
-                onClick={handleSaveChanges}
-                disabled={!shipmentHeader?.id || saving || cancelling}
-                style={{ flex: "1 1 180px", minWidth: 0 }}
+                onClick={handleSaveAll}
+                disabled={!shipmentHeader?.id || saving}
               >
-                {saving ? "Saving..." : "บันทึกการแก้ไข"}
+                {saving ? "Saving..." : "บันทึกทั้งหมด"}
               </button>
 
               <button
                 className="linkbtn"
                 type="button"
-                onClick={handleCancelShipment}
-                disabled={!shipmentHeader?.id || saving || cancelling}
-                style={{ flex: "1 1 180px", minWidth: 0 }}
+                onClick={() => {
+                  clearEditor();
+                  setMsg("");
+                }}
+                disabled={saving}
               >
-                {cancelling ? "Cancelling..." : "ยกเลิก Shipment"}
+                ปิดการแก้ไข
               </button>
             </div>
           </>

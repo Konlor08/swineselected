@@ -286,11 +286,31 @@ export default function App() {
           }
         />
 
+        {/* เพิ่ม alias path เก่า เผื่อมีโค้ดเดิมเรียกอยู่ */}
+        <Route
+          path="/shipment"
+          element={
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
+              <Navigate to="/shipment-create" replace />
+            </RequireRole>
+          }
+        />
+
         <Route
           path="/edit-shipment"
           element={
             <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <EditShipmentPage />
+            </RequireRole>
+          }
+        />
+
+        {/* เพิ่ม alias path เก่า เผื่อมีโค้ดเดิมเรียกอยู่ */}
+        <Route
+          path="/shipment-edit"
+          element={
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
+              <Navigate to="/edit-shipment" replace />
             </RequireRole>
           }
         />
