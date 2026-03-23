@@ -53,6 +53,12 @@ async function getCurrentUserId() {
   return user?.id || null;
 }
 
+function qrImageUrl(text) {
+  const s = clean(text);
+  if (!s) return "";
+  return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(s)}`;
+}
+
 const cardStyle = {
   border: "1px solid #e5e7eb",
   borderRadius: 16,
@@ -98,6 +104,60 @@ function FarmSelectedCard({ title, farm, subtitle, onChange }) {
         <button type="button" onClick={onChange}>
           เปลี่ยนฟาร์ม
         </button>
+      </div>
+    </div>
+  );
+}
+
+function QrPreviewBox({ value }) {
+  const qrUrl = qrImageUrl(value);
+
+  return (
+    <div
+      style={{
+        height: "100%",
+        minHeight: 100,
+        border: "4px solid #f2df00",
+        borderRadius: 4,
+        background: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 12,
+        boxSizing: "border-box",
+      }}
+    >
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          justifyItems: "center",
+          width: "100%",
+        }}
+      >
+        <img
+          src={qrUrl}
+          alt={`QR ${value}`}
+          style={{
+            width: "100%",
+            maxWidth: 220,
+            aspectRatio: "1 / 1",
+            objectFit: "contain",
+            display: "block",
+            background: "#fff",
+          }}
+        />
+        <div
+          style={{
+            fontSize: 13,
+            fontWeight: 800,
+            color: "#374151",
+            wordBreak: "break-all",
+            textAlign: "center",
+          }}
+        >
+          {value}
+        </div>
       </div>
     </div>
   );
@@ -774,7 +834,7 @@ export default function ShipmentCreatePage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 860,
+          maxWidth: 980,
           margin: "14px auto 0",
           display: "grid",
           gap: 14,
@@ -976,138 +1036,176 @@ export default function ShipmentCreatePage() {
             </div>
           ) : null}
 
-          <div style={{ display: "grid", gap: 12 }}>
-            <div>
-              <div style={labelStyle}>ค้นหาเบอร์หมู</div>
-              <input
-                value={swineQ}
-                onChange={(e) => {
-                  setSwineQ(e.target.value);
-                }}
-                placeholder={!selectedHouse ? "เลือกเล้าก่อน" : "พิมพ์ swine code..."}
-                disabled={!selectedHouse || availableLoading}
-                style={inputStyle}
-              />
-            </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 16,
+              gridTemplateColumns: selectedCandidateSwine
+                ? "minmax(0, 1fr) clamp(140px, 28vw, 320px)"
+                : "minmax(0, 1fr)",
+              alignItems: "stretch",
+            }}
+          >
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                minWidth: 0,
+              }}
+            >
+              <div>
+                <div style={labelStyle}>ค้นหาเบอร์หมู</div>
+                <input
+                  value={swineQ}
+                  onChange={(e) => {
+                    setSwineQ(e.target.value);
+                  }}
+                  placeholder={!selectedHouse ? "เลือกเล้าก่อน" : "พิมพ์ swine code..."}
+                  disabled={!selectedHouse || availableLoading}
+                  style={inputStyle}
+                />
+              </div>
 
-            <div>
-              <div style={labelStyle}>เลือกเบอร์หมู</div>
+              <div>
+                <div style={labelStyle}>เลือกเบอร์หมู</div>
 
-              {!selectedHouse ? (
-                <div style={{ color: "#6b7280", fontSize: 13 }}>เลือกเล้าก่อน</div>
-              ) : availableLoading ? (
-                <div style={{ color: "#6b7280", fontSize: 13 }}>กำลังโหลด...</div>
-              ) : filteredAvailableSwines.length === 0 ? (
-                <div style={{ color: "#6b7280", fontSize: 13 }}>ไม่พบเบอร์หมู</div>
-              ) : (
+                {!selectedHouse ? (
+                  <div style={{ color: "#6b7280", fontSize: 13 }}>เลือกเล้าก่อน</div>
+                ) : availableLoading ? (
+                  <div style={{ color: "#6b7280", fontSize: 13 }}>กำลังโหลด...</div>
+                ) : filteredAvailableSwines.length === 0 ? (
+                  <div style={{ color: "#6b7280", fontSize: 13 }}>ไม่พบเบอร์หมู</div>
+                ) : (
+                  <div
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      maxHeight: 220,
+                      overflowY: "auto",
+                      background: "#fff",
+                    }}
+                  >
+                    {filteredAvailableSwines.map((swine) => {
+                      const active = String(selectedCandidateSwineId) === String(swine.id);
+
+                      return (
+                        <button
+                          key={swine.id}
+                          type="button"
+                          onClick={() => setSelectedCandidateSwineId(String(swine.id))}
+                          style={{
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "10px 12px",
+                            border: 0,
+                            borderBottom: "1px solid #f3f4f6",
+                            background: active ? "#eff6ff" : "#fff",
+                            cursor: "pointer",
+                            fontWeight: active ? 800 : 500,
+                          }}
+                        >
+                          {swine.swine_code}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {selectedCandidateSwine ? (
                 <div
                   style={{
-                    border: "1px solid #e5e7eb",
+                    border: "1px solid #dbeafe",
                     borderRadius: 12,
-                    overflow: "hidden",
-                    maxHeight: 220,
-                    overflowY: "auto",
-                    background: "#fff",
+                    padding: 10,
+                    background: "#f8fbff",
                   }}
                 >
-                  {filteredAvailableSwines.map((swine) => {
-                    const active = String(selectedCandidateSwineId) === String(swine.id);
-
-                    return (
-                      <button
-                        key={swine.id}
-                        type="button"
-                        onClick={() => setSelectedCandidateSwineId(String(swine.id))}
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "10px 12px",
-                          border: 0,
-                          borderBottom: "1px solid #f3f4f6",
-                          background: active ? "#eff6ff" : "#fff",
-                          cursor: "pointer",
-                          fontWeight: active ? 800 : 500,
-                        }}
-                      >
-                        {swine.swine_code}
-                      </button>
-                    );
-                  })}
+                  <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
+                  <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
+                    Flock: {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
+                    {formatDateDisplay(selectedCandidateSwine.birth_date)}
+                  </div>
                 </div>
-              )}
+              ) : null}
+
+              <div
+                style={{
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "minmax(0, 1fr)",
+                }}
+              >
+                <div>
+                  <div style={labelStyle}>เต้านมซ้าย</div>
+                  <input
+                    value={teatsLeft}
+                    onChange={(e) => setTeatsLeft(e.target.value)}
+                    placeholder="เต้านมซ้าย"
+                    inputMode="numeric"
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div style={labelStyle}>เต้านมขวา</div>
+                  <input
+                    value={teatsRight}
+                    onChange={(e) => setTeatsRight(e.target.value)}
+                    placeholder="เต้านมขวา"
+                    inputMode="numeric"
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div style={labelStyle}>น้ำหนัก</div>
+                  <input
+                    value={weight}
+                    onChange={(e) => setWeight(e.target.value)}
+                    placeholder="น้ำหนัก"
+                    inputMode="decimal"
+                    style={inputStyle}
+                  />
+                </div>
+
+                <div>
+                  <div style={labelStyle}>Backfat</div>
+                  <input
+                    value={backfat}
+                    onChange={(e) => setBackfat(e.target.value)}
+                    placeholder="Backfat"
+                    inputMode="decimal"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
             </div>
 
             {selectedCandidateSwine ? (
               <div
                 style={{
-                  border: "1px solid #dbeafe",
-                  borderRadius: 12,
-                  padding: 10,
-                  background: "#f8fbff",
+                  minWidth: 0,
+                  width: "100%",
+                  alignSelf: "stretch",
+                  display: "flex",
                 }}
               >
-                <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
-                <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
-                  Flock: {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
-                  {formatDateDisplay(selectedCandidateSwine.birth_date)}
-                </div>
+                <QrPreviewBox value={selectedCandidateSwine.swine_code} />
               </div>
             ) : null}
+          </div>
 
-            <div>
-              <div style={labelStyle}>เต้านมซ้าย</div>
-              <input
-                value={teatsLeft}
-                onChange={(e) => setTeatsLeft(e.target.value)}
-                placeholder="เต้านมซ้าย"
-                inputMode="numeric"
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <div style={labelStyle}>เต้านมขวา</div>
-              <input
-                value={teatsRight}
-                onChange={(e) => setTeatsRight(e.target.value)}
-                placeholder="เต้านมขวา"
-                inputMode="numeric"
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <div style={labelStyle}>น้ำหนัก</div>
-              <input
-                value={weight}
-                onChange={(e) => setWeight(e.target.value)}
-                placeholder="น้ำหนัก"
-                inputMode="decimal"
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <div style={labelStyle}>Backfat</div>
-              <input
-                value={backfat}
-                onChange={(e) => setBackfat(e.target.value)}
-                placeholder="Backfat"
-                inputMode="decimal"
-                style={inputStyle}
-              />
-            </div>
-
-            <div>
-              <button
-                type="button"
-                onClick={() => void addToPickedList()}
-                disabled={!canAddToList}
-                style={{ width: "100%" }}
-              >
-                บันทึกเข้า list
-              </button>
-            </div>
+          <div>
+            <button
+              type="button"
+              onClick={() => void addToPickedList()}
+              disabled={!canAddToList}
+              style={{ width: "100%" }}
+            >
+              บันทึกเข้า list
+            </button>
           </div>
         </div>
 
