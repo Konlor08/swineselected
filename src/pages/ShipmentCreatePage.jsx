@@ -18,24 +18,15 @@ function todayYmdLocal() {
   return `${y}-${m}-${day}`;
 }
 
-function withTimeout(promise, ms = 20000, label = "request") {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms)
-    ),
-  ]);
-}
-
 function sortByLabel(a, b) {
-  return String(a?.label || "").localeCompare(String(b?.label || ""), "th");
+  return String(a?.label || "").localeCompare(String(b?.label || ""), "th", {
+    numeric: true,
+  });
 }
 
 function chunkArray(arr, size = 500) {
   const out = [];
-  for (let i = 0; i < arr.length; i += size) {
-    out.push(arr.slice(i, i + size));
-  }
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
 
@@ -58,54 +49,54 @@ async function getCurrentUserId() {
     data: { user },
     error,
   } = await supabase.auth.getUser();
-
   if (error) throw error;
   return user?.id || null;
 }
 
-const fullInputStyle = {
+const cardStyle = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 16,
+  padding: 14,
+  background: "#fff",
+};
+
+const labelStyle = {
+  fontSize: 13,
+  fontWeight: 700,
+  marginBottom: 6,
+  color: "#374151",
+};
+
+const inputStyle = {
   width: "100%",
   padding: 10,
   borderRadius: 12,
-  border: "1px solid #ddd",
+  border: "1px solid #d1d5db",
   boxSizing: "border-box",
   minWidth: 0,
+  background: "#fff",
 };
 
-const smallInputStyle = {
-  width: "100%",
-  padding: 10,
-  borderRadius: 10,
-  border: "1px solid #ddd",
-  boxSizing: "border-box",
-  minWidth: 0,
+const readonlyInputStyle = {
+  ...inputStyle,
+  background: "#f9fafb",
 };
 
 function FarmSelectedCard({ title, farm, subtitle, onChange }) {
   return (
-    <div
-      style={{
-        border: "1px solid #dbe4ea",
-        borderRadius: 14,
-        padding: 12,
-        background: "#f8fafc",
-        display: "grid",
-        gap: 8,
-      }}
-    >
+    <div style={{ ...cardStyle, display: "grid", gap: 8 }}>
       <div style={{ fontWeight: 900 }}>{title}</div>
-
       {farm ? (
         <>
-          <div style={{ fontSize: 18, fontWeight: 900 }}>
+          <div style={{ fontSize: 18, fontWeight: 900, lineHeight: 1.35 }}>
             {clean(farm.farm_code) || "-"} - {clean(farm.farm_name) || "-"}
           </div>
           {subtitle ? (
-            <div style={{ color: "#64748b", fontSize: 13 }}>{subtitle}</div>
+            <div style={{ color: "#6b7280", fontSize: 13 }}>{subtitle}</div>
           ) : null}
         </>
       ) : (
-        <div style={{ color: "#64748b", fontSize: 13 }}>ยังไม่ได้เลือกฟาร์ม</div>
+        <div style={{ color: "#6b7280", fontSize: 13 }}>ยังไม่ได้เลือกฟาร์ม</div>
       )}
 
       <div>
@@ -123,6 +114,7 @@ export default function ShipmentCreatePage() {
 
   const [bootLoading, setBootLoading] = useState(true);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [busyRelease, setBusyRelease] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [currentUserId, setCurrentUserId] = useState("");
@@ -134,13 +126,12 @@ export default function ShipmentCreatePage() {
   const [fromFarm, setFromFarm] = useState(null);
   const [fromPickerOpen, setFromPickerOpen] = useState(true);
 
-  const [toFarmId, setToFarmId] = useState(null);
+  const [toFarmId, setToFarmId] = useState("");
   const [toFarm, setToFarm] = useState(null);
   const [toPickerOpen, setToPickerOpen] = useState(true);
 
-  const [allAvailableSwines, setAllAvailableSwines] = useState([]);
   const [availableLoading, setAvailableLoading] = useState(false);
-
+  const [allAvailableSwines, setAllAvailableSwines] = useState([]);
   const [houseOptions, setHouseOptions] = useState([]);
   const [selectedHouse, setSelectedHouse] = useState("");
 
@@ -200,12 +191,9 @@ export default function ShipmentCreatePage() {
           flock: clean(r.flock),
           branch_id: null,
           swine_count: Number(r.swine_count || 0),
-          first_saved_date: r.first_saved_date || null,
-          cutoff_date: r.cutoff_date || null,
-          is_selectable: r.is_selectable !== false,
           label: `${clean(r.farm_code)} - ${clean(r.farm_name) || clean(r.farm_code)}`,
         }))
-        .filter((x) => x.farm_code && x.is_selectable);
+        .filter((x) => x.farm_code);
 
       setFromOptions(arr);
     } catch (e) {
@@ -239,7 +227,6 @@ export default function ShipmentCreatePage() {
 
         if (!alive) return;
         if (error) throw error;
-
         setToFarm(data || null);
       } catch (e) {
         console.error("loadToFarm error:", e);
@@ -274,6 +261,7 @@ export default function ShipmentCreatePage() {
   }, [pickedRows]);
 
   const filteredAvailableSwines = useMemo(() => {
+    if (!selectedHouse) return [];
     const q = clean(swineQ).toLowerCase();
 
     return (allAvailableSwines || [])
@@ -296,24 +284,43 @@ export default function ShipmentCreatePage() {
 
   const canAddToList = useMemo(() => {
     return (
-      !!fromFarm?.farm_code &&
-      !!toFarmId &&
-      !!selectedHouse &&
+      !!clean(fromFarm?.farm_code) &&
+      !!clean(toFarmId) &&
+      !!clean(selectedHouse) &&
       !!selectedCandidateSwine?.id &&
-      !availableLoading
+      !availableLoading &&
+      !savingDraft &&
+      !busyRelease
     );
-  }, [fromFarm?.farm_code, toFarmId, selectedHouse, selectedCandidateSwine, availableLoading]);
+  }, [
+    fromFarm?.farm_code,
+    toFarmId,
+    selectedHouse,
+    selectedCandidateSwine,
+    availableLoading,
+    savingDraft,
+    busyRelease,
+  ]);
 
   const canSaveDraft = useMemo(() => {
     return (
       !bootLoading &&
       !savingDraft &&
-      !!fromFarm?.farm_code &&
-      !!toFarmId &&
-      !!selectedHouse &&
+      !busyRelease &&
+      !!clean(fromFarm?.farm_code) &&
+      !!clean(toFarmId) &&
+      !!clean(selectedHouse) &&
       pickedRows.length > 0
     );
-  }, [bootLoading, savingDraft, fromFarm?.farm_code, toFarmId, selectedHouse, pickedRows.length]);
+  }, [
+    bootLoading,
+    savingDraft,
+    busyRelease,
+    fromFarm?.farm_code,
+    toFarmId,
+    selectedHouse,
+    pickedRows.length,
+  ]);
 
   const resetCandidateForm = useCallback(() => {
     setSwineQ("");
@@ -332,12 +339,12 @@ export default function ShipmentCreatePage() {
     if (!codes.length) return;
 
     const chunks = chunkArray(codes, 500);
+
     for (const chunk of chunks) {
       const { error } = await supabase
         .from("swine_master")
         .update({
           delivery_state: "available",
-          updated_at: new Date().toISOString(),
         })
         .in("swine_code", chunk);
 
@@ -352,9 +359,14 @@ export default function ShipmentCreatePage() {
       return;
     }
 
-    await releaseRows(pickedRows);
-    setPickedRows([]);
-    resetCandidateForm();
+    setBusyRelease(true);
+    try {
+      await releaseRows(pickedRows);
+      setPickedRows([]);
+      resetCandidateForm();
+    } finally {
+      setBusyRelease(false);
+    }
   }, [pickedRows, releaseRows, resetCandidateForm]);
 
   const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode) => {
@@ -424,10 +436,7 @@ export default function ShipmentCreatePage() {
         const house = clean(row.house_no);
         if (!house) continue;
         if (!houseMap.has(house)) {
-          houseMap.set(house, {
-            value: house,
-            label: house,
-          });
+          houseMap.set(house, { value: house, label: house });
         }
       }
 
@@ -469,6 +478,7 @@ export default function ShipmentCreatePage() {
         await clearPickedRowsAndRelease();
         setFromFarm(farm || null);
         setFromPickerOpen(!farm);
+        setSelectedHouse("");
       } catch (e) {
         console.error("handleSelectFromFarm error:", e);
         setMsg(e?.message || "เปลี่ยนฟาร์มต้นทางไม่สำเร็จ");
@@ -495,7 +505,7 @@ export default function ShipmentCreatePage() {
 
   const onChangeToFarm = useCallback((id) => {
     setMsg("");
-    setToFarmId(id || null);
+    setToFarmId(id || "");
     if (id) setToPickerOpen(false);
   }, []);
 
@@ -533,19 +543,14 @@ export default function ShipmentCreatePage() {
         throw new Error("เบอร์หมูนี้อยู่ในรายการที่เลือกแล้ว");
       }
 
-      const reserveRes = await withTimeout(
-        supabase
-          .from("swine_master")
-          .update({
-            delivery_state: "reserved",
-            updated_at: new Date().toISOString(),
-          })
-          .eq("swine_code", swineCode)
-          .eq("delivery_state", "available")
-          .select("swine_code"),
-        15000,
-        `reserve ${swineCode}`
-      );
+      const reserveRes = await supabase
+        .from("swine_master")
+        .update({
+          delivery_state: "reserved",
+        })
+        .eq("swine_code", swineCode)
+        .eq("delivery_state", "available")
+        .select("swine_code");
 
       if (reserveRes.error) throw reserveRes.error;
       if (!Array.isArray(reserveRes.data) || reserveRes.data.length !== 1) {
@@ -592,14 +597,13 @@ export default function ShipmentCreatePage() {
 
       try {
         setMsg("");
-
         const swineCode = clean(row.swine_code);
+
         if (swineCode) {
           const { error } = await supabase
             .from("swine_master")
             .update({
               delivery_state: "available",
-              updated_at: new Date().toISOString(),
             })
             .eq("swine_code", swineCode);
 
@@ -640,23 +644,23 @@ export default function ShipmentCreatePage() {
       const uid = currentUserId || (await getCurrentUserId());
       if (!uid) throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
 
-      const payload = {
+      const headerPayload = {
         selected_date: selectedDate,
         from_farm_code: clean(fromFarm?.farm_code) || null,
         from_farm_name: clean(fromFarm?.farm_name) || null,
         from_flock: clean(fromFarm?.flock) || null,
         from_branch_id: fromFarm?.branch_id || null,
-        to_farm_id: toFarmId,
+        to_farm_id: clean(toFarmId) || null,
         remark: clean(remark) || null,
         status: "draft",
         created_by: uid,
       };
 
-      const headerRes = await withTimeout(
-        supabase.from("swine_shipments").insert([payload]).select("id").single(),
-        15000,
-        "create shipment draft"
-      );
+      const headerRes = await supabase
+        .from("swine_shipments")
+        .insert([headerPayload])
+        .select("id")
+        .single();
 
       if (headerRes.error) throw headerRes.error;
       if (!headerRes.data?.id) throw new Error("สร้าง draft ไม่สำเร็จ");
@@ -674,14 +678,10 @@ export default function ShipmentCreatePage() {
         backfat: toNumOrNull(row.backfat),
       }));
 
-      const itemRes = await withTimeout(
-        supabase
-          .from("swine_shipment_items")
-          .insert(itemPayload)
-          .select("id, swine_code"),
-        15000,
-        "insert shipment items"
-      );
+      const itemRes = await supabase
+        .from("swine_shipment_items")
+        .insert(itemPayload)
+        .select("id, swine_code");
 
       if (itemRes.error) throw itemRes.error;
       if (!Array.isArray(itemRes.data) || itemRes.data.length !== itemPayload.length) {
@@ -692,16 +692,12 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      const resequenceRes = await withTimeout(
-        supabase.rpc("resequence_shipment_group_append_end", {
-          p_selected_date: payload.selected_date,
-          p_from_farm_code: payload.from_farm_code,
-          p_to_farm_id: payload.to_farm_id,
-          p_priority_shipment_id: shipmentId,
-        }),
-        15000,
-        "resequence shipment group"
-      );
+      const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
+        p_selected_date: headerPayload.selected_date,
+        p_from_farm_code: headerPayload.from_farm_code,
+        p_to_farm_id: headerPayload.to_farm_id,
+        p_priority_shipment_id: shipmentId,
+      });
 
       if (resequenceRes.error) throw resequenceRes.error;
 
@@ -747,14 +743,14 @@ export default function ShipmentCreatePage() {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>Create Shipment</div>
-          <div className="small" style={{ wordBreak: "break-word" }}>
-            สร้าง draft ใหม่เสมอ • เลือกได้เฉพาะหมู available • เข้า list แล้ว reserve ทันที
+          <div style={{ fontSize: 20, fontWeight: 900 }}>Create Shipment</div>
+          <div className="small" style={{ wordBreak: "break-word", color: "#6b7280" }}>
+            mobile-first • เลือกเล้าก่อนค่อยเลือกเบอร์หมู • เข้า list แล้ว reserve ทันที
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="linkbtn" type="button" onClick={handleBackOrCancel}>
+          <button className="linkbtn" type="button" onClick={() => void handleBackOrCancel()}>
             Back / Cancel
           </button>
         </div>
@@ -763,24 +759,24 @@ export default function ShipmentCreatePage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 1200,
+          maxWidth: 860,
           margin: "14px auto 0",
           display: "grid",
           gap: 14,
           boxSizing: "border-box",
-          padding: "0 8px",
+          padding: "0 8px 24px",
           minWidth: 0,
         }}
       >
         {msg ? (
-          <div className="card" style={{ padding: 12 }}>
+          <div style={{ ...cardStyle, padding: 12 }}>
             <div
-              className="small"
               style={{
                 color: msg.includes("สำเร็จ") ? "#166534" : "#b91c1c",
                 fontWeight: 700,
                 lineHeight: 1.7,
                 wordBreak: "break-word",
+                fontSize: 13,
               }}
             >
               {msg}
@@ -788,33 +784,25 @@ export default function ShipmentCreatePage() {
           </div>
         ) : null}
 
-        <div className="card" style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontWeight: 800 }}>ข้อมูลต้นทาง</div>
+        <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+          <div style={{ fontWeight: 900 }}>ข้อมูลต้นทาง</div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 10,
-            }}
-          >
+          <div style={{ display: "grid", gap: 12 }}>
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                วันคัด
-              </div>
+              <div style={labelStyle}>วันคัด</div>
               <input
                 type="date"
                 value={selectedDate}
                 max={todayYmdLocal()}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                style={fullInputStyle}
+                style={inputStyle}
               />
-              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+              <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12 }}>
                 แสดงผล: {formatDateDisplay(selectedDate)}
               </div>
             </div>
 
-            <div style={{ minWidth: 0 }}>
+            <div>
               {fromFarm && !fromPickerOpen ? (
                 <FarmSelectedCard
                   title="ฟาร์มต้นทาง"
@@ -833,21 +821,12 @@ export default function ShipmentCreatePage() {
                   onChange={() => setFromPickerOpen(true)}
                 />
               ) : (
-                <div
-                  style={{
-                    border: "1px solid #e5e7eb",
-                    borderRadius: 14,
-                    padding: 12,
-                    display: "grid",
-                    gap: 10,
-                    minHeight: "100%",
-                  }}
-                >
+                <div style={{ ...cardStyle, padding: 12, display: "grid", gap: 10 }}>
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
-                      gap: 10,
+                      gap: 8,
                       flexWrap: "wrap",
                       alignItems: "center",
                     }}
@@ -857,7 +836,7 @@ export default function ShipmentCreatePage() {
                       <button type="button" onClick={loadFromFarms} disabled={fromLoading}>
                         {fromLoading ? "กำลังโหลด..." : "รีเฟรช"}
                       </button>
-                      <button type="button" onClick={clearFromFarm} disabled={fromLoading}>
+                      <button type="button" onClick={() => void clearFromFarm()} disabled={fromLoading}>
                         ล้างค่า
                       </button>
                     </div>
@@ -867,56 +846,50 @@ export default function ShipmentCreatePage() {
                     value={fromQ}
                     onChange={(e) => setFromQ(e.target.value)}
                     placeholder="พิมพ์ค้นหา farm code / farm name / flock…"
-                    style={fullInputStyle}
+                    style={inputStyle}
                   />
 
                   <div
                     style={{
-                      border: "1px solid #ddd",
+                      border: "1px solid #e5e7eb",
                       borderRadius: 12,
                       overflow: "hidden",
-                      maxHeight: 280,
+                      maxHeight: 260,
                       overflowY: "auto",
                     }}
                   >
                     {fromLoading ? (
                       <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>
                     ) : filteredFromOptions.length > 0 ? (
-                      filteredFromOptions.map((f) => {
-                        const active =
-                          clean(fromFarm?.farm_code) === clean(f.farm_code) &&
-                          clean(fromFarm?.flock) === clean(f.flock);
-
-                        return (
-                          <button
-                            key={`${f.farm_code}__${f.flock || "-"}__${f.farm_name}`}
-                            type="button"
-                            onClick={() => void handleSelectFromFarm(f)}
-                            style={{
-                              width: "100%",
-                              textAlign: "left",
-                              padding: "10px 12px",
-                              border: 0,
-                              borderBottom: "1px solid #eee",
-                              background: active ? "#fef9c3" : "white",
-                              cursor: "pointer",
-                            }}
-                          >
-                            <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                              {f.farm_code} - {f.farm_name}
-                            </div>
-                            <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
-                              Flock: <b>{f.flock || "-"}</b>
-                              {Number.isFinite(f.swine_count) ? (
-                                <>
-                                  {" "}
-                                  | คัดได้ <b>{f.swine_count}</b> ตัว
-                                </>
-                              ) : null}
-                            </div>
-                          </button>
-                        );
-                      })
+                      filteredFromOptions.map((f) => (
+                        <button
+                          key={`${f.farm_code}__${f.flock || "-"}__${f.farm_name}`}
+                          type="button"
+                          onClick={() => void handleSelectFromFarm(f)}
+                          style={{
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "10px 12px",
+                            border: 0,
+                            borderBottom: "1px solid #eee",
+                            background: "white",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                            {f.farm_code} - {f.farm_name}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+                            Flock: <b>{f.flock || "-"}</b>
+                            {Number.isFinite(f.swine_count) ? (
+                              <>
+                                {" "}
+                                | คัดได้ <b>{f.swine_count}</b> ตัว
+                              </>
+                            ) : null}
+                          </div>
+                        </button>
+                      ))
                     ) : (
                       <div style={{ padding: 12, color: "#666" }}>ไม่พบฟาร์มต้นทาง</div>
                     )}
@@ -925,7 +898,7 @@ export default function ShipmentCreatePage() {
               )}
             </div>
 
-            <div style={{ minWidth: 0 }}>
+            <div>
               {toFarmId && !toPickerOpen ? (
                 <FarmSelectedCard
                   title="ฟาร์มปลายทาง"
@@ -944,14 +917,12 @@ export default function ShipmentCreatePage() {
             </div>
 
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                เล้าต้นทาง
-              </div>
+              <div style={labelStyle}>เล้าต้นทาง</div>
               <select
                 value={selectedHouse}
                 onChange={(e) => void handleChangeHouse(e.target.value)}
                 disabled={!fromFarm?.farm_code || availableLoading || houseOptions.length === 0}
-                style={fullInputStyle}
+                style={inputStyle}
               >
                 <option value="">
                   {!fromFarm?.farm_code
@@ -966,48 +937,52 @@ export default function ShipmentCreatePage() {
                   </option>
                 ))}
               </select>
-              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+              <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12 }}>
                 ระบบจะเลือกเล้าแรกให้อัตโนมัติถ้ามีข้อมูล
               </div>
             </div>
           </div>
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontWeight: 800 }}>เลือกเบอร์หมู</div>
+        <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+          <div style={{ fontWeight: 900 }}>เลือกเบอร์หมู</div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 10,
-            }}
-          >
+          {!selectedHouse ? (
+            <div
+              style={{
+                border: "1px dashed #d1d5db",
+                borderRadius: 12,
+                padding: 12,
+                color: "#6b7280",
+                fontSize: 13,
+              }}
+            >
+              กรุณาเลือกเล้าก่อน แล้วค่อยเลือกเบอร์หมู
+            </div>
+          ) : null}
+
+          <div style={{ display: "grid", gap: 12 }}>
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                ค้นหาเบอร์หมู
-              </div>
+              <div style={labelStyle}>ค้นหาเบอร์หมู</div>
               <input
                 value={swineQ}
                 onChange={(e) => {
                   setSwineQ(e.target.value);
                   setSelectedCandidateSwineId("");
                 }}
-                placeholder="พิมพ์ swine code..."
+                placeholder={!selectedHouse ? "เลือกเล้าก่อน" : "พิมพ์ swine code..."}
                 disabled={!selectedHouse || availableLoading}
-                style={fullInputStyle}
+                style={inputStyle}
               />
             </div>
 
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                เลือกเบอร์หมู
-              </div>
+              <div style={labelStyle}>เลือกเบอร์หมู</div>
               <select
                 value={selectedCandidateSwineId}
                 onChange={(e) => setSelectedCandidateSwineId(e.target.value)}
                 disabled={!selectedHouse || availableLoading}
-                style={fullInputStyle}
+                style={inputStyle}
               >
                 <option value="">
                   {!selectedHouse
@@ -1025,96 +1000,87 @@ export default function ShipmentCreatePage() {
               </select>
             </div>
 
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                เต้านมซ้าย
+            {selectedCandidateSwine ? (
+              <div
+                style={{
+                  border: "1px solid #dbeafe",
+                  borderRadius: 12,
+                  padding: 10,
+                  background: "#f8fbff",
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
+                <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
+                  เล้า: {clean(selectedCandidateSwine.house_no) || "-"} | Flock:{" "}
+                  {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
+                  {formatDateDisplay(selectedCandidateSwine.birth_date)}
+                </div>
               </div>
+            ) : null}
+
+            <div>
+              <div style={labelStyle}>เต้านมซ้าย</div>
               <input
                 value={teatsLeft}
                 onChange={(e) => setTeatsLeft(e.target.value)}
                 placeholder="เต้านมซ้าย"
                 inputMode="numeric"
-                style={smallInputStyle}
+                style={inputStyle}
               />
             </div>
 
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                เต้านมขวา
-              </div>
+              <div style={labelStyle}>เต้านมขวา</div>
               <input
                 value={teatsRight}
                 onChange={(e) => setTeatsRight(e.target.value)}
                 placeholder="เต้านมขวา"
                 inputMode="numeric"
-                style={smallInputStyle}
+                style={inputStyle}
               />
             </div>
 
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                น้ำหนัก
-              </div>
+              <div style={labelStyle}>น้ำหนัก</div>
               <input
                 value={weight}
                 onChange={(e) => setWeight(e.target.value)}
                 placeholder="น้ำหนัก"
                 inputMode="decimal"
-                style={smallInputStyle}
+                style={inputStyle}
               />
             </div>
 
             <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                Backfat
-              </div>
+              <div style={labelStyle}>Backfat</div>
               <input
                 value={backfat}
                 onChange={(e) => setBackfat(e.target.value)}
                 placeholder="Backfat"
                 inputMode="decimal"
-                style={smallInputStyle}
+                style={inputStyle}
               />
             </div>
-          </div>
 
-          {selectedCandidateSwine ? (
-            <div
-              style={{
-                border: "1px solid #dbeafe",
-                borderRadius: 12,
-                padding: 10,
-                background: "#f8fbff",
-              }}
-            >
-              <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
-              <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                เล้า: {clean(selectedCandidateSwine.house_no) || "-"} | Flock:{" "}
-                {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
-                {formatDateDisplay(selectedCandidateSwine.birth_date)}
-              </div>
+            <div>
+              <button
+                className="linkbtn"
+                type="button"
+                onClick={() => void addToPickedList()}
+                disabled={!canAddToList}
+                style={{ width: "100%" }}
+              >
+                บันทึกเข้า list
+              </button>
             </div>
-          ) : null}
-
-          <div>
-            <button
-              className="linkbtn"
-              type="button"
-              onClick={() => void addToPickedList()}
-              disabled={!canAddToList}
-            >
-              บันทึกเข้า list
-            </button>
           </div>
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 12 }}>
-          <div style={{ fontWeight: 800 }}>เบอร์ที่เลือกแล้ว ({pickedRows.length})</div>
+        <div style={{ ...cardStyle, display: "grid", gap: 12 }}>
+          <div style={{ fontWeight: 900 }}>เบอร์ที่เลือกแล้ว ({pickedRows.length})</div>
 
           {pickedRows.length === 0 ? (
-            <div className="small" style={{ color: "#666" }}>
-              ยังไม่มีรายการ
-            </div>
+            <div style={{ color: "#6b7280", fontSize: 13 }}>ยังไม่มีรายการ</div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
               {pickedRows.map((row, idx) => (
@@ -1129,6 +1095,7 @@ export default function ShipmentCreatePage() {
                     gap: 10,
                     flexWrap: "wrap",
                     alignItems: "center",
+                    background: "#fafafa",
                   }}
                 >
                   <div style={{ fontWeight: 800 }}>
@@ -1139,7 +1106,7 @@ export default function ShipmentCreatePage() {
                     className="linkbtn"
                     type="button"
                     onClick={() => void removePickedRow(row.temp_id)}
-                    disabled={savingDraft}
+                    disabled={savingDraft || busyRelease}
                   >
                     ลบออก
                   </button>
@@ -1149,23 +1116,30 @@ export default function ShipmentCreatePage() {
           )}
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 800 }}>หมายเหตุ</div>
+        <div style={{ ...cardStyle, display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 900 }}>หมายเหตุ</div>
           <textarea
             value={remark}
             onChange={(e) => setRemark(e.target.value)}
             rows={3}
-            style={{ ...fullInputStyle, resize: "vertical" }}
+            style={{ ...inputStyle, resize: "vertical" }}
             placeholder="ใส่หมายเหตุ (ถ้ามี)"
           />
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            gridTemplateColumns: "1fr",
+          }}
+        >
           <button
             className="linkbtn"
             type="button"
             onClick={() => void handleSaveDraft()}
             disabled={!canSaveDraft}
+            style={{ width: "100%" }}
           >
             {savingDraft ? "Saving..." : "Save Draft"}
           </button>
@@ -1174,7 +1148,8 @@ export default function ShipmentCreatePage() {
             className="linkbtn"
             type="button"
             onClick={() => void handleBackOrCancel()}
-            disabled={savingDraft}
+            disabled={savingDraft || busyRelease}
+            style={{ width: "100%" }}
           >
             Cancel
           </button>
