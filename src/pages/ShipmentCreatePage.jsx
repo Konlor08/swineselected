@@ -579,7 +579,7 @@ export default function ShipmentCreatePage() {
           try {
             await updateDraftReservationStatus(draftShipmentId, "cancelled");
           } catch {
-            // ignore secondary status update failure
+            // ignore
           }
         } else {
           setPickedRows([]);
@@ -858,7 +858,12 @@ export default function ShipmentCreatePage() {
       if (resequenceRes.error) throw resequenceRes.error;
 
       leavingRef.current = true;
-      nav(`/edit-shipment?id=${encodeURIComponent(shipmentId)}`);
+      nav("/", {
+        replace: true,
+        state: {
+          msg: `บันทึก Draft สำเร็จ ✅ (${shipmentId})`,
+        },
+      });
     } catch (e) {
       console.error("handleSaveDraft error:", {
         message: e?.message,
