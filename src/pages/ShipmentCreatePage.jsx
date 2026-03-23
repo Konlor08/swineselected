@@ -1,6 +1,6 @@
 // src/pages/ShipmentCreatePage.jsx
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { formatDateDisplay } from "../lib/dateFormat";
@@ -18,18 +18,39 @@ function todayYmdLocal() {
   return `${y}-${m}-${day}`;
 }
 
+function withTimeout(promise, ms = 20000, label = "request") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms)
+    ),
+  ]);
+}
+
 function sortByLabel(a, b) {
   return String(a?.label || "").localeCompare(String(b?.label || ""), "th");
 }
 
-function uniqBy(arr, getKey) {
-  const map = new Map();
-  for (const item of arr || []) {
-    const key = getKey(item);
-    if (!key) continue;
-    if (!map.has(key)) map.set(key, item);
+function chunkArray(arr, size = 500) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
   }
-  return Array.from(map.values());
+  return out;
+}
+
+function toIntOrNull(v) {
+  const s = clean(v);
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? Math.trunc(n) : null;
+}
+
+function toNumOrNull(v) {
+  const s = clean(v);
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 async function getCurrentUserId() {
@@ -41,6 +62,24 @@ async function getCurrentUserId() {
   if (error) throw error;
   return user?.id || null;
 }
+
+const fullInputStyle = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 12,
+  border: "1px solid #ddd",
+  boxSizing: "border-box",
+  minWidth: 0,
+};
+
+const smallInputStyle = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 10,
+  border: "1px solid #ddd",
+  boxSizing: "border-box",
+  minWidth: 0,
+};
 
 function FarmSelectedCard({ title, farm, subtitle, onChange }) {
   return (
@@ -61,7 +100,6 @@ function FarmSelectedCard({ title, farm, subtitle, onChange }) {
           <div style={{ fontSize: 18, fontWeight: 900 }}>
             {clean(farm.farm_code) || "-"} - {clean(farm.farm_name) || "-"}
           </div>
-
           {subtitle ? (
             <div style={{ color: "#64748b", fontSize: 13 }}>{subtitle}</div>
           ) : null}
@@ -79,50 +117,15 @@ function FarmSelectedCard({ title, farm, subtitle, onChange }) {
   );
 }
 
-function SwineChip({ item, onRemove }) {
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-        padding: "6px 10px",
-        borderRadius: 999,
-        border: "1px solid #bbf7d0",
-        background: "#f0fdf4",
-        fontSize: 13,
-      }}
-    >
-      <span style={{ fontWeight: 700 }}>{clean(item?.swine_code) || "-"}</span>
-      {clean(item?.house_no) ? <span>บ้าน {item.house_no}</span> : null}
-      {clean(item?.block) ? <span>• Block {item.block}</span> : null}
-      <button
-        type="button"
-        onClick={onRemove}
-        style={{
-          border: 0,
-          background: "transparent",
-          cursor: "pointer",
-          color: "#166534",
-          fontWeight: 900,
-        }}
-      >
-        ×
-      </button>
-    </div>
-  );
-}
-
 export default function ShipmentCreatePage() {
   const nav = useNavigate();
+  const isLeavingAfterSaveRef = useRef(false);
 
   const [bootLoading, setBootLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [currentUserId, setCurrentUserId] = useState("");
-  const [lastDraftId, setLastDraftId] = useState("");
-
   const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
 
   const [fromQ, setFromQ] = useState("");
@@ -131,17 +134,25 @@ export default function ShipmentCreatePage() {
   const [fromFarm, setFromFarm] = useState(null);
   const [fromPickerOpen, setFromPickerOpen] = useState(true);
 
-  const [swineQ, setSwineQ] = useState("");
-  const [swineLoading, setSwineLoading] = useState(false);
-  const [swineOptions, setSwineOptions] = useState([]);
-  const [selectedSwines, setSelectedSwines] = useState([]);
-  const [swinePickerOpen, setSwinePickerOpen] = useState(true);
-  const [swineLoadHint, setSwineLoadHint] = useState("");
-
   const [toFarmId, setToFarmId] = useState(null);
   const [toFarm, setToFarm] = useState(null);
   const [toPickerOpen, setToPickerOpen] = useState(true);
 
+  const [allAvailableSwines, setAllAvailableSwines] = useState([]);
+  const [availableLoading, setAvailableLoading] = useState(false);
+
+  const [houseOptions, setHouseOptions] = useState([]);
+  const [selectedHouse, setSelectedHouse] = useState("");
+
+  const [swineQ, setSwineQ] = useState("");
+  const [selectedCandidateSwineId, setSelectedCandidateSwineId] = useState("");
+
+  const [teatsLeft, setTeatsLeft] = useState("");
+  const [teatsRight, setTeatsRight] = useState("");
+  const [weight, setWeight] = useState("");
+  const [backfat, setBackfat] = useState("");
+
+  const [pickedRows, setPickedRows] = useState([]);
   const [remark, setRemark] = useState("");
 
   useEffect(() => {
@@ -247,7 +258,6 @@ export default function ShipmentCreatePage() {
 
   const filteredFromOptions = useMemo(() => {
     const q = clean(fromQ).toLowerCase();
-
     const result = !q
       ? fromOptions.slice(0, 30)
       : fromOptions
@@ -259,722 +269,916 @@ export default function ShipmentCreatePage() {
     return result.sort(sortByLabel);
   }, [fromOptions, fromQ]);
 
-  const filteredSwineOptions = useMemo(() => {
+  const pickedCodeSet = useMemo(() => {
+    return new Set(pickedRows.map((x) => clean(x.swine_code)).filter(Boolean));
+  }, [pickedRows]);
+
+  const filteredAvailableSwines = useMemo(() => {
     const q = clean(swineQ).toLowerCase();
 
-    const result = !q
-      ? swineOptions.slice(0, 100)
-      : swineOptions
-          .filter((x) =>
-            `${x.swine_code} ${x.farm_code} ${x.farm_name} ${x.house_no} ${x.block}`
-              .toLowerCase()
-              .includes(q)
-          )
-          .slice(0, 100);
+    return (allAvailableSwines || [])
+      .filter((x) => clean(x.house_no) === clean(selectedHouse))
+      .filter((x) => !pickedCodeSet.has(clean(x.swine_code)))
+      .filter((x) => {
+        if (!q) return true;
+        return clean(x.swine_code).toLowerCase().includes(q);
+      })
+      .slice(0, 100);
+  }, [allAvailableSwines, selectedHouse, pickedCodeSet, swineQ]);
 
-    return result.sort(sortByLabel);
-  }, [swineOptions, swineQ]);
-
-  const selectedSwineCodes = useMemo(() => {
-    return new Set(selectedSwines.map((x) => clean(x.swine_code)));
-  }, [selectedSwines]);
-
-  const isSameFarm = useMemo(() => {
+  const selectedCandidateSwine = useMemo(() => {
     return (
-      !!clean(fromFarm?.farm_code) &&
-      !!clean(toFarm?.farm_code) &&
-      clean(fromFarm?.farm_code) === clean(toFarm?.farm_code)
+      filteredAvailableSwines.find(
+        (x) => String(x.id) === String(selectedCandidateSwineId)
+      ) || null
     );
-  }, [fromFarm?.farm_code, toFarm?.farm_code]);
+  }, [filteredAvailableSwines, selectedCandidateSwineId]);
 
-  useEffect(() => {
-    setSelectedSwines([]);
+  const canAddToList = useMemo(() => {
+    return (
+      !!fromFarm?.farm_code &&
+      !!toFarmId &&
+      !!selectedHouse &&
+      !!selectedCandidateSwine?.id &&
+      !availableLoading
+    );
+  }, [fromFarm?.farm_code, toFarmId, selectedHouse, selectedCandidateSwine, availableLoading]);
+
+  const canSaveDraft = useMemo(() => {
+    return (
+      !bootLoading &&
+      !savingDraft &&
+      !!fromFarm?.farm_code &&
+      !!toFarmId &&
+      !!selectedHouse &&
+      pickedRows.length > 0
+    );
+  }, [bootLoading, savingDraft, fromFarm?.farm_code, toFarmId, selectedHouse, pickedRows.length]);
+
+  const resetCandidateForm = useCallback(() => {
     setSwineQ("");
-    setSwineOptions([]);
-    setSwinePickerOpen(true);
-    setSwineLoadHint("");
-    setLastDraftId("");
-  }, [fromFarm?.farm_code, fromFarm?.flock, selectedDate]);
+    setSelectedCandidateSwineId("");
+    setTeatsLeft("");
+    setTeatsRight("");
+    setWeight("");
+    setBackfat("");
+  }, []);
 
-  const loadSwines = useCallback(async () => {
-    const farmCode = clean(fromFarm?.farm_code);
+  const releaseRows = useCallback(async (rows) => {
+    const codes = Array.from(
+      new Set((rows || []).map((x) => clean(x.swine_code)).filter(Boolean))
+    );
 
-    if (!farmCode) {
-      setSwineOptions([]);
-      setSwineLoadHint("");
+    if (!codes.length) return;
+
+    const chunks = chunkArray(codes, 500);
+    for (const chunk of chunks) {
+      const { error } = await supabase
+        .from("swine_master")
+        .update({
+          delivery_state: "available",
+          updated_at: new Date().toISOString(),
+        })
+        .in("swine_code", chunk);
+
+      if (error) throw error;
+    }
+  }, []);
+
+  const clearPickedRowsAndRelease = useCallback(async () => {
+    if (!pickedRows.length) {
+      setPickedRows([]);
+      resetCandidateForm();
       return;
     }
 
-    setSwineLoading(true);
-    setSwineLoadHint("");
+    await releaseRows(pickedRows);
+    setPickedRows([]);
+    resetCandidateForm();
+  }, [pickedRows, releaseRows, resetCandidateForm]);
+
+  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode) => {
+    if (!fromFarmCode) {
+      setAllAvailableSwines([]);
+      setHouseOptions([]);
+      setSelectedHouse("");
+      return;
+    }
+
+    setAvailableLoading(true);
+    setMsg("");
 
     try {
-      const { data, error } = await supabase
+      const { data: farmSwines, error: e1 } = await supabase
         .from("swines")
-        .select("id, swine_code, farm_code, farm_name, house_no, block")
-        .eq("farm_code", farmCode)
-        .order("swine_code", { ascending: true });
+        .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date")
+        .eq("farm_code", fromFarmCode)
+        .order("house_no", { ascending: true })
+        .order("swine_code", { ascending: true })
+        .limit(5000);
 
-      if (error) throw error;
+      if (e1) throw e1;
 
-      const arr = uniqBy(
-        (data || []).map((r) => ({
-          id: r.id || null,
-          swine_id: r.id || null,
-          swine_code: clean(r.swine_code),
-          farm_code: clean(r.farm_code),
-          farm_name: clean(r.farm_name),
-          house_no: clean(r.house_no),
-          block: clean(r.block),
-          label: `${clean(r.swine_code)}${clean(r.house_no) ? ` • บ้าน ${clean(r.house_no)}` : ""}${
-            clean(r.block) ? ` • Block ${clean(r.block)}` : ""
-          }`,
-        })),
-        (x) => clean(x.swine_code)
-      ).filter((x) => x.swine_code);
+      const swines = (farmSwines || []).map((x) => ({
+        ...x,
+        swine_code: clean(x.swine_code),
+        farm_code: clean(x.farm_code),
+        farm_name: clean(x.farm_name),
+        house_no: clean(x.house_no),
+        flock: clean(x.flock),
+      }));
 
-      setSwineOptions(arr);
-      setSwineLoadHint(arr.length > 0 ? `พบ ${arr.length} เบอร์` : "ไม่พบเบอร์หมูของฟาร์มนี้");
+      const codes = swines.map((x) => clean(x.swine_code)).filter(Boolean);
+
+      if (!codes.length) {
+        setAllAvailableSwines([]);
+        setHouseOptions([]);
+        setSelectedHouse("");
+        return;
+      }
+
+      const codeChunks = chunkArray(codes, 500);
+      const availableCodeSet = new Set();
+
+      for (const chunk of codeChunks) {
+        const { data: availableRows, error: e2 } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .in("swine_code", chunk);
+
+        if (e2) throw e2;
+
+        for (const row of availableRows || []) {
+          const code = clean(row?.swine_code);
+          if (code) availableCodeSet.add(code);
+        }
+      }
+
+      const availableOnly = swines.filter((x) =>
+        availableCodeSet.has(clean(x.swine_code))
+      );
+
+      const houseMap = new Map();
+      for (const row of availableOnly) {
+        const house = clean(row.house_no);
+        if (!house) continue;
+        if (!houseMap.has(house)) {
+          houseMap.set(house, {
+            value: house,
+            label: house,
+          });
+        }
+      }
+
+      const houses = Array.from(houseMap.values()).sort((a, b) =>
+        String(a.value).localeCompare(String(b.value), "th", { numeric: true })
+      );
+
+      setAllAvailableSwines(availableOnly);
+      setHouseOptions(houses);
+      setSelectedHouse((prev) => {
+        if (prev && houses.some((x) => x.value === prev)) return prev;
+        return houses[0]?.value || "";
+      });
     } catch (e) {
-      console.error("loadSwines error:", e);
-      setSwineOptions([]);
-      setSwineLoadHint(e?.message || "โหลดเบอร์หมูไม่สำเร็จ");
+      console.error("loadAvailableSwinesOfFarm error:", e);
+      setAllAvailableSwines([]);
+      setHouseOptions([]);
+      setSelectedHouse("");
+      setMsg(e?.message || "โหลดรายการหมู available ไม่สำเร็จ");
     } finally {
-      setSwineLoading(false);
+      setAvailableLoading(false);
     }
-  }, [fromFarm?.farm_code]);
+  }, []);
 
   useEffect(() => {
-    if (!fromFarm?.farm_code) return;
-    void loadSwines();
-  }, [fromFarm?.farm_code, loadSwines]);
-
-  const hardErrors = useMemo(() => {
-    const errors = [];
-
-    if (!clean(selectedDate)) {
-      errors.push("กรุณาเลือกวันคัด");
-    }
-
     if (!fromFarm?.farm_code) {
-      errors.push("กรุณาเลือกฟาร์มต้นทางจากรายการที่คัดได้");
+      setAllAvailableSwines([]);
+      setHouseOptions([]);
+      setSelectedHouse("");
+      return;
     }
+    void loadAvailableSwinesOfFarm(fromFarm.farm_code);
+  }, [fromFarm?.farm_code, loadAvailableSwinesOfFarm]);
 
-    if (!clean(toFarmId)) {
-      errors.push("กรุณาเลือกฟาร์มปลายทาง");
-    }
-
-    if (selectedSwines.length <= 0) {
-      errors.push("กรุณาเลือกเบอร์หมูอย่างน้อย 1 ตัว");
-    }
-
-    if (isSameFarm) {
-      errors.push("ห้ามเลือกฟาร์มต้นทางและปลายทางซ้ำกัน");
-    }
-
-    if (fromFarm && !clean(fromFarm?.farm_code)) {
-      errors.push("ฟาร์มต้นทางไม่มี farm_code");
-    }
-
-    if (toFarmId && !clean(toFarm?.id)) {
-      errors.push("ฟาร์มปลายทางไม่มี id");
-    }
-
-    return errors;
-  }, [selectedDate, fromFarm, toFarmId, toFarm?.id, selectedSwines.length, isSameFarm]);
-
-  const canSave = useMemo(() => {
-    return !bootLoading && !saving && hardErrors.length === 0;
-  }, [bootLoading, saving, hardErrors.length]);
-
-  const handleSelectFromFarm = useCallback((farm) => {
-    setMsg("");
-    setFromFarm(farm || null);
-    setSelectedSwines([]);
-    setSwineQ("");
-    setSwineOptions([]);
-    setSwinePickerOpen(true);
-    setSwineLoadHint("");
-    setLastDraftId("");
-    if (farm) setFromPickerOpen(false);
-  }, []);
-
-  const clearFromFarm = useCallback(() => {
-    setFromFarm(null);
-    setFromQ("");
-    setFromPickerOpen(true);
-    setSelectedSwines([]);
-    setSwineQ("");
-    setSwineOptions([]);
-    setSwinePickerOpen(true);
-    setSwineLoadHint("");
-    setLastDraftId("");
-  }, []);
-
-  const toggleSwine = useCallback((swine) => {
-    const code = clean(swine?.swine_code);
-    if (!code) return;
-
-    setMsg("");
-    setLastDraftId("");
-
-    setSelectedSwines((prev) => {
-      const exists = prev.some((x) => clean(x.swine_code) === code);
-      if (exists) {
-        return prev.filter((x) => clean(x.swine_code) !== code);
+  const handleSelectFromFarm = useCallback(
+    async (farm) => {
+      try {
+        setMsg("");
+        await clearPickedRowsAndRelease();
+        setFromFarm(farm || null);
+        setFromPickerOpen(!farm);
+      } catch (e) {
+        console.error("handleSelectFromFarm error:", e);
+        setMsg(e?.message || "เปลี่ยนฟาร์มต้นทางไม่สำเร็จ");
       }
-      return [...prev, swine].sort((a, b) =>
-        clean(a.swine_code).localeCompare(clean(b.swine_code), "th")
-      );
-    });
-  }, []);
+    },
+    [clearPickedRowsAndRelease]
+  );
 
-  const removeSelectedSwine = useCallback((swineCode) => {
-    const code = clean(swineCode);
-    setSelectedSwines((prev) => prev.filter((x) => clean(x.swine_code) !== code));
-    setLastDraftId("");
-  }, []);
-
-  const clearSwine = useCallback(() => {
-    setSelectedSwines([]);
-    setSwineQ("");
-    setSwinePickerOpen(true);
-    setLastDraftId("");
-  }, []);
+  const clearFromFarm = useCallback(async () => {
+    try {
+      setMsg("");
+      await clearPickedRowsAndRelease();
+      setFromFarm(null);
+      setFromQ("");
+      setFromPickerOpen(true);
+      setAllAvailableSwines([]);
+      setHouseOptions([]);
+      setSelectedHouse("");
+    } catch (e) {
+      console.error("clearFromFarm error:", e);
+      setMsg(e?.message || "ล้างฟาร์มต้นทางไม่สำเร็จ");
+    }
+  }, [clearPickedRowsAndRelease]);
 
   const onChangeToFarm = useCallback((id) => {
     setMsg("");
     setToFarmId(id || null);
     if (id) setToPickerOpen(false);
-    setLastDraftId("");
   }, []);
 
-  const saveDraft = useCallback(async () => {
-    if (hardErrors.length > 0) {
-      setMsg(hardErrors.join(" | "));
+  const handleChangeHouse = useCallback(
+    async (nextHouse) => {
+      try {
+        setMsg("");
+        await clearPickedRowsAndRelease();
+        setSelectedHouse(nextHouse || "");
+      } catch (e) {
+        console.error("handleChangeHouse error:", e);
+        setMsg(e?.message || "เปลี่ยนเล้าไม่สำเร็จ");
+      }
+    },
+    [clearPickedRowsAndRelease]
+  );
+
+  const addToPickedList = useCallback(async () => {
+    if (!canAddToList) {
+      setMsg("กรุณาเลือกฟาร์มต้นทาง ฟาร์มปลายทาง เล้า และเบอร์หมู");
       return;
     }
 
-    setSaving(true);
+    try {
+      setMsg("");
+
+      const swineCode = clean(selectedCandidateSwine?.swine_code);
+      const swineId = selectedCandidateSwine?.id || null;
+
+      if (!swineCode || !swineId) {
+        throw new Error("ไม่พบข้อมูลเบอร์หมู");
+      }
+
+      if (pickedCodeSet.has(swineCode)) {
+        throw new Error("เบอร์หมูนี้อยู่ในรายการที่เลือกแล้ว");
+      }
+
+      const reserveRes = await withTimeout(
+        supabase
+          .from("swine_master")
+          .update({
+            delivery_state: "reserved",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("swine_code", swineCode)
+          .eq("delivery_state", "available")
+          .select("swine_code"),
+        15000,
+        `reserve ${swineCode}`
+      );
+
+      if (reserveRes.error) throw reserveRes.error;
+      if (!Array.isArray(reserveRes.data) || reserveRes.data.length !== 1) {
+        throw new Error(`เบอร์ ${swineCode} ไม่ available แล้ว`);
+      }
+
+      setPickedRows((prev) => [
+        ...prev,
+        {
+          temp_id: `picked-${swineId}-${Date.now()}`,
+          swine_id: swineId,
+          swine_code: swineCode,
+          house_no: clean(selectedCandidateSwine?.house_no),
+          teats_left: clean(teatsLeft),
+          teats_right: clean(teatsRight),
+          weight: clean(weight),
+          backfat: clean(backfat),
+        },
+      ]);
+
+      resetCandidateForm();
+    } catch (e) {
+      console.error("addToPickedList error:", e);
+      setMsg(e?.message || "บันทึกเข้า list ไม่สำเร็จ");
+      void loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
+    }
+  }, [
+    canAddToList,
+    selectedCandidateSwine,
+    pickedCodeSet,
+    teatsLeft,
+    teatsRight,
+    weight,
+    backfat,
+    resetCandidateForm,
+    loadAvailableSwinesOfFarm,
+    fromFarm?.farm_code,
+  ]);
+
+  const removePickedRow = useCallback(
+    async (tempId) => {
+      const row = pickedRows.find((x) => x.temp_id === tempId);
+      if (!row) return;
+
+      try {
+        setMsg("");
+
+        const swineCode = clean(row.swine_code);
+        if (swineCode) {
+          const { error } = await supabase
+            .from("swine_master")
+            .update({
+              delivery_state: "available",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("swine_code", swineCode);
+
+          if (error) throw error;
+        }
+
+        setPickedRows((prev) => prev.filter((x) => x.temp_id !== tempId));
+      } catch (e) {
+        console.error("removePickedRow error:", e);
+        setMsg(e?.message || "ลบรายการไม่สำเร็จ");
+      }
+    },
+    [pickedRows]
+  );
+
+  const handleBackOrCancel = useCallback(async () => {
+    try {
+      setMsg("");
+      isLeavingAfterSaveRef.current = false;
+      await clearPickedRowsAndRelease();
+      nav(-1);
+    } catch (e) {
+      console.error("handleBackOrCancel error:", e);
+      setMsg(e?.message || "ยกเลิกไม่สำเร็จ");
+    }
+  }, [clearPickedRowsAndRelease, nav]);
+
+  const handleSaveDraft = useCallback(async () => {
+    if (!canSaveDraft) {
+      setMsg("กรุณาเลือกข้อมูลให้ครบ และต้องมีเบอร์หมูอย่างน้อย 1 ตัว");
+      return;
+    }
+
+    setSavingDraft(true);
     setMsg("");
-    setLastDraftId("");
 
     try {
       const uid = currentUserId || (await getCurrentUserId());
-      if (!uid) {
-        throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
-      }
+      if (!uid) throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
 
-      const fromFarmCode = clean(fromFarm?.farm_code);
-      if (!fromFarmCode) {
-        throw new Error("ฟาร์มต้นทางไม่มี farm_code");
-      }
+      const payload = {
+        selected_date: selectedDate,
+        from_farm_code: clean(fromFarm?.farm_code) || null,
+        from_farm_name: clean(fromFarm?.farm_name) || null,
+        from_flock: clean(fromFarm?.flock) || null,
+        from_branch_id: fromFarm?.branch_id || null,
+        to_farm_id: toFarmId,
+        remark: clean(remark) || null,
+        status: "draft",
+        created_by: uid,
+      };
 
-      const selectedItems = uniqBy(
-        selectedSwines
-          .map((x) => ({
-            swine_code: clean(x.swine_code),
-            swine_id: x.swine_id || x.id || null,
-            block: clean(x.block) || null,
-          }))
-          .filter((x) => x.swine_code),
-        (x) => x.swine_code
+      const headerRes = await withTimeout(
+        supabase.from("swine_shipments").insert([payload]).select("id").single(),
+        15000,
+        "create shipment draft"
       );
 
-      if (selectedItems.length <= 0) {
-        throw new Error("ยังไม่ได้เลือกเบอร์หมู");
-      }
+      if (headerRes.error) throw headerRes.error;
+      if (!headerRes.data?.id) throw new Error("สร้าง draft ไม่สำเร็จ");
 
-      const { data: existingDraft, error: existingErr } = await supabase
-        .from("swine_shipments")
-        .select("id")
-        .eq("selected_date", selectedDate)
-        .eq("from_farm_code", fromFarmCode)
-        .eq("to_farm_id", toFarmId)
-        .eq("status", "draft")
-        .eq("created_by", uid)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const shipmentId = headerRes.data.id;
 
-      if (existingErr) throw existingErr;
-
-      let shipmentId = existingDraft?.id || null;
-
-      if (!shipmentId) {
-        const payload = {
-          selected_date: selectedDate,
-          from_farm_code: fromFarmCode || null,
-          from_farm_name: clean(fromFarm?.farm_name) || null,
-          from_flock: clean(fromFarm?.flock) || null,
-          from_branch_id: fromFarm?.branch_id || null,
-          to_farm_id: toFarmId,
-          remark: clean(remark) || null,
-          status: "draft",
-          created_by: uid,
-        };
-
-        const { data, error } = await supabase
-          .from("swine_shipments")
-          .insert([payload])
-          .select("id")
-          .single();
-
-        if (error) throw error;
-        if (!data?.id) throw new Error("สร้าง draft ไม่สำเร็จ");
-        shipmentId = data.id;
-      } else {
-        const { error: updateErr } = await supabase
-          .from("swine_shipments")
-          .update({
-            remark: clean(remark) || null,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", shipmentId);
-
-        if (updateErr) throw updateErr;
-
-        const { error: deleteItemsErr } = await supabase
-          .from("swine_shipment_items")
-          .delete()
-          .eq("shipment_id", shipmentId);
-
-        if (deleteItemsErr) throw deleteItemsErr;
-      }
-
-      const itemPayload = selectedItems.map((x, idx) => ({
+      const itemPayload = pickedRows.map((row, idx) => ({
         shipment_id: shipmentId,
-        swine_code: x.swine_code,
-        swine_id: x.swine_id || null,
-        block: x.block || null,
+        swine_id: row.swine_id,
+        swine_code: clean(row.swine_code),
         selection_no: idx + 1,
+        teats_left: toIntOrNull(row.teats_left),
+        teats_right: toIntOrNull(row.teats_right),
+        weight: toNumOrNull(row.weight),
+        backfat: toNumOrNull(row.backfat),
       }));
 
-      const { error: itemErr } = await supabase
-        .from("swine_shipment_items")
-        .insert(itemPayload);
-
-      if (itemErr) throw itemErr;
-
-      setLastDraftId(shipmentId);
-      setMsg(
-        `บันทึก Draft สำเร็จ ✅ จำนวน ${selectedItems.length} ตัว`
+      const itemRes = await withTimeout(
+        supabase
+          .from("swine_shipment_items")
+          .insert(itemPayload)
+          .select("id, swine_code"),
+        15000,
+        "insert shipment items"
       );
+
+      if (itemRes.error) throw itemRes.error;
+      if (!Array.isArray(itemRes.data) || itemRes.data.length !== itemPayload.length) {
+        throw new Error(
+          `INSERT_MISMATCH: swine_shipment_items inserted ${
+            Array.isArray(itemRes.data) ? itemRes.data.length : 0
+          }/${itemPayload.length}`
+        );
+      }
+
+      const resequenceRes = await withTimeout(
+        supabase.rpc("resequence_shipment_group_append_end", {
+          p_selected_date: payload.selected_date,
+          p_from_farm_code: payload.from_farm_code,
+          p_to_farm_id: payload.to_farm_id,
+          p_priority_shipment_id: shipmentId,
+        }),
+        15000,
+        "resequence shipment group"
+      );
+
+      if (resequenceRes.error) throw resequenceRes.error;
+
+      isLeavingAfterSaveRef.current = true;
+      nav(`/edit-shipment?id=${encodeURIComponent(shipmentId)}`);
     } catch (e) {
-      console.error("saveDraft error:", e);
-      setMsg(e?.message || "บันทึกไม่สำเร็จ");
+      console.error("handleSaveDraft error:", e);
+      setMsg(e?.message || "บันทึก draft ไม่สำเร็จ");
     } finally {
-      setSaving(false);
+      setSavingDraft(false);
     }
   }, [
+    canSaveDraft,
     currentUserId,
-    fromFarm,
-    hardErrors,
-    remark,
     selectedDate,
-    selectedSwines,
+    fromFarm,
     toFarmId,
+    remark,
+    pickedRows,
+    nav,
   ]);
 
   if (bootLoading) {
     return (
-      <div style={{ padding: 16 }}>
-        <div>Loading...</div>
+      <div className="page">
+        <div className="card" style={{ maxWidth: 720, margin: "40px auto" }}>
+          Loading...
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: 16, display: "grid", gap: 14 }}>
-      <h2 style={{ margin: 0 }}>Create Shipment</h2>
+    <div className="page" style={{ overflowX: "hidden" }}>
+      <div
+        className="topbar"
+        style={{
+          flexWrap: "wrap",
+          gap: 10,
+          alignItems: "flex-start",
+          position: "relative",
+          zIndex: 20,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>Create Shipment</div>
+          <div className="small" style={{ wordBreak: "break-word" }}>
+            สร้าง draft ใหม่เสมอ • เลือกได้เฉพาะหมู available • เข้า list แล้ว reserve ทันที
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="linkbtn" type="button" onClick={handleBackOrCancel}>
+            Back / Cancel
+          </button>
+        </div>
+      </div>
 
       <div
         style={{
-          padding: 12,
-          borderRadius: 12,
-          border: "1px solid #dbe4ea",
-          background: "#f8fafc",
-          color: "#334155",
-          lineHeight: 1.7,
+          width: "100%",
+          maxWidth: 1200,
+          margin: "14px auto 0",
+          display: "grid",
+          gap: 14,
+          boxSizing: "border-box",
+          padding: "0 8px",
+          minWidth: 0,
         }}
       >
-        หน้านี้จะสร้าง Draft ที่ <b>swine_shipments</b> แล้วบันทึกรายการหมูที่เลือกลง
-        <b> swine_shipment_items</b>
-      </div>
-
-      {msg ? (
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 12,
-            border: msg.includes("สำเร็จ")
-              ? "1px solid #bbf7d0"
-              : "1px solid #fecaca",
-            background: msg.includes("สำเร็จ") ? "#f0fdf4" : "#fef2f2",
-            color: msg.includes("สำเร็จ") ? "#166534" : "#991b1b",
-            fontWeight: 700,
-            lineHeight: 1.7,
-          }}
-        >
-          {msg}
-        </div>
-      ) : null}
-
-      <label style={{ display: "grid", gap: 6, maxWidth: 260 }}>
-        วันคัด
-        <input
-          type="date"
-          value={selectedDate}
-          max={todayYmdLocal()}
-          onChange={(e) => {
-            setMsg("");
-            setLastDraftId("");
-            setSelectedDate(e.target.value);
-          }}
-          style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-        />
-        <div style={{ color: "#64748b", fontSize: 12 }}>
-          แสดงผล: {formatDateDisplay(selectedDate)}
-        </div>
-      </label>
-
-      {fromFarm && !fromPickerOpen ? (
-        <FarmSelectedCard
-          title="ฟาร์มต้นทาง (คัด/ดัด/จับออก)"
-          farm={fromFarm}
-          subtitle={
-            fromFarm?.flock
-              ? `Flock: ${fromFarm.flock}${
-                  Number.isFinite(fromFarm?.swine_count)
-                    ? ` | คัดได้ ${fromFarm.swine_count} ตัว`
-                    : ""
-                }`
-              : Number.isFinite(fromFarm?.swine_count)
-              ? `คัดได้ ${fromFarm.swine_count} ตัว`
-              : ""
-          }
-          onChange={() => setFromPickerOpen(true)}
-        />
-      ) : (
-        <div
-          style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
-            padding: 12,
-            display: "grid",
-            gap: 10,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
-            <div style={{ fontWeight: 900 }}>
-              ฟาร์มต้นทาง (คัด/ดัด/จับออก) — เลือกจากรายการที่คัดได้
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" onClick={loadFromFarms} disabled={fromLoading}>
-                {fromLoading ? "กำลังโหลด..." : "รีเฟรช"}
-              </button>
-
-              <button type="button" onClick={clearFromFarm} disabled={fromLoading}>
-                ล้างค่า
-              </button>
-            </div>
-          </div>
-
-          <input
-            value={fromQ}
-            onChange={(e) => setFromQ(e.target.value)}
-            placeholder="พิมพ์ค้นหา farm code / farm name / flock…"
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-          />
-
-          <div
-            style={{
-              border: "1px solid #ddd",
-              borderRadius: 12,
-              overflow: "hidden",
-              maxHeight: 320,
-              overflowY: "auto",
-            }}
-          >
-            {fromLoading ? (
-              <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>
-            ) : filteredFromOptions.length > 0 ? (
-              filteredFromOptions.map((f) => {
-                const active =
-                  clean(fromFarm?.farm_code) === clean(f.farm_code) &&
-                  clean(fromFarm?.flock) === clean(f.flock);
-
-                return (
-                  <button
-                    key={`${f.farm_code}__${f.flock || "-"}__${f.farm_name}`}
-                    type="button"
-                    onClick={() => handleSelectFromFarm(f)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "10px 12px",
-                      border: 0,
-                      borderBottom: "1px solid #eee",
-                      background: active ? "#fef9c3" : "white",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                      {f.farm_code} - {f.farm_name}
-                    </div>
-
-                    <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
-                      Flock: <b>{f.flock || "-"}</b>
-                      {Number.isFinite(f.swine_count) ? (
-                        <>
-                          {" "}
-                          | คัดได้ <b>{f.swine_count}</b> ตัว
-                        </>
-                      ) : null}
-                    </div>
-                  </button>
-                );
-              })
-            ) : (
-              <div style={{ padding: 12, color: "#666" }}>ไม่พบฟาร์มต้นทาง</div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {fromFarm ? (
-        <div
-          style={{
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
-            padding: 12,
-            display: "grid",
-            gap: 10,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
-            <div style={{ fontWeight: 900 }}>
-              เบอร์หมู — เลือกได้หลายตัวจากฟาร์มต้นทาง
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" onClick={loadSwines} disabled={swineLoading}>
-                {swineLoading ? "กำลังโหลด..." : "รีเฟรช"}
-              </button>
-
-              <button type="button" onClick={clearSwine} disabled={swineLoading}>
-                ล้างรายการเลือก
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setSwinePickerOpen((v) => !v)}
-                disabled={swineLoading}
-              >
-                {swinePickerOpen ? "ซ่อนรายการ" : "แสดงรายการ"}
-              </button>
-            </div>
-          </div>
-
-          <input
-            value={swineQ}
-            onChange={(e) => setSwineQ(e.target.value)}
-            placeholder="พิมพ์ค้นหา swine code / house / block…"
-            style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-          />
-
-          {swineLoadHint ? (
-            <div style={{ color: "#64748b", fontSize: 12 }}>{swineLoadHint}</div>
-          ) : null}
-
-          <div
-            style={{
-              border: "1px solid #dbe4ea",
-              borderRadius: 12,
-              padding: 10,
-              background: "#f8fafc",
-              display: "grid",
-              gap: 8,
-            }}
-          >
-            <div style={{ fontWeight: 800 }}>
-              เลือกแล้ว {selectedSwines.length} ตัว
-            </div>
-
-            {selectedSwines.length > 0 ? (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {selectedSwines.map((item) => (
-                  <SwineChip
-                    key={clean(item.swine_code)}
-                    item={item}
-                    onRemove={() => removeSelectedSwine(item.swine_code)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div style={{ color: "#64748b", fontSize: 13 }}>
-                ยังไม่ได้เลือกเบอร์หมู
-              </div>
-            )}
-          </div>
-
-          {swinePickerOpen ? (
+        {msg ? (
+          <div className="card" style={{ padding: 12 }}>
             <div
+              className="small"
               style={{
-                border: "1px solid #ddd",
-                borderRadius: 12,
-                overflow: "hidden",
-                maxHeight: 360,
-                overflowY: "auto",
+                color: msg.includes("สำเร็จ") ? "#166534" : "#b91c1c",
+                fontWeight: 700,
+                lineHeight: 1.7,
+                wordBreak: "break-word",
               }}
             >
-              {swineLoading ? (
-                <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>
-              ) : filteredSwineOptions.length > 0 ? (
-                filteredSwineOptions.map((s) => {
-                  const active = selectedSwineCodes.has(clean(s.swine_code));
+              {msg}
+            </div>
+          </div>
+        ) : null}
 
-                  return (
-                    <button
-                      key={clean(s.swine_code)}
-                      type="button"
-                      onClick={() => toggleSwine(s)}
-                      style={{
-                        width: "100%",
-                        textAlign: "left",
-                        padding: "10px 12px",
-                        border: 0,
-                        borderBottom: "1px solid #eee",
-                        background: active ? "#dcfce7" : "white",
-                        cursor: "pointer",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 10,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                          {s.swine_code || "-"}
-                        </div>
-                        <div style={{ fontSize: 12, color: active ? "#166534" : "#666" }}>
-                          {active ? "เลือกแล้ว" : "กดเพื่อเลือก"}
-                        </div>
-                      </div>
+        <div className="card" style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontWeight: 800 }}>ข้อมูลต้นทาง</div>
 
-                      <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
-                        {s.farm_code || "-"}
-                        {s.farm_name ? ` - ${s.farm_name}` : ""}
-                        {s.house_no ? ` | บ้าน ${s.house_no}` : ""}
-                        {s.block ? ` | Block ${s.block}` : ""}
-                      </div>
-                    </button>
-                  );
-                })
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 10,
+            }}
+          >
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                วันคัด
+              </div>
+              <input
+                type="date"
+                value={selectedDate}
+                max={todayYmdLocal()}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                style={fullInputStyle}
+              />
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                แสดงผล: {formatDateDisplay(selectedDate)}
+              </div>
+            </div>
+
+            <div style={{ minWidth: 0 }}>
+              {fromFarm && !fromPickerOpen ? (
+                <FarmSelectedCard
+                  title="ฟาร์มต้นทาง"
+                  farm={fromFarm}
+                  subtitle={
+                    fromFarm?.flock
+                      ? `Flock: ${fromFarm.flock}${
+                          Number.isFinite(fromFarm?.swine_count)
+                            ? ` | คัดได้ ${fromFarm.swine_count} ตัว`
+                            : ""
+                        }`
+                      : Number.isFinite(fromFarm?.swine_count)
+                      ? `คัดได้ ${fromFarm.swine_count} ตัว`
+                      : ""
+                  }
+                  onChange={() => setFromPickerOpen(true)}
+                />
               ) : (
-                <div style={{ padding: 12, color: "#666" }}>ไม่พบเบอร์หมู</div>
+                <div
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 14,
+                    padding: 12,
+                    display: "grid",
+                    gap: 10,
+                    minHeight: "100%",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      flexWrap: "wrap",
+                      alignItems: "center",
+                    }}
+                  >
+                    <div style={{ fontWeight: 900 }}>ฟาร์มต้นทาง</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <button type="button" onClick={loadFromFarms} disabled={fromLoading}>
+                        {fromLoading ? "กำลังโหลด..." : "รีเฟรช"}
+                      </button>
+                      <button type="button" onClick={clearFromFarm} disabled={fromLoading}>
+                        ล้างค่า
+                      </button>
+                    </div>
+                  </div>
+
+                  <input
+                    value={fromQ}
+                    onChange={(e) => setFromQ(e.target.value)}
+                    placeholder="พิมพ์ค้นหา farm code / farm name / flock…"
+                    style={fullInputStyle}
+                  />
+
+                  <div
+                    style={{
+                      border: "1px solid #ddd",
+                      borderRadius: 12,
+                      overflow: "hidden",
+                      maxHeight: 280,
+                      overflowY: "auto",
+                    }}
+                  >
+                    {fromLoading ? (
+                      <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>
+                    ) : filteredFromOptions.length > 0 ? (
+                      filteredFromOptions.map((f) => {
+                        const active =
+                          clean(fromFarm?.farm_code) === clean(f.farm_code) &&
+                          clean(fromFarm?.flock) === clean(f.flock);
+
+                        return (
+                          <button
+                            key={`${f.farm_code}__${f.flock || "-"}__${f.farm_name}`}
+                            type="button"
+                            onClick={() => void handleSelectFromFarm(f)}
+                            style={{
+                              width: "100%",
+                              textAlign: "left",
+                              padding: "10px 12px",
+                              border: 0,
+                              borderBottom: "1px solid #eee",
+                              background: active ? "#fef9c3" : "white",
+                              cursor: "pointer",
+                            }}
+                          >
+                            <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                              {f.farm_code} - {f.farm_name}
+                            </div>
+                            <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
+                              Flock: <b>{f.flock || "-"}</b>
+                              {Number.isFinite(f.swine_count) ? (
+                                <>
+                                  {" "}
+                                  | คัดได้ <b>{f.swine_count}</b> ตัว
+                                </>
+                              ) : null}
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div style={{ padding: 12, color: "#666" }}>ไม่พบฟาร์มต้นทาง</div>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
-          ) : null}
-        </div>
-      ) : null}
 
-      {toFarmId && !toPickerOpen ? (
-        <FarmSelectedCard
-          title="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
-          farm={toFarm}
-          onChange={() => setToPickerOpen(true)}
-        />
-      ) : (
-        <FarmPickerInlineAdd
-          label="ฟาร์มปลายทาง (ส่งไป) — เพิ่มใหม่ได้"
-          value={toFarmId}
-          excludeId={null}
-          onChange={onChangeToFarm}
-          requireBranch={false}
-        />
-      )}
+            <div style={{ minWidth: 0 }}>
+              {toFarmId && !toPickerOpen ? (
+                <FarmSelectedCard
+                  title="ฟาร์มปลายทาง"
+                  farm={toFarm}
+                  onChange={() => setToPickerOpen(true)}
+                />
+              ) : (
+                <FarmPickerInlineAdd
+                  label="ฟาร์มปลายทาง"
+                  value={toFarmId}
+                  excludeId={null}
+                  onChange={onChangeToFarm}
+                  requireBranch={false}
+                />
+              )}
+            </div>
 
-      {isSameFarm ? (
-        <div style={{ color: "crimson", fontWeight: 700 }}>
-          ห้ามเลือกฟาร์มต้นทางและปลายทางซ้ำกัน
-        </div>
-      ) : null}
-
-      <label style={{ display: "grid", gap: 6 }}>
-        หมายเหตุ
-        <textarea
-          value={remark}
-          onChange={(e) => {
-            setMsg("");
-            setRemark(e.target.value);
-          }}
-          rows={3}
-          style={{ padding: 10, borderRadius: 10, border: "1px solid #ddd" }}
-        />
-      </label>
-
-      {hardErrors.length > 0 ? (
-        <div
-          style={{
-            padding: 12,
-            borderRadius: 12,
-            background: "#fff7ed",
-            border: "1px solid #fdba74",
-            color: "#9a3412",
-          }}
-        >
-          <div style={{ fontWeight: 900, marginBottom: 6 }}>ยัง Save Draft ไม่ได้</div>
-          <div style={{ display: "grid", gap: 4 }}>
-            {hardErrors.map((x, i) => (
-              <div key={i}>- {x}</div>
-            ))}
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                เล้าต้นทาง
+              </div>
+              <select
+                value={selectedHouse}
+                onChange={(e) => void handleChangeHouse(e.target.value)}
+                disabled={!fromFarm?.farm_code || availableLoading || houseOptions.length === 0}
+                style={fullInputStyle}
+              >
+                <option value="">
+                  {!fromFarm?.farm_code
+                    ? "เลือกฟาร์มต้นทางก่อน"
+                    : availableLoading
+                    ? "กำลังโหลด..."
+                    : "เลือกเล้า"}
+                </option>
+                {houseOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                ระบบจะเลือกเล้าแรกให้อัตโนมัติถ้ามีข้อมูล
+              </div>
+            </div>
           </div>
         </div>
-      ) : null}
 
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <button type="button" onClick={saveDraft} disabled={!canSave}>
-          {saving ? "กำลังบันทึก..." : "Save Draft"}
-        </button>
+        <div className="card" style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontWeight: 800 }}>เลือกเบอร์หมู</div>
 
-        <button
-          type="button"
-          onClick={() => {
-            if (lastDraftId) {
-              nav(`/edit-shipment?id=${encodeURIComponent(lastDraftId)}`);
-            } else {
-              nav("/edit-shipment");
-            }
-          }}
-        >
-          {lastDraftId ? "เปิด Draft ที่เพิ่งบันทึก" : "ไปหน้า Edit Draft"}
-        </button>
-      </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+              gap: 10,
+            }}
+          >
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                ค้นหาเบอร์หมู
+              </div>
+              <input
+                value={swineQ}
+                onChange={(e) => {
+                  setSwineQ(e.target.value);
+                  setSelectedCandidateSwineId("");
+                }}
+                placeholder="พิมพ์ swine code..."
+                disabled={!selectedHouse || availableLoading}
+                style={fullInputStyle}
+              />
+            </div>
 
-      <div style={{ color: "#666", fontSize: 12, lineHeight: 1.7 }}>
-        ถ้ามี Draft เดิมของ user คนเดิมในวันคัด + ต้นทาง + ปลายทาง เดียวกัน
-        ระบบจะใช้ draft เดิม แล้วลบรายการหมูเดิมใน draft นั้นก่อน จากนั้น insert รายการใหม่แทน
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                เลือกเบอร์หมู
+              </div>
+              <select
+                value={selectedCandidateSwineId}
+                onChange={(e) => setSelectedCandidateSwineId(e.target.value)}
+                disabled={!selectedHouse || availableLoading}
+                style={fullInputStyle}
+              >
+                <option value="">
+                  {!selectedHouse
+                    ? "เลือกเล้าก่อน"
+                    : availableLoading
+                    ? "กำลังโหลด..."
+                    : "เลือกเบอร์หมู"}
+                </option>
+                {filteredAvailableSwines.map((swine) => (
+                  <option key={swine.id} value={swine.id}>
+                    {swine.swine_code}
+                    {clean(swine.house_no) ? ` | เล้า ${clean(swine.house_no)}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                เต้านมซ้าย
+              </div>
+              <input
+                value={teatsLeft}
+                onChange={(e) => setTeatsLeft(e.target.value)}
+                placeholder="เต้านมซ้าย"
+                inputMode="numeric"
+                style={smallInputStyle}
+              />
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                เต้านมขวา
+              </div>
+              <input
+                value={teatsRight}
+                onChange={(e) => setTeatsRight(e.target.value)}
+                placeholder="เต้านมขวา"
+                inputMode="numeric"
+                style={smallInputStyle}
+              />
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                น้ำหนัก
+              </div>
+              <input
+                value={weight}
+                onChange={(e) => setWeight(e.target.value)}
+                placeholder="น้ำหนัก"
+                inputMode="decimal"
+                style={smallInputStyle}
+              />
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                Backfat
+              </div>
+              <input
+                value={backfat}
+                onChange={(e) => setBackfat(e.target.value)}
+                placeholder="Backfat"
+                inputMode="decimal"
+                style={smallInputStyle}
+              />
+            </div>
+          </div>
+
+          {selectedCandidateSwine ? (
+            <div
+              style={{
+                border: "1px solid #dbeafe",
+                borderRadius: 12,
+                padding: 10,
+                background: "#f8fbff",
+              }}
+            >
+              <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                เล้า: {clean(selectedCandidateSwine.house_no) || "-"} | Flock:{" "}
+                {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
+                {formatDateDisplay(selectedCandidateSwine.birth_date)}
+              </div>
+            </div>
+          ) : null}
+
+          <div>
+            <button
+              className="linkbtn"
+              type="button"
+              onClick={() => void addToPickedList()}
+              disabled={!canAddToList}
+            >
+              บันทึกเข้า list
+            </button>
+          </div>
+        </div>
+
+        <div className="card" style={{ display: "grid", gap: 12 }}>
+          <div style={{ fontWeight: 800 }}>เบอร์ที่เลือกแล้ว ({pickedRows.length})</div>
+
+          {pickedRows.length === 0 ? (
+            <div className="small" style={{ color: "#666" }}>
+              ยังไม่มีรายการ
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {pickedRows.map((row, idx) => (
+                <div
+                  key={row.temp_id}
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 14,
+                    padding: 12,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                  }}
+                >
+                  <div style={{ fontWeight: 800 }}>
+                    #{idx + 1} — {row.swine_code}
+                  </div>
+
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={() => void removePickedRow(row.temp_id)}
+                    disabled={savingDraft}
+                  >
+                    ลบออก
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card" style={{ display: "grid", gap: 10 }}>
+          <div style={{ fontWeight: 800 }}>หมายเหตุ</div>
+          <textarea
+            value={remark}
+            onChange={(e) => setRemark(e.target.value)}
+            rows={3}
+            style={{ ...fullInputStyle, resize: "vertical" }}
+            placeholder="ใส่หมายเหตุ (ถ้ามี)"
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => void handleSaveDraft()}
+            disabled={!canSaveDraft}
+          >
+            {savingDraft ? "Saving..." : "Save Draft"}
+          </button>
+
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => void handleBackOrCancel()}
+            disabled={savingDraft}
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     </div>
   );
