@@ -77,11 +77,6 @@ const inputStyle = {
   background: "#fff",
 };
 
-const readonlyInputStyle = {
-  ...inputStyle,
-  background: "#f9fafb",
-};
-
 function FarmSelectedCard({ title, farm, subtitle, onChange }) {
   return (
     <div style={{ ...cardStyle, display: "grid", gap: 8 }}>
@@ -273,6 +268,26 @@ export default function ShipmentCreatePage() {
       })
       .slice(0, 100);
   }, [allAvailableSwines, selectedHouse, pickedCodeSet, swineQ]);
+
+  useEffect(() => {
+    if (!selectedHouse) {
+      setSelectedCandidateSwineId("");
+      return;
+    }
+
+    if (!filteredAvailableSwines.length) {
+      setSelectedCandidateSwineId("");
+      return;
+    }
+
+    const exists = filteredAvailableSwines.some(
+      (x) => String(x.id) === String(selectedCandidateSwineId)
+    );
+
+    if (!exists) {
+      setSelectedCandidateSwineId(String(filteredAvailableSwines[0].id));
+    }
+  }, [selectedHouse, filteredAvailableSwines, selectedCandidateSwineId]);
 
   const selectedCandidateSwine = useMemo(() => {
     return (
@@ -744,13 +759,13 @@ export default function ShipmentCreatePage() {
       >
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>Create Shipment</div>
-          <div className="small" style={{ wordBreak: "break-word", color: "#6b7280" }}>
+          <div style={{ wordBreak: "break-word", color: "#6b7280", fontSize: 13 }}>
             mobile-first • เลือกเล้าก่อนค่อยเลือกเบอร์หมู • เข้า list แล้ว reserve ทันที
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button className="linkbtn" type="button" onClick={() => void handleBackOrCancel()}>
+          <button type="button" onClick={() => void handleBackOrCancel()}>
             Back / Cancel
           </button>
         </div>
@@ -968,7 +983,6 @@ export default function ShipmentCreatePage() {
                 value={swineQ}
                 onChange={(e) => {
                   setSwineQ(e.target.value);
-                  setSelectedCandidateSwineId("");
                 }}
                 placeholder={!selectedHouse ? "เลือกเล้าก่อน" : "พิมพ์ swine code..."}
                 disabled={!selectedHouse || availableLoading}
@@ -978,26 +992,49 @@ export default function ShipmentCreatePage() {
 
             <div>
               <div style={labelStyle}>เลือกเบอร์หมู</div>
-              <select
-                value={selectedCandidateSwineId}
-                onChange={(e) => setSelectedCandidateSwineId(e.target.value)}
-                disabled={!selectedHouse || availableLoading}
-                style={inputStyle}
-              >
-                <option value="">
-                  {!selectedHouse
-                    ? "เลือกเล้าก่อน"
-                    : availableLoading
-                    ? "กำลังโหลด..."
-                    : "เลือกเบอร์หมู"}
-                </option>
-                {filteredAvailableSwines.map((swine) => (
-                  <option key={swine.id} value={swine.id}>
-                    {swine.swine_code}
-                    {clean(swine.house_no) ? ` | เล้า ${clean(swine.house_no)}` : ""}
-                  </option>
-                ))}
-              </select>
+
+              {!selectedHouse ? (
+                <div style={{ color: "#6b7280", fontSize: 13 }}>เลือกเล้าก่อน</div>
+              ) : availableLoading ? (
+                <div style={{ color: "#6b7280", fontSize: 13 }}>กำลังโหลด...</div>
+              ) : filteredAvailableSwines.length === 0 ? (
+                <div style={{ color: "#6b7280", fontSize: 13 }}>ไม่พบเบอร์หมู</div>
+              ) : (
+                <div
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    maxHeight: 220,
+                    overflowY: "auto",
+                    background: "#fff",
+                  }}
+                >
+                  {filteredAvailableSwines.map((swine) => {
+                    const active = String(selectedCandidateSwineId) === String(swine.id);
+
+                    return (
+                      <button
+                        key={swine.id}
+                        type="button"
+                        onClick={() => setSelectedCandidateSwineId(String(swine.id))}
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 12px",
+                          border: 0,
+                          borderBottom: "1px solid #f3f4f6",
+                          background: active ? "#eff6ff" : "#fff",
+                          cursor: "pointer",
+                          fontWeight: active ? 800 : 500,
+                        }}
+                      >
+                        {swine.swine_code}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {selectedCandidateSwine ? (
@@ -1011,8 +1048,7 @@ export default function ShipmentCreatePage() {
               >
                 <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
                 <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12, lineHeight: 1.6 }}>
-                  เล้า: {clean(selectedCandidateSwine.house_no) || "-"} | Flock:{" "}
-                  {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
+                  Flock: {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
                   {formatDateDisplay(selectedCandidateSwine.birth_date)}
                 </div>
               </div>
@@ -1064,7 +1100,6 @@ export default function ShipmentCreatePage() {
 
             <div>
               <button
-                className="linkbtn"
                 type="button"
                 onClick={() => void addToPickedList()}
                 disabled={!canAddToList}
@@ -1103,7 +1138,6 @@ export default function ShipmentCreatePage() {
                   </div>
 
                   <button
-                    className="linkbtn"
                     type="button"
                     onClick={() => void removePickedRow(row.temp_id)}
                     disabled={savingDraft || busyRelease}
@@ -1135,7 +1169,6 @@ export default function ShipmentCreatePage() {
           }}
         >
           <button
-            className="linkbtn"
             type="button"
             onClick={() => void handleSaveDraft()}
             disabled={!canSaveDraft}
@@ -1145,7 +1178,6 @@ export default function ShipmentCreatePage() {
           </button>
 
           <button
-            className="linkbtn"
             type="button"
             onClick={() => void handleBackOrCancel()}
             disabled={savingDraft || busyRelease}
