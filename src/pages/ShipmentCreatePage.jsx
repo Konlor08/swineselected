@@ -1,5 +1,3 @@
-// src/pages/ShipmentCreatePage.jsx
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -578,9 +576,7 @@ export default function ShipmentCreatePage() {
           await releaseCurrentDraftReservations("change_from_farm");
           try {
             await updateDraftReservationStatus(draftShipmentId, "cancelled");
-          } catch {
-            // ignore
-          }
+          } catch {}
         } else {
           setPickedRows([]);
           resetCandidateForm();
@@ -604,9 +600,7 @@ export default function ShipmentCreatePage() {
         await releaseCurrentDraftReservations("clear_from_farm");
         try {
           await updateDraftReservationStatus(draftShipmentId, "cancelled");
-        } catch {
-          // ignore
-        }
+        } catch {}
       } else {
         setPickedRows([]);
         resetCandidateForm();
@@ -638,9 +632,7 @@ export default function ShipmentCreatePage() {
           await releaseCurrentDraftReservations("change_house");
           try {
             await updateDraftReservationStatus(draftShipmentId, "released");
-          } catch {
-            // ignore
-          }
+          } catch {}
         } else {
           setPickedRows([]);
           resetCandidateForm();
@@ -759,12 +751,10 @@ export default function ShipmentCreatePage() {
         await releaseCurrentDraftReservations("cancel_create_page");
         try {
           await updateDraftReservationStatus(draftShipmentId, "cancelled");
-        } catch {
-          // ignore
-        }
+        } catch {}
       }
 
-      nav(-1);
+      nav("/user-home", { replace: true });
     } catch (e) {
       console.error("handleBackOrCancel error:", e);
       setMsg(e?.message || "ยกเลิกไม่สำเร็จ");
@@ -858,7 +848,7 @@ export default function ShipmentCreatePage() {
       if (resequenceRes.error) throw resequenceRes.error;
 
       leavingRef.current = true;
-      nav("/", {
+      nav("/user-home", {
         replace: true,
         state: {
           msg: `บันทึก Draft สำเร็จ ✅ (${shipmentId})`,

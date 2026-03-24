@@ -1,7 +1,7 @@
 // src/pages/UserHomePage.jsx
 
 import React, { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
 
@@ -79,6 +79,7 @@ function ActionCard({ title, desc, buttonText, onClick, disabled = false }) {
 
 export default function UserHomePage() {
   const nav = useNavigate();
+  const location = useLocation();
 
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
@@ -145,6 +146,18 @@ export default function UserHomePage() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (location.state?.msg) {
+      setMsg(location.state.msg);
+
+      try {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      } catch (e) {
+        derr("replaceState error", e);
+      }
+    }
+  }, [location.state]);
 
   useEffect(() => {
     dlog("role changed", { myRole });
@@ -332,7 +345,7 @@ export default function UserHomePage() {
             <br />
             2) เลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง
             <br />
-            3) เลือก House และรายการหมู แล้วกด Save Draft หรือ Submit
+            3) เลือก House และรายการหมู แล้วกด Save Draft
             <br />
             4) ถ้าต้องการกลับมาแก้ draft หรือเพิ่มหมูภายหลัง ให้เข้า <b>Edit Draft</b>
           </div>
