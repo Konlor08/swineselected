@@ -293,8 +293,9 @@ export default function ExportCsvPage() {
   const isActive = myProfile?.is_active !== false;
   const canUsePage = isActive && (isAdmin || isUser);
 
+  // user และ admin เลือกช่วงวันได้เหมือนกัน
   const effectiveDateFrom = dateFrom;
-  const effectiveDateTo = isAdmin ? dateTo : dateFrom;
+  const effectiveDateTo = dateTo;
 
   const myScopeKeySet = useMemo(() => {
     return new Set(
@@ -350,8 +351,7 @@ export default function ExportCsvPage() {
         )
       : Boolean(
           dateRangeValid &&
-            effectiveDateFrom &&
-            effectiveDateTo &&
+            effectiveDateFrom === effectiveDateTo &&
             fromFarmCode &&
             toFarmId &&
             myFarmCodeSet.has(clean(fromFarmCode))
@@ -1030,7 +1030,9 @@ export default function ExportCsvPage() {
         }));
 
         const fromFarmText =
-          fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || clean(fromFarmCode) || "all";
+          fromFarmOptions.find((x) => x.value === fromFarmCode)?.code ||
+          clean(fromFarmCode) ||
+          "all";
 
         const dateText =
           effectiveDateFrom === effectiveDateTo
@@ -1057,9 +1059,9 @@ export default function ExportCsvPage() {
         วันที่คัด: r.selected_date,
         ฟาร์มที่คัด: r.from_farm_name,
         from_flock: r.from_flock,
+        ฟาร์มปลายทาง: r.to_farm_name,
         โรงเรือน: r.house_no,
         flock: r.flock,
-        ฟาร์มปลายทาง: r.to_farm_name,
         เบอร์หมู: r.swine_code,
         วันเกิด: r.birth_date,
         birth_lot: r.birth_lot,
@@ -1078,10 +1080,14 @@ export default function ExportCsvPage() {
       }));
 
       const fromFarmText =
-        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || clean(fromFarmCode) || "all";
+        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code ||
+        clean(fromFarmCode) ||
+        "all";
 
       const toFarmText =
-        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code || clean(toFarmId) || "all";
+        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code ||
+        clean(toFarmId) ||
+        "all";
 
       const dateText =
         effectiveDateFrom === effectiveDateTo
@@ -1198,13 +1204,6 @@ export default function ExportCsvPage() {
     loadToFarmOptions,
     refreshPreviewRows,
   ]);
-
-  function handleSingleDateChange(e) {
-    const value = e.target.value;
-    setDateFrom(value);
-    setDateTo(value);
-    resetSelectionsAfterDateChange();
-  }
 
   function handleDateFromChange(e) {
     const value = e.target.value;
@@ -1484,71 +1483,48 @@ export default function ExportCsvPage() {
               </select>
             </label>
 
-            {!isAdmin ? (
-              <label style={{ display: "block", minWidth: 0 }}>
-                <div
-                  style={{
-                    marginBottom: 6,
-                    fontSize: 14,
-                    fontWeight: 700,
-                    color: "#334155",
-                  }}
-                >
-                  วันที่คัด
-                </div>
-                <input
-                  type="date"
-                  value={dateFrom}
-                  onChange={handleSingleDateChange}
-                  style={inputStyle}
-                />
-              </label>
-            ) : (
-              <>
-                <label style={{ display: "block", minWidth: 0 }}>
-                  <div
-                    style={{
-                      marginBottom: 6,
-                      fontSize: 14,
-                      fontWeight: 700,
-                      color: "#334155",
-                    }}
-                  >
-                    วันที่เริ่ม
-                  </div>
-                  <input
-                    type="date"
-                    value={dateFrom}
-                    onChange={handleDateFromChange}
-                    style={inputStyle}
-                  />
-                </label>
+            <label style={{ display: "block", minWidth: 0 }}>
+              <div
+                style={{
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#334155",
+                }}
+              >
+                วันที่เริ่ม
+              </div>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={handleDateFromChange}
+                style={inputStyle}
+              />
+            </label>
 
-                <label style={{ display: "block", minWidth: 0 }}>
-                  <div
-                    style={{
-                      marginBottom: 6,
-                      fontSize: 14,
-                      fontWeight: 700,
-                      color: "#334155",
-                    }}
-                  >
-                    วันที่สิ้นสุด
-                  </div>
-                  <input
-                    type="date"
-                    value={dateTo}
-                    onChange={handleDateToChange}
-                    style={inputStyle}
-                  />
-                  {!dateRangeValid ? (
-                    <div style={{ marginTop: 6, fontSize: 12, color: "#dc2626" }}>
-                      วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่ม
-                    </div>
-                  ) : null}
-                </label>
-              </>
-            )}
+            <label style={{ display: "block", minWidth: 0 }}>
+              <div
+                style={{
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#334155",
+                }}
+              >
+                วันที่สิ้นสุด
+              </div>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={handleDateToChange}
+                style={inputStyle}
+              />
+              {!dateRangeValid ? (
+                <div style={{ marginTop: 6, fontSize: 12, color: "#dc2626" }}>
+                  วันที่สิ้นสุดต้องไม่น้อยกว่าวันที่เริ่ม
+                </div>
+              ) : null}
+            </label>
 
             <label style={{ display: "block", minWidth: 0 }}>
               <div
@@ -1734,6 +1710,20 @@ export default function ExportCsvPage() {
               </button>
             ) : null}
           </div>
+
+          {!isAdmin ? (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
+              User ดูข้อมูลได้ตามฟาร์ม + flock ที่เคยคัด และเลือกช่วงวันที่เพื่อตรวจสอบย้อนหลังได้
+              <br />
+              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทางกับฟาร์มปลายทาง
+            </div>
+          ) : (
+            <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
+              Admin ดูข้อมูลได้ทั้งหมด และเลือกช่วงวันที่ได้
+              <br />
+              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทางกับฟาร์มปลายทาง
+            </div>
+          )}
 
           {msg ? <div style={{ ...msgStyle, marginTop: 14 }}>{msg}</div> : null}
         </div>
