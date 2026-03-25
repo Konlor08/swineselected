@@ -310,6 +310,8 @@ export default function ExportCsvPage() {
   const [toFarmOptions, setToFarmOptions] = useState([]);
   const [previewRows, setPreviewRows] = useState([]);
   const [previewShipments, setPreviewShipments] = useState([]);
+  const [deliveryDateDrafts, setDeliveryDateDrafts] = useState({});
+  const [savingDeliveryDateMap, setSavingDeliveryDateMap] = useState({});
 
   const authSeqRef = useRef(0);
   const fromFarmReqRef = useRef(0);
@@ -387,6 +389,26 @@ export default function ExportCsvPage() {
 
   const showDeliveryDate = reportType === "raw" && Boolean(toFarmId);
 
+  const deliveryDateShipments = useMemo(() => {
+    if (reportType !== "raw" || !toFarmId) return [];
+
+    const rows = (previewShipments || []).filter(
+      (shipment) => clean(shipment?.to_farm_id) === clean(toFarmId)
+    );
+
+    return rows.slice().sort((a, b) => {
+      const da = String(a?.selected_date || "");
+      const db = String(b?.selected_date || "");
+      if (da !== db) return da.localeCompare(db);
+      return String(a?.shipment_no || a?.id || "").localeCompare(
+        String(b?.shipment_no || b?.id || "")
+      );
+    });
+  }, [previewShipments, reportType, toFarmId]);
+
+  const missingDeliveryDateCount = useMemo(() => {
+    return deliveryDateShipments.filter((shipment) => !clean(shipment?.delivery_date)).length;
+  }, [deliveryDateShipments]);
 
   const resetRuntimeState = useCallback(({ keepDates = true } = {}) => {
     setMsg("");
@@ -407,7 +429,94 @@ export default function ExportCsvPage() {
     setToFarmOptions([]);
     setPreviewRows([]);
     setPreviewShipments([]);
+    setDeliveryDateDrafts({});
+    setSavingDeliveryDateMap({});
   }, []);
+
+  useEffect(() => {
+    setDeliveryDateDrafts((prev) => {
+      const next = {};
+      const ids = new Set();
+
+      for (const shipment of deliveryDateShipments) {
+        const id = clean(shipment?.id);
+        if (!id) continue;
+        ids.add(id);
+        next[id] = Object.prototype.hasOwnProperty.call(prev || {}, id)
+          ? prev[id]
+          : clean(shipment?.delivery_date);
+      }
+
+      const prevKeys = Object.keys(prev || {});
+      const sameLength = prevKeys.length === ids.size;
+      const sameValues = sameLength && prevKeys.every((k) => ids.has(k) && next[k] === prev[k]);
+      return sameValues ? prev : next;
+    });
+  }, [deliveryDateShipments]);
+
+  const handleDeliveryDateDraftChange = useCallback((shipmentId, value) => {
+    const id = clean(shipmentId);
+    if (!id) return;
+
+    setDeliveryDateDrafts((prev) => ({
+      ...(prev || {}),
+      [id]: value,
+    }));
+  }, []);
+
+  const handleSaveDeliveryDate = useCallback(async (shipment) => {
+    const shipmentId = clean(shipment?.id);
+    const shipmentNo = clean(shipment?.shipment_no) || shipmentId;
+    const selectedDate = clean(shipment?.selected_date);
+    const targetToFarmId = clean(shipment?.to_farm_id);
+    const draftValue = clean(deliveryDateDrafts[shipmentId]);
+
+    if (!shipmentId) {
+      setMsg("ไม่พบ shipment ที่ต้องการบันทึกวันที่จัดส่ง");
+      return;
+    }
+
+    if (!targetToFarmId) {
+      setMsg("กรุณาเลือกหรือบันทึกฟาร์มปลายทางก่อน แล้วจึงเพิ่มวันที่จัดส่ง");
+      return;
+    }
+
+    if (!draftValue) {
+      setMsg("กรุณาเลือกวันที่จัดส่งก่อนบันทึก");
+      return;
+    }
+
+    if (selectedDate && draftValue < selectedDate) {
+      setMsg(`วันที่จัดส่งของ ${shipmentNo} ต้องไม่น้อยกว่าวันที่คัด (${selectedDate})`);
+      return;
+    }
+
+    setSavingDeliveryDateMap((prev) => ({
+      ...(prev || {}),
+      [shipmentId]: true,
+    }));
+    setMsg("");
+
+    try {
+      const { error } = await supabase
+        .from("swine_shipments")
+        .update({ delivery_date: draftValue })
+        .eq("id", shipmentId);
+
+      if (error) throw error;
+
+      await refreshPreviewRows();
+      setMsg(`บันทึกวันที่จัดส่งของ ${shipmentNo} เรียบร้อยแล้ว`);
+    } catch (e) {
+      console.error("handleSaveDeliveryDate error:", e);
+      setMsg(e?.message || "บันทึกวันที่จัดส่งไม่สำเร็จ");
+    } finally {
+      setSavingDeliveryDateMap((prev) => ({
+        ...(prev || {}),
+        [shipmentId]: false,
+      }));
+    }
+  }, [deliveryDateDrafts, refreshPreviewRows]);
 
   useEffect(() => {
     function onResize() {
@@ -576,6 +685,8 @@ export default function ExportCsvPage() {
     setToFarmOptions([]);
     setPreviewRows([]);
     setPreviewShipments([]);
+    setDeliveryDateDrafts({});
+    setSavingDeliveryDateMap({});
     setMsg("");
   }, []);
 
@@ -1137,6 +1248,8 @@ export default function ExportCsvPage() {
     setMsg("");
     setPreviewRows([]);
     setPreviewShipments([]);
+    setDeliveryDateDrafts({});
+    setSavingDeliveryDateMap({});
 
     try {
       const { rows } = await refreshPreviewRows();
@@ -1931,6 +2044,132 @@ export default function ExportCsvPage() {
 
           {msg ? <div style={{ ...msgStyle, marginTop: 14 }}>{msg}</div> : null}
         </div>
+
+
+        {reportType === "raw" && toFarmId ? (
+          <div
+            style={{
+              ...cardStyle,
+              padding: isMobile ? 14 : 18,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: isMobile ? "stretch" : "center",
+                flexDirection: isMobile ? "column" : "row",
+                gap: 10,
+                marginBottom: 12,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 900, color: "#0f172a" }}>
+                  เพิ่มวันที่จัดส่ง
+                </div>
+                <div style={{ marginTop: 4, fontSize: 13, color: "#475569", lineHeight: 1.6 }}>
+                  เลือกฟาร์มปลายทางแล้ว จึงเพิ่มวันที่จัดส่งราย shipment ได้จากหน้านี้
+                  {missingDeliveryDateCount > 0
+                    ? ` · ยังไม่มีวันที่จัดส่ง ${missingDeliveryDateCount} shipment`
+                    : " · ทุก shipment มีวันที่จัดส่งแล้ว"}
+                </div>
+              </div>
+            </div>
+
+            {!deliveryDateShipments.length ? (
+              <div
+                style={{
+                  borderRadius: 14,
+                  padding: "12px 14px",
+                  border: "1px solid #e2e8f0",
+                  background: "#f8fafc",
+                  color: "#475569",
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                }}
+              >
+                ยังไม่มี shipment ตามเงื่อนไขที่เลือกสำหรับเพิ่มวันที่จัดส่ง กรุณากด “แสดงข้อมูล” ก่อน
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 900 }}>
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>เลข shipment</th>
+                      <th style={thStyle}>สถานะ</th>
+                      <th style={thStyle}>วันที่คัด</th>
+                      <th style={thStyle}>ฟาร์มปลายทาง</th>
+                      <th style={thStyle}>จำนวนตัว</th>
+                      <th style={thStyle}>วันที่จัดส่งปัจจุบัน</th>
+                      <th style={thStyle}>เพิ่ม/แก้วันที่จัดส่ง</th>
+                      <th style={thStyle}>บันทึก</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deliveryDateShipments.map((shipment) => {
+                      const shipmentId = clean(shipment?.id);
+                      const currentDeliveryDate = clean(shipment?.delivery_date);
+                      const draftValue = deliveryDateDrafts[shipmentId] ?? currentDeliveryDate;
+                      const saving = Boolean(savingDeliveryDateMap[shipmentId]);
+                      const selectedDate = clean(shipment?.selected_date);
+                      const itemCount = Array.isArray(shipment?.items) ? shipment.items.length : 0;
+                      const invalidDate = Boolean(draftValue && selectedDate && draftValue < selectedDate);
+                      const unchanged = clean(draftValue) === currentDeliveryDate;
+                      const canSaveRow = Boolean(
+                        shipmentId && clean(shipment?.to_farm_id) && draftValue && !invalidDate && !unchanged && !saving
+                      );
+
+                      return (
+                        <tr key={shipmentId}>
+                          <td style={tdStyle}>{shipment.shipment_no || shipmentId}</td>
+                          <td style={tdStyle}>
+                            <span style={statusBadgeStyle(shipment.status)}>{formatStatus(shipment.status)}</span>
+                          </td>
+                          <td style={tdStyle}>{shipment.selected_date || "-"}</td>
+                          <td style={tdStyle}>{shipment.to_farm?.farm_name || "-"}</td>
+                          <td style={tdStyle}>{itemCount}</td>
+                          <td style={tdStyle}>{currentDeliveryDate || "-"}</td>
+                          <td style={tdStyle}>
+                            <div style={{ display: "grid", gap: 6 }}>
+                              <input
+                                type="date"
+                                value={draftValue || ""}
+                                min={selectedDate || undefined}
+                                onChange={(e) => handleDeliveryDateDraftChange(shipmentId, e.target.value)}
+                                style={inputStyle}
+                              />
+                              {invalidDate ? (
+                                <div style={{ fontSize: 12, color: "#dc2626" }}>
+                                  วันที่จัดส่งต้องไม่น้อยกว่าวันที่คัด {selectedDate}
+                                </div>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td style={tdStyle}>
+                            <button
+                              type="button"
+                              onClick={() => handleSaveDeliveryDate(shipment)}
+                              disabled={!canSaveRow}
+                              style={{
+                                ...btnGreenStyle,
+                                minHeight: 38,
+                                padding: "8px 12px",
+                                opacity: canSaveRow ? 1 : 0.6,
+                                cursor: canSaveRow ? "pointer" : "not-allowed",
+                              }}
+                            >
+                              {saving ? "กำลังบันทึก..." : currentDeliveryDate ? "อัปเดต" : "บันทึก"}
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <div
           style={{
