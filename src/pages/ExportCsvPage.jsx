@@ -1,6 +1,6 @@
 // src/pages/ExportCsvPage.jsx
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
@@ -288,6 +288,11 @@ export default function ExportCsvPage() {
   const [toFarmOptions, setToFarmOptions] = useState([]);
   const [previewRows, setPreviewRows] = useState([]);
 
+  const authSeqRef = useRef(0);
+  const fromFarmReqRef = useRef(0);
+  const toFarmReqRef = useRef(0);
+  const previewReqRef = useRef(0);
+
   const isAdmin = String(myRole).toLowerCase() === "admin";
   const isUser = String(myRole).toLowerCase() === "user";
   const isActive = myProfile?.is_active !== false;
@@ -357,6 +362,27 @@ export default function ExportCsvPage() {
             myFarmCodeSet.has(clean(fromFarmCode))
         ));
 
+
+  const resetRuntimeState = useCallback(({ keepDates = true } = {}) => {
+    setMsg("");
+    setMyProfile(null);
+    setMyRole("");
+    setMyScope([]);
+    setReportType("raw");
+    if (!keepDates) {
+      const today = todayYmdLocal();
+      setDateFrom(today);
+      setDateTo(today);
+    }
+    setFromFarmCode("");
+    setToFarmId("");
+    setFromFarmQ("");
+    setToFarmQ("");
+    setFromFarmOptions([]);
+    setToFarmOptions([]);
+    setPreviewRows([]);
+  }, []);
+
   useEffect(() => {
     function onResize() {
       setIsMobile(window.innerWidth <= 768);
@@ -409,29 +435,32 @@ export default function ExportCsvPage() {
   }, []);
 
   useEffect(() => {
-    let ignore = false;
+    let alive = true;
 
-    async function init() {
+    async function initForCurrentSession() {
+      const runId = ++authSeqRef.current;
       setPageLoading(true);
       setMsg("");
+      setPreviewRows([]);
 
       try {
-        const { data, error } = await supabase.auth.getSession();
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
         if (error) throw error;
 
-        const uid = data?.session?.user?.id;
+        const uid = session?.user?.id || null;
         if (!uid) {
-          if (!ignore) {
-            setMyProfile(null);
-            setMyRole("");
-            setMyScope([]);
+          if (alive && authSeqRef.current === runId) {
+            resetRuntimeState();
             setMsg("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
           }
           return;
         }
 
         const profile = await fetchMyProfile(uid);
-        if (ignore) return;
+        if (!alive || authSeqRef.current !== runId) return;
 
         setMyProfile(profile || null);
         const role = String(profile?.role || "").toLowerCase();
@@ -445,31 +474,57 @@ export default function ExportCsvPage() {
 
         if (role === "admin") {
           setMyScope([]);
+          console.log("[ExportCsvPage] init profile", {
+            uid,
+            profileUserId: profile?.user_id || null,
+            role,
+            scopeSize: 0,
+          });
           return;
         }
 
         const scope = await loadMyFarmFlockScope(uid);
-        if (ignore) return;
+        if (!alive || authSeqRef.current !== runId) return;
         setMyScope(scope);
+        console.log("[ExportCsvPage] init profile", {
+          uid,
+          profileUserId: profile?.user_id || null,
+          role,
+          scopeSize: scope.length,
+          scope,
+        });
       } catch (e) {
         console.error("init ExportCsvPage error:", e);
-        if (!ignore) {
-          setMyProfile(null);
-          setMyRole("");
-          setMyScope([]);
+        if (alive && authSeqRef.current === runId) {
+          resetRuntimeState();
           setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
         }
       } finally {
-        if (!ignore) setPageLoading(false);
+        if (alive && authSeqRef.current === runId) {
+          setPageLoading(false);
+        }
       }
     }
 
-    void init();
+    void initForCurrentSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log("[ExportCsvPage] auth changed", {
+        event,
+        uid: session?.user?.id || null,
+      });
+      resetRuntimeState();
+      setPageLoading(true);
+      void initForCurrentSession();
+    });
 
     return () => {
-      ignore = true;
+      alive = false;
+      subscription?.unsubscribe?.();
     };
-  }, [loadMyFarmFlockScope]);
+  }, [loadMyFarmFlockScope, resetRuntimeState]);
 
   const filterShipmentsByScope = useCallback(
     (shipments) => {
@@ -484,6 +539,9 @@ export default function ExportCsvPage() {
   );
 
   const resetSelectionsAfterDateChange = useCallback(() => {
+    previewReqRef.current += 1;
+    fromFarmReqRef.current += 1;
+    toFarmReqRef.current += 1;
     setFromFarmCode("");
     setToFarmId("");
     setFromFarmQ("");
@@ -495,8 +553,10 @@ export default function ExportCsvPage() {
   }, []);
 
   const loadFromFarmOptions = useCallback(async () => {
+    const reqId = ++fromFarmReqRef.current;
+
     if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
-      setFromFarmOptions([]);
+      if (reqId === fromFarmReqRef.current) setFromFarmOptions([]);
       return;
     }
 
@@ -533,13 +593,15 @@ export default function ExportCsvPage() {
         }
       }
 
+      if (reqId !== fromFarmReqRef.current) return;
       setFromFarmOptions(Array.from(map.values()).sort(sortByLabelTh));
     } catch (e) {
       console.error("loadFromFarmOptions error:", e);
+      if (reqId !== fromFarmReqRef.current) return;
       setFromFarmOptions([]);
       setMsg(e?.message || "โหลดรายการฟาร์มที่คัดไม่สำเร็จ");
     } finally {
-      setFromFarmLoading(false);
+      if (reqId === fromFarmReqRef.current) setFromFarmLoading(false);
     }
   }, [
     dateRangeValid,
@@ -550,6 +612,8 @@ export default function ExportCsvPage() {
   ]);
 
   const loadToFarmOptions = useCallback(async () => {
+    const reqId = ++toFarmReqRef.current;
+
     if (
       reportType !== "raw" ||
       !dateRangeValid ||
@@ -557,7 +621,7 @@ export default function ExportCsvPage() {
       !effectiveDateTo ||
       !fromFarmCode
     ) {
-      setToFarmOptions([]);
+      if (reqId === toFarmReqRef.current) setToFarmOptions([]);
       return;
     }
 
@@ -605,13 +669,15 @@ export default function ExportCsvPage() {
         }
       }
 
+      if (reqId !== toFarmReqRef.current) return;
       setToFarmOptions(Array.from(map.values()).sort(sortByLabelTh));
     } catch (e) {
       console.error("loadToFarmOptions error:", e);
+      if (reqId !== toFarmReqRef.current) return;
       setToFarmOptions([]);
       setMsg(e?.message || "โหลดรายการฟาร์มปลายทางไม่สำเร็จ");
     } finally {
-      setToFarmLoading(false);
+      if (reqId === toFarmReqRef.current) setToFarmLoading(false);
     }
   }, [
     reportType,
@@ -961,23 +1027,57 @@ export default function ExportCsvPage() {
   ]);
 
   const refreshPreviewRows = useCallback(async () => {
+    const reqId = ++previewReqRef.current;
+
     if (reportType === "not_selected") {
       const rows = await fetchNotSelectedRows();
-      setPreviewRows(rows);
+      if (reqId === previewReqRef.current) {
+        setPreviewRows(rows);
+        console.log("[ExportCsvPage] preview:not_selected", {
+          uid: myProfile?.user_id || null,
+          myRole,
+          fromFarmCode,
+          toFarmId,
+          rows: rows.length,
+          scopeSize: myScope.length,
+        });
+      }
       return { shipments: [], rows };
     }
 
     const { shipments, swineMap, heatMap } = await fetchExportBaseData();
     const rows = buildFlatRows(shipments, swineMap, heatMap);
-    setPreviewRows(rows);
+    if (reqId === previewReqRef.current) {
+      setPreviewRows(rows);
+      console.log("[ExportCsvPage] preview:raw", {
+        uid: myProfile?.user_id || null,
+        myRole,
+        fromFarmCode,
+        toFarmId,
+        scopeSize: myScope.length,
+        shipments: shipments.length,
+        shipmentIds: shipments.map((x) => x.id),
+        rows: rows.length,
+      });
+    }
     return { shipments, rows };
-  }, [reportType, fetchNotSelectedRows, fetchExportBaseData]);
+  }, [
+    reportType,
+    fetchNotSelectedRows,
+    fetchExportBaseData,
+    myProfile,
+    myRole,
+    fromFarmCode,
+    toFarmId,
+    myScope,
+  ]);
 
   const handlePreview = useCallback(async () => {
     if (!canPreviewExport) return;
 
     setPreviewLoading(true);
     setMsg("");
+    setPreviewRows([]);
 
     try {
       const { rows } = await refreshPreviewRows();
@@ -1218,6 +1318,8 @@ export default function ExportCsvPage() {
   }
 
   function handleFromFarmChange(e) {
+    previewReqRef.current += 1;
+    toFarmReqRef.current += 1;
     const value = e.target.value;
     setFromFarmCode(value);
     setToFarmId("");
@@ -1228,6 +1330,7 @@ export default function ExportCsvPage() {
   }
 
   function handleToFarmChange(e) {
+    previewReqRef.current += 1;
     const value = e.target.value;
     setToFarmId(value);
     setPreviewRows([]);
@@ -1283,6 +1386,31 @@ export default function ExportCsvPage() {
     if (effectiveDateFrom === effectiveDateTo) return effectiveDateFrom;
     return `${effectiveDateFrom} ถึง ${effectiveDateTo}`;
   }, [effectiveDateFrom, effectiveDateTo]);
+
+
+  useEffect(() => {
+    console.log("[ExportCsvPage] state", {
+      uid: myProfile?.user_id || null,
+      myRole,
+      reportType,
+      fromFarmCode,
+      toFarmId,
+      scopeSize: myScope.length,
+      previewRows: previewRows.length,
+      fromFarmOptions: fromFarmOptions.length,
+      toFarmOptions: toFarmOptions.length,
+    });
+  }, [
+    myProfile,
+    myRole,
+    reportType,
+    fromFarmCode,
+    toFarmId,
+    myScope,
+    previewRows,
+    fromFarmOptions,
+    toFarmOptions,
+  ]);
 
   if (pageLoading) {
     return (
@@ -1809,17 +1937,17 @@ export default function ExportCsvPage() {
                     <th style={thStyle}>เบอร์หมู</th>
                     <th style={thStyle}>วันเกิด</th>
                     <th style={thStyle}>birth_lot</th>
-                    <th style={thStyle}>อายุ(วัน)</th>
-                    <th style={thStyle}>เต้าซ้าย</th>
-                    <th style={thStyle}>เต้าขวา</th>
-                    <th style={thStyle}>backfat</th>
-                    <th style={thStyle}>น้ำหนัก</th>
                     <th style={thStyle}>heat</th>
                     <th style={thStyle}>total_heat_count</th>
                     <th style={thStyle}>heat_1_date</th>
                     <th style={thStyle}>heat_2_date</th>
                     <th style={thStyle}>heat_3_date</th>
                     <th style={thStyle}>heat_4_date</th>
+                    <th style={thStyle}>อายุ(วัน)</th>
+                    <th style={thStyle}>เต้าซ้าย</th>
+                    <th style={thStyle}>เต้าขวา</th>
+                    <th style={thStyle}>backfat</th>
+                    <th style={thStyle}>น้ำหนัก</th>
                     <th style={thStyle}>หมายเหตุ</th>
                   </tr>
                 )}
@@ -1867,7 +1995,7 @@ export default function ExportCsvPage() {
                       <td style={tdStyle}>{row.swine_code}</td>
                       <td style={tdStyle}>{row.birth_date}</td>
                       <td style={tdStyle}>{row.birth_lot}</td>
-                      <td style={tdStyle}>{row.age_days}</td>
+                       <td style={tdStyle}>{row.age_days}</td>
                       <td style={tdStyle}>{row.teats_left}</td>
                       <td style={tdStyle}>{row.teats_right}</td>
                       <td style={tdStyle}>{row.backfat}</td>
