@@ -1809,17 +1809,17 @@ export default function ExportCsvPage() {
                     <th style={thStyle}>เบอร์หมู</th>
                     <th style={thStyle}>วันเกิด</th>
                     <th style={thStyle}>birth_lot</th>
+                    <th style={thStyle}>อายุ(วัน)</th>
+                    <th style={thStyle}>เต้าซ้าย</th>
+                    <th style={thStyle}>เต้าขวา</th>
+                    <th style={thStyle}>backfat</th>
+                    <th style={thStyle}>น้ำหนัก</th>
                     <th style={thStyle}>heat</th>
                     <th style={thStyle}>total_heat_count</th>
                     <th style={thStyle}>heat_1_date</th>
                     <th style={thStyle}>heat_2_date</th>
                     <th style={thStyle}>heat_3_date</th>
                     <th style={thStyle}>heat_4_date</th>
-                    <th style={thStyle}>อายุ(วัน)</th>
-                    <th style={thStyle}>เต้าซ้าย</th>
-                    <th style={thStyle}>เต้าขวา</th>
-                    <th style={thStyle}>backfat</th>
-                    <th style={thStyle}>น้ำหนัก</th>
                     <th style={thStyle}>หมายเหตุ</th>
                   </tr>
                 )}
@@ -1867,17 +1867,17 @@ export default function ExportCsvPage() {
                       <td style={tdStyle}>{row.swine_code}</td>
                       <td style={tdStyle}>{row.birth_date}</td>
                       <td style={tdStyle}>{row.birth_lot}</td>
+                      <td style={tdStyle}>{row.age_days}</td>
+                      <td style={tdStyle}>{row.teats_left}</td>
+                      <td style={tdStyle}>{row.teats_right}</td>
+                      <td style={tdStyle}>{row.backfat}</td>
+                      <td style={tdStyle}>{row.weight}</td>
                       <td style={tdStyle}>{row.is_heat}</td>
                       <td style={tdStyle}>{row.total_heat_count}</td>
                       <td style={tdStyle}>{row.heat_1_date}</td>
                       <td style={tdStyle}>{row.heat_2_date}</td>
                       <td style={tdStyle}>{row.heat_3_date}</td>
                       <td style={tdStyle}>{row.heat_4_date}</td>
-                      <td style={tdStyle}>{row.age_days}</td>
-                      <td style={tdStyle}>{row.teats_left}</td>
-                      <td style={tdStyle}>{row.teats_right}</td>
-                      <td style={tdStyle}>{row.backfat}</td>
-                      <td style={tdStyle}>{row.weight}</td>
                       <td style={tdStyle}>{row.remark}</td>
                     </tr>
                   ))
