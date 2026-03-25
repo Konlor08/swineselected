@@ -17,6 +17,10 @@ function clean(v) {
   return String(v ?? "").trim();
 }
 
+function makeScopeKey(farmCode, flock) {
+  return `${clean(farmCode)}||${clean(flock)}`;
+}
+
 function escapeCsv(value) {
   const s = String(value ?? "");
   if (s.includes('"') || s.includes(",") || s.includes("\n")) {
@@ -266,8 +270,9 @@ export default function ExportCsvPage() {
 
   const [msg, setMsg] = useState("");
 
-  const [, setMyProfile] = useState(null);
+  const [myProfile, setMyProfile] = useState(null);
   const [myRole, setMyRole] = useState("");
+  const [myScope, setMyScope] = useState([]);
 
   const [reportType, setReportType] = useState("raw"); // raw | not_selected
 
@@ -284,10 +289,22 @@ export default function ExportCsvPage() {
   const [previewRows, setPreviewRows] = useState([]);
 
   const isAdmin = String(myRole).toLowerCase() === "admin";
-  const canUsePage = ["admin", "user"].includes(String(myRole).toLowerCase());
+  const isUser = String(myRole).toLowerCase() === "user";
+  const isActive = myProfile?.is_active !== false;
+  const canUsePage = isActive && (isAdmin || isUser);
 
   const effectiveDateFrom = dateFrom;
   const effectiveDateTo = isAdmin ? dateTo : dateFrom;
+
+  const myScopeKeySet = useMemo(() => {
+    return new Set(
+      (myScope || []).map((x) => makeScopeKey(x.farm_code, x.flock)).filter(Boolean)
+    );
+  }, [myScope]);
+
+  const myFarmCodeSet = useMemo(() => {
+    return new Set((myScope || []).map((x) => clean(x.farm_code)).filter(Boolean));
+  }, [myScope]);
 
   const dateRangeValid = useMemo(() => {
     return Boolean(
@@ -306,15 +323,20 @@ export default function ExportCsvPage() {
 
     return isAdmin
       ? Boolean(effectiveDateFrom && effectiveDateTo)
-      : Boolean(effectiveDateFrom && fromFarmCode && toFarmId);
+      : Boolean(
+          effectiveDateFrom &&
+            effectiveDateTo &&
+            fromFarmCode &&
+            myFarmCodeSet.has(clean(fromFarmCode))
+        );
   }, [
     dateRangeValid,
     reportType,
     effectiveDateFrom,
     effectiveDateTo,
     fromFarmCode,
-    toFarmId,
     isAdmin,
+    myFarmCodeSet,
   ]);
 
   const canSubmitRows =
@@ -326,7 +348,14 @@ export default function ExportCsvPage() {
             fromFarmCode &&
             toFarmId
         )
-      : Boolean(dateRangeValid && effectiveDateFrom && fromFarmCode && toFarmId));
+      : Boolean(
+          dateRangeValid &&
+            effectiveDateFrom &&
+            effectiveDateTo &&
+            fromFarmCode &&
+            toFarmId &&
+            myFarmCodeSet.has(clean(fromFarmCode))
+        ));
 
   useEffect(() => {
     function onResize() {
@@ -336,6 +365,47 @@ export default function ExportCsvPage() {
     onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  async function getCurrentUserId() {
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser();
+
+    if (error) throw error;
+    return user?.id || null;
+  }
+
+  const loadMyFarmFlockScope = useCallback(async (userId) => {
+    if (!userId) return [];
+
+    const { data, error } = await supabase
+      .from("swine_shipments")
+      .select("from_farm_code, from_flock")
+      .eq("created_by", userId)
+      .in("status", ["draft", "submitted", "issued"])
+      .order("from_farm_code", { ascending: true });
+
+    if (error) throw error;
+
+    const map = new Map();
+
+    for (const row of data || []) {
+      const farmCode = clean(row?.from_farm_code);
+      const flock = clean(row?.from_flock);
+      if (!farmCode || !flock) continue;
+
+      const key = makeScopeKey(farmCode, flock);
+      if (!map.has(key)) {
+        map.set(key, {
+          farm_code: farmCode,
+          flock,
+        });
+      }
+    }
+
+    return Array.from(map.values());
   }, []);
 
   useEffect(() => {
@@ -354,6 +424,7 @@ export default function ExportCsvPage() {
           if (!ignore) {
             setMyProfile(null);
             setMyRole("");
+            setMyScope([]);
             setMsg("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
           }
           return;
@@ -363,12 +434,29 @@ export default function ExportCsvPage() {
         if (ignore) return;
 
         setMyProfile(profile || null);
-        setMyRole(String(profile?.role || "").toLowerCase());
+        const role = String(profile?.role || "").toLowerCase();
+        setMyRole(role);
+
+        if (profile?.is_active === false) {
+          setMyScope([]);
+          setMsg("ผู้ใช้งานถูกปิดสิทธิ์");
+          return;
+        }
+
+        if (role === "admin") {
+          setMyScope([]);
+          return;
+        }
+
+        const scope = await loadMyFarmFlockScope(uid);
+        if (ignore) return;
+        setMyScope(scope);
       } catch (e) {
         console.error("init ExportCsvPage error:", e);
         if (!ignore) {
           setMyProfile(null);
           setMyRole("");
+          setMyScope([]);
           setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
         }
       } finally {
@@ -381,28 +469,18 @@ export default function ExportCsvPage() {
     return () => {
       ignore = true;
     };
-  }, []);
+  }, [loadMyFarmFlockScope]);
 
-  async function getCurrentUserId() {
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
+  const filterShipmentsByScope = useCallback(
+    (shipments) => {
+      if (isAdmin) return shipments || [];
+      if (!myScopeKeySet.size) return [];
 
-    if (error) throw error;
-    return user?.id || null;
-  }
-
-  const applyRoleFilter = useCallback(
-    async (query) => {
-      if (isAdmin) return query;
-
-      const userId = await getCurrentUserId();
-      if (!userId) return query.eq("created_by", "__no_user__");
-
-      return query.eq("created_by", userId);
+      return (shipments || []).filter((row) =>
+        myScopeKeySet.has(makeScopeKey(row?.from_farm_code, row?.from_flock))
+      );
     },
-    [isAdmin]
+    [isAdmin, myScopeKeySet]
   );
 
   const resetSelectionsAfterDateChange = useCallback(() => {
@@ -425,22 +503,22 @@ export default function ExportCsvPage() {
     setFromFarmLoading(true);
 
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from("swine_shipments")
-        .select("from_farm_code, from_farm_name")
+        .select("from_farm_code, from_farm_name, from_flock, status, selected_date")
         .gte("selected_date", effectiveDateFrom)
         .lte("selected_date", effectiveDateTo)
         .in("status", ["draft", "submitted", "issued"])
         .order("from_farm_name", { ascending: true });
 
-      query = await applyRoleFilter(query);
-
-      const { data, error } = await query;
       if (error) throw error;
+
+      const scopedRows = filterShipmentsByScope(data || []);
+      const rows = isAdmin ? data || [] : scopedRows;
 
       const map = new Map();
 
-      for (const row of data || []) {
+      for (const row of rows) {
         const code = clean(row?.from_farm_code);
         const name = clean(row?.from_farm_name);
         if (!code) continue;
@@ -464,10 +542,11 @@ export default function ExportCsvPage() {
       setFromFarmLoading(false);
     }
   }, [
-    applyRoleFilter,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
+    filterShipmentsByScope,
+    isAdmin,
   ]);
 
   const loadToFarmOptions = useCallback(async () => {
@@ -485,9 +564,11 @@ export default function ExportCsvPage() {
     setToFarmLoading(true);
 
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from("swine_shipments")
         .select(`
+          from_farm_code,
+          from_flock,
           to_farm_id,
           to_farm:master_farms!swine_shipments_to_farm_id_fkey (
             id,
@@ -501,14 +582,14 @@ export default function ExportCsvPage() {
         .in("status", ["draft", "submitted", "issued"])
         .order("created_at", { ascending: false });
 
-      query = await applyRoleFilter(query);
-
-      const { data, error } = await query;
       if (error) throw error;
+
+      const scopedRows = filterShipmentsByScope(data || []);
+      const rows = isAdmin ? data || [] : scopedRows;
 
       const map = new Map();
 
-      for (const row of data || []) {
+      for (const row of rows) {
         const id = clean(row?.to_farm_id);
         const farmCode = clean(row?.to_farm?.farm_code);
         const farmName = clean(row?.to_farm?.farm_name);
@@ -533,12 +614,13 @@ export default function ExportCsvPage() {
       setToFarmLoading(false);
     }
   }, [
-    applyRoleFilter,
     reportType,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
     fromFarmCode,
+    filterShipmentsByScope,
+    isAdmin,
   ]);
 
   useEffect(() => {
@@ -656,6 +738,7 @@ export default function ExportCsvPage() {
         selected_date,
         from_farm_code,
         from_farm_name,
+        from_flock,
         remark,
         to_farm_id,
         status,
@@ -688,13 +771,13 @@ export default function ExportCsvPage() {
       query = query.eq("to_farm_id", toFarmId);
     }
 
-    query = await applyRoleFilter(query);
-
     const { data, error } = await query;
     if (error) throw error;
 
+    const shipments = isAdmin ? data || [] : filterShipmentsByScope(data || []);
+
     const allCodes = [];
-    for (const shipment of data || []) {
+    for (const shipment of shipments) {
       for (const item of shipment.items || []) {
         if (item?.swine_code) allCodes.push(item.swine_code);
       }
@@ -705,15 +788,16 @@ export default function ExportCsvPage() {
       loadHeatMapByCodes(allCodes),
     ]);
 
-    return { shipments: data || [], swineMap, heatMap };
+    return { shipments, swineMap, heatMap };
   }, [
-    applyRoleFilter,
-    reportType,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
     fromFarmCode,
+    reportType,
     toFarmId,
+    isAdmin,
+    filterShipmentsByScope,
   ]);
 
   function buildFlatRows(shipments, swineMap, heatMap) {
@@ -739,6 +823,7 @@ export default function ExportCsvPage() {
           selected_date: shipment.selected_date || "",
           from_farm_code: shipment.from_farm_code || "",
           from_farm_name: shipment.from_farm_name || "",
+          from_flock: shipment.from_flock || "",
           house_no: swine.house_no || "",
           flock: swine.flock || "",
           to_farm_code: shipment.to_farm?.farm_code || "",
@@ -772,15 +857,25 @@ export default function ExportCsvPage() {
       return [];
     }
 
-    let shipmentQuery = supabase
+    const allowedScopeRows = isAdmin
+      ? []
+      : (myScope || []).filter((x) => clean(x.farm_code) === clean(fromFarmCode));
+
+    if (!isAdmin && allowedScopeRows.length === 0) {
+      return [];
+    }
+
+    const allowedFlockSet = new Set(
+      allowedScopeRows.map((x) => clean(x.flock)).filter(Boolean)
+    );
+
+    const { data: shipmentRows, error: shipmentError } = await supabase
       .from("swine_shipments")
       .select(`
-        id,
-        selected_date,
         from_farm_code,
-        from_farm_name,
-        source_house_no,
+        from_flock,
         status,
+        selected_date,
         items:swine_shipment_items (
           swine_code
         )
@@ -790,14 +885,17 @@ export default function ExportCsvPage() {
       .eq("from_farm_code", fromFarmCode)
       .in("status", ["draft", "submitted", "issued"]);
 
-    shipmentQuery = await applyRoleFilter(shipmentQuery);
-
-    const { data: shipmentRows, error: shipmentError } = await shipmentQuery;
     if (shipmentError) throw shipmentError;
+
+    const scopedShipments = isAdmin
+      ? shipmentRows || []
+      : (shipmentRows || []).filter((row) =>
+          allowedFlockSet.has(clean(row?.from_flock))
+        );
 
     const selectedCodeSet = new Set();
 
-    for (const shipment of shipmentRows || []) {
+    for (const shipment of scopedShipments) {
       for (const item of shipment.items || []) {
         const code = clean(item?.swine_code);
         if (code) selectedCodeSet.add(code);
@@ -814,7 +912,11 @@ export default function ExportCsvPage() {
 
     if (swineError) throw swineError;
 
-    const notSelected = (allSwines || []).filter((row) => {
+    const scopedSwines = isAdmin
+      ? allSwines || []
+      : (allSwines || []).filter((row) => allowedFlockSet.has(clean(row?.flock)));
+
+    const notSelected = scopedSwines.filter((row) => {
       const code = clean(row?.swine_code);
       if (!code) return false;
       return !selectedCodeSet.has(code);
@@ -850,11 +952,12 @@ export default function ExportCsvPage() {
       };
     });
   }, [
-    applyRoleFilter,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
     fromFarmCode,
+    isAdmin,
+    myScope,
   ]);
 
   const refreshPreviewRows = useCallback(async () => {
@@ -927,7 +1030,7 @@ export default function ExportCsvPage() {
         }));
 
         const fromFarmText =
-          fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || "all";
+          fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || clean(fromFarmCode) || "all";
 
         const dateText =
           effectiveDateFrom === effectiveDateTo
@@ -953,6 +1056,7 @@ export default function ExportCsvPage() {
         สถานะ: formatStatus(r.shipment_status),
         วันที่คัด: r.selected_date,
         ฟาร์มที่คัด: r.from_farm_name,
+        from_flock: r.from_flock,
         โรงเรือน: r.house_no,
         flock: r.flock,
         ฟาร์มปลายทาง: r.to_farm_name,
@@ -974,10 +1078,10 @@ export default function ExportCsvPage() {
       }));
 
       const fromFarmText =
-        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || "all";
+        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || clean(fromFarmCode) || "all";
 
       const toFarmText =
-        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code || "all";
+        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code || clean(toFarmId) || "all";
 
       const dateText =
         effectiveDateFrom === effectiveDateTo
@@ -1249,14 +1353,20 @@ export default function ExportCsvPage() {
                   Role: <b>{myRole || "-"}</b>
                   {isAdmin
                     ? " — export ได้ทุกข้อมูล และเลือกช่วงวันที่ได้"
-                    : " — export ได้เฉพาะข้อมูลที่ตัวเองสร้าง"}
+                    : " — export ได้เฉพาะฟาร์ม + flock ที่เคยคัด"}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
-                  ประเภทรายงาน: <b>{reportType === "not_selected" ? "เบอร์หมูที่ไม่ถูกคัด" : "Raw Data"}</b>
+                  ประเภทรายงาน:{" "}
+                  <b>{reportType === "not_selected" ? "เบอร์หมูที่ไม่ถูกคัด" : "Raw Data"}</b>
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   ช่วงวันที่: <b>{dateSummaryText}</b>
                 </div>
+                {!isAdmin ? (
+                  <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
+                    Scope farm+flock: <b>{myScope.length}</b> คู่
+                  </div>
+                ) : null}
               </div>
 
               <button
@@ -1478,9 +1588,9 @@ export default function ExportCsvPage() {
                     ? reportType === "not_selected"
                       ? "เลือกฟาร์มที่คัด"
                       : isAdmin
-                      ? "ทั้งหมด / เลือกฟาร์มที่คัด"
+                      ? "ทุกฟาร์มที่คัด / หรือเลือก 1 ฟาร์ม"
                       : "เลือกฟาร์มที่คัด"
-                    : "ไม่พบข้อมูลฟาร์มที่คัด"}
+                    : "ไม่พบฟาร์มที่คัด"}
                 </option>
                 {filteredFromFarmOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -1488,6 +1598,10 @@ export default function ExportCsvPage() {
                   </option>
                 ))}
               </select>
+
+              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+                ทั้งหมด {fromFarmOptions.length} รายการ / ตรงคำค้น {filteredFromFarmOptions.length} รายการ
+              </div>
             </label>
 
             {reportType === "raw" ? (
@@ -1527,9 +1641,9 @@ export default function ExportCsvPage() {
                       ? "กำลังโหลด..."
                       : filteredToFarmOptions.length
                       ? isAdmin
-                        ? "ทั้งหมด / เลือกฟาร์มปลายทาง"
+                        ? "ทุกฟาร์มปลายทาง / หรือเลือก 1 ฟาร์ม"
                         : "เลือกฟาร์มปลายทาง"
-                      : "ไม่พบข้อมูลฟาร์มปลายทาง"}
+                      : "ไม่พบฟาร์มปลายทาง"}
                   </option>
                   {filteredToFarmOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -1664,7 +1778,14 @@ export default function ExportCsvPage() {
             <table
               style={{
                 width: "100%",
-                minWidth: reportType === "not_selected" ? (isMobile ? 1100 : 1300) : isMobile ? 1800 : 2200,
+                minWidth:
+                  reportType === "not_selected"
+                    ? isMobile
+                      ? 1100
+                      : 1300
+                    : isMobile
+                    ? 1900
+                    : 2300,
                 borderCollapse: "collapse",
                 fontSize: 14,
               }}
@@ -1691,6 +1812,7 @@ export default function ExportCsvPage() {
                     <th style={thStyle}>สถานะ</th>
                     <th style={thStyle}>วันที่คัด</th>
                     <th style={thStyle}>ฟาร์มที่คัด</th>
+                    <th style={thStyle}>from_flock</th>
                     <th style={thStyle}>ฟาร์มปลายทาง</th>
                     <th style={thStyle}>โรงเรือน</th>
                     <th style={thStyle}>flock</th>
@@ -1716,7 +1838,7 @@ export default function ExportCsvPage() {
               <tbody>
                 {previewTop100.length === 0 ? (
                   <tr>
-                    <td colSpan={reportType === "not_selected" ? 13 : 21} style={emptyTdStyle}>
+                    <td colSpan={reportType === "not_selected" ? 13 : 22} style={emptyTdStyle}>
                       ยังไม่มีข้อมูลแสดง
                     </td>
                   </tr>
@@ -1748,6 +1870,7 @@ export default function ExportCsvPage() {
                       </td>
                       <td style={tdStyle}>{row.selected_date}</td>
                       <td style={tdStyle}>{row.from_farm_name}</td>
+                      <td style={tdStyle}>{row.from_flock}</td>
                       <td style={tdStyle}>{row.to_farm_name}</td>
                       <td style={tdStyle}>{row.house_no}</td>
                       <td style={tdStyle}>{row.flock}</td>
