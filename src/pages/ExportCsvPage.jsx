@@ -13,6 +13,10 @@ function todayYmdLocal() {
   return `${year}-${month}-${day}`;
 }
 
+function clean(v) {
+  return String(v ?? "").trim();
+}
+
 function escapeCsv(value) {
   const s = String(value ?? "");
   if (s.includes('"') || s.includes(",") || s.includes("\n")) {
@@ -220,6 +224,32 @@ const msgStyle = {
   wordBreak: "break-word",
 };
 
+const thStyle = {
+  textAlign: "left",
+  padding: "12px 12px",
+  borderBottom: "1px solid #e5e7eb",
+  fontSize: 13,
+  fontWeight: 800,
+  whiteSpace: "nowrap",
+  verticalAlign: "top",
+};
+
+const tdStyle = {
+  textAlign: "left",
+  padding: "10px 12px",
+  borderBottom: "1px solid #f1f5f9",
+  fontSize: 13,
+  color: "#0f172a",
+  verticalAlign: "top",
+};
+
+const emptyTdStyle = {
+  padding: 18,
+  textAlign: "center",
+  color: "#64748b",
+  fontSize: 14,
+};
+
 export default function ExportCsvPage() {
   const nav = useNavigate();
 
@@ -238,6 +268,8 @@ export default function ExportCsvPage() {
 
   const [, setMyProfile] = useState(null);
   const [myRole, setMyRole] = useState("");
+
+  const [reportType, setReportType] = useState("raw"); // raw | not_selected
 
   const [dateFrom, setDateFrom] = useState(todayYmdLocal());
   const [dateTo, setDateTo] = useState(todayYmdLocal());
@@ -265,18 +297,36 @@ export default function ExportCsvPage() {
     );
   }, [effectiveDateFrom, effectiveDateTo]);
 
-  const canPreviewExport = isAdmin
-    ? dateRangeValid
-    : Boolean(dateRangeValid && effectiveDateFrom && fromFarmCode && toFarmId);
+  const canPreviewExport = useMemo(() => {
+    if (!dateRangeValid) return false;
 
-  const canSubmitRows = isAdmin
-    ? Boolean(
-        dateRangeValid &&
-          effectiveDateFrom === effectiveDateTo &&
-          fromFarmCode &&
-          toFarmId
-      )
-    : Boolean(dateRangeValid && effectiveDateFrom && fromFarmCode && toFarmId);
+    if (reportType === "not_selected") {
+      return Boolean(effectiveDateFrom && effectiveDateTo && fromFarmCode);
+    }
+
+    return isAdmin
+      ? Boolean(effectiveDateFrom && effectiveDateTo)
+      : Boolean(effectiveDateFrom && fromFarmCode && toFarmId);
+  }, [
+    dateRangeValid,
+    reportType,
+    effectiveDateFrom,
+    effectiveDateTo,
+    fromFarmCode,
+    toFarmId,
+    isAdmin,
+  ]);
+
+  const canSubmitRows =
+    reportType === "raw" &&
+    (isAdmin
+      ? Boolean(
+          dateRangeValid &&
+            effectiveDateFrom === effectiveDateTo &&
+            fromFarmCode &&
+            toFarmId
+        )
+      : Boolean(dateRangeValid && effectiveDateFrom && fromFarmCode && toFarmId));
 
   useEffect(() => {
     function onResize() {
@@ -326,7 +376,7 @@ export default function ExportCsvPage() {
       }
     }
 
-    init();
+    void init();
 
     return () => {
       ignore = true;
@@ -391,8 +441,8 @@ export default function ExportCsvPage() {
       const map = new Map();
 
       for (const row of data || []) {
-        const code = String(row?.from_farm_code || "").trim();
-        const name = String(row?.from_farm_name || "").trim();
+        const code = clean(row?.from_farm_code);
+        const name = clean(row?.from_farm_name);
         if (!code) continue;
 
         if (!map.has(code)) {
@@ -421,7 +471,13 @@ export default function ExportCsvPage() {
   ]);
 
   const loadToFarmOptions = useCallback(async () => {
-    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo || !fromFarmCode) {
+    if (
+      reportType !== "raw" ||
+      !dateRangeValid ||
+      !effectiveDateFrom ||
+      !effectiveDateTo ||
+      !fromFarmCode
+    ) {
       setToFarmOptions([]);
       return;
     }
@@ -433,7 +489,7 @@ export default function ExportCsvPage() {
         .from("swine_shipments")
         .select(`
           to_farm_id,
-          to_farm:swine_farms!swine_shipments_to_farm_id_fkey (
+          to_farm:master_farms!swine_shipments_to_farm_id_fkey (
             id,
             farm_code,
             farm_name
@@ -453,9 +509,9 @@ export default function ExportCsvPage() {
       const map = new Map();
 
       for (const row of data || []) {
-        const id = String(row?.to_farm_id || "").trim();
-        const farmCode = String(row?.to_farm?.farm_code || "").trim();
-        const farmName = String(row?.to_farm?.farm_name || "").trim();
+        const id = clean(row?.to_farm_id);
+        const farmCode = clean(row?.to_farm?.farm_code);
+        const farmName = clean(row?.to_farm?.farm_name);
         if (!id) continue;
 
         if (!map.has(id)) {
@@ -478,6 +534,7 @@ export default function ExportCsvPage() {
     }
   }, [
     applyRoleFilter,
+    reportType,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
@@ -489,7 +546,7 @@ export default function ExportCsvPage() {
       setFromFarmOptions([]);
       return;
     }
-    loadFromFarmOptions();
+    void loadFromFarmOptions();
   }, [
     canUsePage,
     dateRangeValid,
@@ -499,13 +556,21 @@ export default function ExportCsvPage() {
   ]);
 
   useEffect(() => {
-    if (!canUsePage || !dateRangeValid || !effectiveDateFrom || !effectiveDateTo || !fromFarmCode) {
+    if (
+      !canUsePage ||
+      reportType !== "raw" ||
+      !dateRangeValid ||
+      !effectiveDateFrom ||
+      !effectiveDateTo ||
+      !fromFarmCode
+    ) {
       setToFarmOptions([]);
       return;
     }
-    loadToFarmOptions();
+    void loadToFarmOptions();
   }, [
     canUsePage,
+    reportType,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
@@ -515,11 +580,7 @@ export default function ExportCsvPage() {
 
   async function loadSwineMapByCodes(swineCodes) {
     const uniqueCodes = Array.from(
-      new Set(
-        (swineCodes || [])
-          .map((x) => String(x || "").trim())
-          .filter(Boolean)
-      )
+      new Set((swineCodes || []).map((x) => clean(x)).filter(Boolean))
     );
 
     if (!uniqueCodes.length) return {};
@@ -530,7 +591,7 @@ export default function ExportCsvPage() {
     for (const chunk of chunks) {
       const { data, error } = await supabase
         .from("swines")
-        .select("swine_code, house_no, flock, birth_date")
+        .select("swine_code, house_no, flock, birth_date, birth_lot, farm_code, farm_name")
         .in("swine_code", chunk);
 
       if (error) throw error;
@@ -539,14 +600,52 @@ export default function ExportCsvPage() {
 
     const map = {};
     for (const row of allRows) {
-      map[String(row.swine_code)] = row;
+      map[clean(row.swine_code)] = row;
     }
+    return map;
+  }
+
+  async function loadHeatMapByCodes(swineCodes) {
+    const uniqueCodes = Array.from(
+      new Set((swineCodes || []).map((x) => clean(x)).filter(Boolean))
+    );
+
+    if (!uniqueCodes.length) return {};
+
+    const chunks = chunkArray(uniqueCodes, 200);
+    const allRows = [];
+
+    for (const chunk of chunks) {
+      const { data, error } = await supabase
+        .from("swine_heat_report")
+        .select(
+          "swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count"
+        )
+        .in("swine_code", chunk);
+
+      if (error) throw error;
+      allRows.push(...(data || []));
+    }
+
+    const map = {};
+    for (const row of allRows) {
+      const totalHeat = Number(row?.total_heat_count || 0);
+      map[clean(row.swine_code)] = {
+        is_heat: totalHeat > 0 ? "Y" : "N",
+        total_heat_count: totalHeat,
+        heat_1_date: row?.heat_1_date || "",
+        heat_2_date: row?.heat_2_date || "",
+        heat_3_date: row?.heat_3_date || "",
+        heat_4_date: row?.heat_4_date || "",
+      };
+    }
+
     return map;
   }
 
   const fetchExportBaseData = useCallback(async () => {
     if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
-      return { shipments: [], swineMap: {} };
+      return { shipments: [], swineMap: {}, heatMap: {} };
     }
 
     let query = supabase
@@ -561,7 +660,8 @@ export default function ExportCsvPage() {
         to_farm_id,
         status,
         created_at,
-        to_farm:swine_farms!swine_shipments_to_farm_id_fkey (
+        updated_at,
+        to_farm:master_farms!swine_shipments_to_farm_id_fkey (
           id,
           farm_code,
           farm_name
@@ -584,7 +684,7 @@ export default function ExportCsvPage() {
       query = query.eq("from_farm_code", fromFarmCode);
     }
 
-    if (toFarmId) {
+    if (reportType === "raw" && toFarmId) {
       query = query.eq("to_farm_id", toFarmId);
     }
 
@@ -600,11 +700,15 @@ export default function ExportCsvPage() {
       }
     }
 
-    const swineMap = await loadSwineMapByCodes(allCodes);
+    const [swineMap, heatMap] = await Promise.all([
+      loadSwineMapByCodes(allCodes),
+      loadHeatMapByCodes(allCodes),
+    ]);
 
-    return { shipments: data || [], swineMap };
+    return { shipments: data || [], swineMap, heatMap };
   }, [
     applyRoleFilter,
+    reportType,
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
@@ -612,31 +716,50 @@ export default function ExportCsvPage() {
     toFarmId,
   ]);
 
-  function buildFlatRows(shipments, swineMap) {
+  function buildFlatRows(shipments, swineMap, heatMap) {
     const rows = [];
 
     for (const shipment of shipments || []) {
       for (const item of shipment.items || []) {
-        const swine = swineMap[String(item?.swine_code || "")] || {};
+        const code = clean(item?.swine_code);
+        const swine = swineMap[code] || {};
+        const heat = heatMap[code] || {
+          is_heat: "N",
+          total_heat_count: 0,
+          heat_1_date: "",
+          heat_2_date: "",
+          heat_3_date: "",
+          heat_4_date: "",
+        };
 
         rows.push({
           shipment_id: shipment.id || "",
           shipment_no: shipment.shipment_no || "",
           shipment_status: shipment.status || "",
           selected_date: shipment.selected_date || "",
+          from_farm_code: shipment.from_farm_code || "",
           from_farm_name: shipment.from_farm_name || "",
           house_no: swine.house_no || "",
           flock: swine.flock || "",
+          to_farm_code: shipment.to_farm?.farm_code || "",
           to_farm_name: shipment.to_farm?.farm_name || "",
-          swine_code: item?.swine_code || "",
+          swine_code: code,
           birth_date: swine.birth_date || "",
+          birth_lot: swine.birth_lot || "",
           age_days: calcAgeDays(shipment.selected_date, swine.birth_date),
+          is_heat: heat.is_heat,
+          total_heat_count: heat.total_heat_count,
+          heat_1_date: heat.heat_1_date,
+          heat_2_date: heat.heat_2_date,
+          heat_3_date: heat.heat_3_date,
+          heat_4_date: heat.heat_4_date,
           teats_left: item?.teats_left ?? "",
           teats_right: item?.teats_right ?? "",
           backfat: item?.backfat ?? "",
           weight: item?.weight ?? "",
           remark: shipment.remark || "",
           created_at: shipment.created_at || "",
+          updated_at: shipment.updated_at || "",
         });
       }
     }
@@ -644,12 +767,108 @@ export default function ExportCsvPage() {
     return rows;
   }
 
+  const fetchNotSelectedRows = useCallback(async () => {
+    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo || !fromFarmCode) {
+      return [];
+    }
+
+    let shipmentQuery = supabase
+      .from("swine_shipments")
+      .select(`
+        id,
+        selected_date,
+        from_farm_code,
+        from_farm_name,
+        source_house_no,
+        status,
+        items:swine_shipment_items (
+          swine_code
+        )
+      `)
+      .gte("selected_date", effectiveDateFrom)
+      .lte("selected_date", effectiveDateTo)
+      .eq("from_farm_code", fromFarmCode)
+      .in("status", ["draft", "submitted", "issued"]);
+
+    shipmentQuery = await applyRoleFilter(shipmentQuery);
+
+    const { data: shipmentRows, error: shipmentError } = await shipmentQuery;
+    if (shipmentError) throw shipmentError;
+
+    const selectedCodeSet = new Set();
+
+    for (const shipment of shipmentRows || []) {
+      for (const item of shipment.items || []) {
+        const code = clean(item?.swine_code);
+        if (code) selectedCodeSet.add(code);
+      }
+    }
+
+    const { data: allSwines, error: swineError } = await supabase
+      .from("swines")
+      .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date, birth_lot")
+      .eq("farm_code", fromFarmCode)
+      .order("house_no", { ascending: true })
+      .order("swine_code", { ascending: true })
+      .limit(10000);
+
+    if (swineError) throw swineError;
+
+    const notSelected = (allSwines || []).filter((row) => {
+      const code = clean(row?.swine_code);
+      if (!code) return false;
+      return !selectedCodeSet.has(code);
+    });
+
+    const heatMap = await loadHeatMapByCodes(notSelected.map((x) => x.swine_code));
+
+    return notSelected.map((row) => {
+      const code = clean(row?.swine_code);
+      const heat = heatMap[code] || {
+        is_heat: "N",
+        total_heat_count: 0,
+        heat_1_date: "",
+        heat_2_date: "",
+        heat_3_date: "",
+        heat_4_date: "",
+      };
+
+      return {
+        farm_code: row?.farm_code || "",
+        farm_name: row?.farm_name || "",
+        house_no: row?.house_no || "",
+        flock: row?.flock || "",
+        swine_code: code,
+        birth_date: row?.birth_date || "",
+        birth_lot: row?.birth_lot || "",
+        is_heat: heat.is_heat,
+        total_heat_count: heat.total_heat_count,
+        heat_1_date: heat.heat_1_date,
+        heat_2_date: heat.heat_2_date,
+        heat_3_date: heat.heat_3_date,
+        heat_4_date: heat.heat_4_date,
+      };
+    });
+  }, [
+    applyRoleFilter,
+    dateRangeValid,
+    effectiveDateFrom,
+    effectiveDateTo,
+    fromFarmCode,
+  ]);
+
   const refreshPreviewRows = useCallback(async () => {
-    const { shipments, swineMap } = await fetchExportBaseData();
-    const rows = buildFlatRows(shipments, swineMap);
+    if (reportType === "not_selected") {
+      const rows = await fetchNotSelectedRows();
+      setPreviewRows(rows);
+      return { shipments: [], rows };
+    }
+
+    const { shipments, swineMap, heatMap } = await fetchExportBaseData();
+    const rows = buildFlatRows(shipments, swineMap, heatMap);
     setPreviewRows(rows);
     return { shipments, rows };
-  }, [fetchExportBaseData]);
+  }, [reportType, fetchNotSelectedRows, fetchExportBaseData]);
 
   const handlePreview = useCallback(async () => {
     if (!canPreviewExport) return;
@@ -661,7 +880,11 @@ export default function ExportCsvPage() {
       const { rows } = await refreshPreviewRows();
 
       if (!rows.length) {
-        setMsg("ไม่พบข้อมูลตามเงื่อนไขที่เลือก");
+        setMsg(
+          reportType === "not_selected"
+            ? "ไม่พบเบอร์หมูที่ไม่ถูกคัดตามเงื่อนไขที่เลือก"
+            : "ไม่พบข้อมูลตามเงื่อนไขที่เลือก"
+        );
       }
     } catch (e) {
       console.error("handlePreview error:", e);
@@ -670,7 +893,7 @@ export default function ExportCsvPage() {
     } finally {
       setPreviewLoading(false);
     }
-  }, [canPreviewExport, refreshPreviewRows]);
+  }, [canPreviewExport, reportType, refreshPreviewRows]);
 
   const handleExport = useCallback(async () => {
     if (!canPreviewExport) return;
@@ -679,8 +902,47 @@ export default function ExportCsvPage() {
     setMsg("");
 
     try {
-      const { shipments, swineMap } = await fetchExportBaseData();
-      const flatRows = buildFlatRows(shipments, swineMap);
+      if (reportType === "not_selected") {
+        const rows = await fetchNotSelectedRows();
+
+        if (!rows.length) {
+          setMsg("ไม่พบข้อมูลสำหรับ export");
+          return;
+        }
+
+        const exportRows = rows.map((r) => ({
+          ฟาร์ม: r.farm_name,
+          รหัสฟาร์ม: r.farm_code,
+          เล้า: r.house_no,
+          flock: r.flock,
+          เบอร์หมู: r.swine_code,
+          วันเกิด: r.birth_date,
+          birth_lot: r.birth_lot,
+          heat: r.is_heat,
+          total_heat_count: r.total_heat_count,
+          heat_1_date: r.heat_1_date,
+          heat_2_date: r.heat_2_date,
+          heat_3_date: r.heat_3_date,
+          heat_4_date: r.heat_4_date,
+        }));
+
+        const fromFarmText =
+          fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || "all";
+
+        const dateText =
+          effectiveDateFrom === effectiveDateTo
+            ? effectiveDateFrom
+            : `${effectiveDateFrom}_to_${effectiveDateTo}`;
+
+        const filename = `swine_not_selected_${dateText}_${fromFarmText}.csv`;
+
+        downloadCsv(filename, exportRows);
+        setMsg(`Export สำเร็จ ${exportRows.length} รายการ`);
+        return;
+      }
+
+      const { shipments, swineMap, heatMap } = await fetchExportBaseData();
+      const flatRows = buildFlatRows(shipments, swineMap, heatMap);
 
       if (!flatRows.length) {
         setMsg("ไม่พบข้อมูลสำหรับ export");
@@ -696,6 +958,13 @@ export default function ExportCsvPage() {
         ฟาร์มปลายทาง: r.to_farm_name,
         เบอร์หมู: r.swine_code,
         วันเกิด: r.birth_date,
+        birth_lot: r.birth_lot,
+        heat: r.is_heat,
+        total_heat_count: r.total_heat_count,
+        heat_1_date: r.heat_1_date,
+        heat_2_date: r.heat_2_date,
+        heat_3_date: r.heat_3_date,
+        heat_4_date: r.heat_4_date,
         "อายุ(วัน)": r.age_days,
         เต้าซ้าย: r.teats_left,
         เต้าขวา: r.teats_right,
@@ -727,6 +996,8 @@ export default function ExportCsvPage() {
     }
   }, [
     canPreviewExport,
+    reportType,
+    fetchNotSelectedRows,
     fetchExportBaseData,
     fromFarmCode,
     fromFarmOptions,
@@ -771,7 +1042,7 @@ export default function ExportCsvPage() {
 
       for (const shipment of submittedShipments) {
         const codes = (shipment.items || [])
-          .map((x) => String(x?.swine_code || "").trim())
+          .map((x) => clean(x?.swine_code))
           .filter(Boolean);
 
         totalSwines += codes.length;
@@ -861,7 +1132,7 @@ export default function ExportCsvPage() {
   }
 
   const filteredFromFarmOptions = useMemo(() => {
-    const q = String(fromFarmQ || "").trim().toLowerCase();
+    const q = clean(fromFarmQ).toLowerCase();
     if (!q) return fromFarmOptions;
 
     return fromFarmOptions.filter((opt) => {
@@ -871,7 +1142,7 @@ export default function ExportCsvPage() {
   }, [fromFarmOptions, fromFarmQ]);
 
   const filteredToFarmOptions = useMemo(() => {
-    const q = String(toFarmQ || "").trim().toLowerCase();
+    const q = clean(toFarmQ).toLowerCase();
     if (!q) return toFarmOptions;
 
     return toFarmOptions.filter((opt) => {
@@ -883,6 +1154,10 @@ export default function ExportCsvPage() {
   const previewTop100 = useMemo(() => previewRows.slice(0, 100), [previewRows]);
 
   const previewStatusCounts = useMemo(() => {
+    if (reportType !== "raw") {
+      return { draft: 0, submitted: 0, issued: 0 };
+    }
+
     const counts = { draft: 0, submitted: 0, issued: 0 };
     const shipmentSeen = new Set();
 
@@ -898,7 +1173,7 @@ export default function ExportCsvPage() {
     }
 
     return counts;
-  }, [previewRows]);
+  }, [previewRows, reportType]);
 
   const dateSummaryText = useMemo(() => {
     if (!effectiveDateFrom || !effectiveDateTo) return "-";
@@ -977,7 +1252,7 @@ export default function ExportCsvPage() {
                     : " — export ได้เฉพาะข้อมูลที่ตัวเองสร้าง"}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
-                  แสดงรายการสถานะ draft, submitted และ issued
+                  ประเภทรายงาน: <b>{reportType === "not_selected" ? "เบอร์หมูที่ไม่ถูกคัด" : "Raw Data"}</b>
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   ช่วงวันที่: <b>{dateSummaryText}</b>
@@ -1000,59 +1275,61 @@ export default function ExportCsvPage() {
             </div>
           </div>
 
-          <div
-            style={{
-              padding: isMobile ? "12px 14px 14px" : "14px 18px 18px",
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-            }}
-          >
-            <span
+          {reportType === "raw" ? (
+            <div
               style={{
-                display: "inline-flex",
-                padding: "6px 12px",
-                borderRadius: 999,
-                fontSize: 13,
-                fontWeight: 700,
-                border: "1px solid #fde68a",
-                background: "#fffbeb",
-                color: "#92400e",
+                padding: isMobile ? "12px 14px 14px" : "14px 18px 18px",
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
               }}
             >
-              draft: {previewStatusCounts.draft}
-            </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  border: "1px solid #fde68a",
+                  background: "#fffbeb",
+                  color: "#92400e",
+                }}
+              >
+                draft: {previewStatusCounts.draft}
+              </span>
 
-            <span
-              style={{
-                display: "inline-flex",
-                padding: "6px 12px",
-                borderRadius: 999,
-                fontSize: 13,
-                fontWeight: 700,
-                border: "1px solid #a7f3d0",
-                background: "#ecfdf5",
-                color: "#047857",
-              }}
-            >
-              submitted: {previewStatusCounts.submitted}
-            </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  border: "1px solid #a7f3d0",
+                  background: "#ecfdf5",
+                  color: "#047857",
+                }}
+              >
+                submitted: {previewStatusCounts.submitted}
+              </span>
 
-            <span
-              style={{
-                display: "inline-flex",
-                padding: "6px 12px",
-                borderRadius: 999,
-                fontSize: 13,
-                fontWeight: 700,
-                border: "1px solid #cbd5e1",
-                background: "#f8fafc",
-                color: "#334155",
-              }}
-            >
-              issued: {previewStatusCounts.issued}
-            </span>
-          </div>
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 700,
+                  border: "1px solid #cbd5e1",
+                  background: "#f8fafc",
+                  color: "#334155",
+                }}
+              >
+                issued: {previewStatusCounts.issued}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div
@@ -1066,12 +1343,37 @@ export default function ExportCsvPage() {
               display: "grid",
               gridTemplateColumns: isMobile
                 ? "1fr"
-                : isAdmin
-                ? "repeat(auto-fit, minmax(220px, 1fr))"
                 : "repeat(auto-fit, minmax(220px, 1fr))",
               gap: 14,
             }}
           >
+            <label style={{ display: "block", minWidth: 0 }}>
+              <div
+                style={{
+                  marginBottom: 6,
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: "#334155",
+                }}
+              >
+                ประเภทรายงาน
+              </div>
+              <select
+                value={reportType}
+                onChange={(e) => {
+                  setReportType(e.target.value);
+                  setPreviewRows([]);
+                  setMsg("");
+                  setToFarmId("");
+                  setToFarmQ("");
+                }}
+                style={inputStyle}
+              >
+                <option value="raw">Raw Data</option>
+                <option value="not_selected">เบอร์หมูที่ไม่ถูกคัด</option>
+              </select>
+            </label>
+
             {!isAdmin ? (
               <label style={{ display: "block", minWidth: 0 }}>
                 <div
@@ -1147,7 +1449,7 @@ export default function ExportCsvPage() {
                   color: "#334155",
                 }}
               >
-                ฟาร์มที่คัด {isAdmin ? "(ไม่บังคับ)" : ""}
+                ฟาร์มที่คัด {isAdmin && reportType === "raw" ? "(ไม่บังคับ)" : ""}
               </div>
 
               <input
@@ -1173,10 +1475,12 @@ export default function ExportCsvPage() {
                   {fromFarmLoading
                     ? "กำลังโหลด..."
                     : filteredFromFarmOptions.length
-                    ? isAdmin
-                      ? "ทุกฟาร์มที่คัด / หรือเลือก 1 ฟาร์ม"
+                    ? reportType === "not_selected"
+                      ? "เลือกฟาร์มที่คัด"
+                      : isAdmin
+                      ? "ทั้งหมด / เลือกฟาร์มที่คัด"
                       : "เลือกฟาร์มที่คัด"
-                    : "ไม่พบฟาร์มที่คัด"}
+                    : "ไม่พบข้อมูลฟาร์มที่คัด"}
                 </option>
                 {filteredFromFarmOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -1184,92 +1488,77 @@ export default function ExportCsvPage() {
                   </option>
                 ))}
               </select>
-
-              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
-                ทั้งหมด {fromFarmOptions.length} รายการ / ตรงคำค้น {filteredFromFarmOptions.length} รายการ
-              </div>
-
-              {!fromFarmLoading && dateRangeValid && fromFarmOptions.length === 0 ? (
-                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
-                  ไม่พบฟาร์มที่คัดในช่วงวันที่เลือก
-                </div>
-              ) : null}
             </label>
 
-            <label style={{ display: "block", minWidth: 0 }}>
+            {reportType === "raw" ? (
+              <label style={{ display: "block", minWidth: 0 }}>
+                <div
+                  style={{
+                    marginBottom: 6,
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: "#334155",
+                  }}
+                >
+                  ฟาร์มปลายทาง {isAdmin ? "(ไม่บังคับ)" : ""}
+                </div>
+
+                <input
+                  type="text"
+                  value={toFarmQ}
+                  onChange={(e) => setToFarmQ(e.target.value)}
+                  placeholder={toFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
+                  disabled={!fromFarmCode || toFarmLoading}
+                  style={
+                    !fromFarmCode || toFarmLoading
+                      ? { ...disabledInputStyle, marginBottom: 8 }
+                      : { ...inputStyle, marginBottom: 8 }
+                  }
+                />
+
+                <select
+                  value={toFarmId}
+                  onChange={handleToFarmChange}
+                  disabled={!fromFarmCode || toFarmLoading}
+                  style={!fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
+                >
+                  <option value="">
+                    {toFarmLoading
+                      ? "กำลังโหลด..."
+                      : filteredToFarmOptions.length
+                      ? isAdmin
+                        ? "ทั้งหมด / เลือกฟาร์มปลายทาง"
+                        : "เลือกฟาร์มปลายทาง"
+                      : "ไม่พบข้อมูลฟาร์มปลายทาง"}
+                  </option>
+                  {filteredToFarmOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
               <div
                 style={{
-                  marginBottom: 6,
-                  fontSize: 14,
-                  fontWeight: 700,
-                  color: "#334155",
+                  display: "block",
+                  minWidth: 0,
+                  paddingTop: 28,
+                  color: "#64748b",
+                  fontSize: 13,
+                  lineHeight: 1.6,
                 }}
               >
-                ฟาร์มปลายทาง {isAdmin ? "(ไม่บังคับ)" : ""}
+                รายงานนี้ใช้ฟาร์มที่คัด + ช่วงวันที่
+                <br />
+                เพื่อตรวจว่าเบอร์หมูใดบ้างยังไม่อยู่ใน shipment สถานะ draft/submitted/issued
               </div>
-
-              <input
-                type="text"
-                value={toFarmQ}
-                onChange={(e) => setToFarmQ(e.target.value)}
-                placeholder={toFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
-                disabled={!dateRangeValid || !fromFarmCode || toFarmLoading}
-                style={
-                  !dateRangeValid || !fromFarmCode || toFarmLoading
-                    ? { ...disabledInputStyle, marginBottom: 8 }
-                    : { ...inputStyle, marginBottom: 8 }
-                }
-              />
-
-              <select
-                value={toFarmId}
-                onChange={handleToFarmChange}
-                disabled={!dateRangeValid || !fromFarmCode || toFarmLoading}
-                style={!dateRangeValid || !fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
-              >
-                <option value="">
-                  {!fromFarmCode
-                    ? isAdmin
-                      ? "เลือกฟาร์มที่คัดก่อน (ปล่อยว่างได้)"
-                      : "เลือกฟาร์มที่คัดก่อน"
-                    : toFarmLoading
-                    ? "กำลังโหลด..."
-                    : filteredToFarmOptions.length
-                    ? isAdmin
-                      ? "ทุกฟาร์มปลายทาง / หรือเลือก 1 ฟาร์ม"
-                      : "เลือกฟาร์มปลายทาง"
-                    : "ไม่พบฟาร์มปลายทาง"}
-                </option>
-                {filteredToFarmOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-
-              <div style={{ marginTop: 6, fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
-                ทั้งหมด {toFarmOptions.length} รายการ / ตรงคำค้น {filteredToFarmOptions.length} รายการ
-              </div>
-
-              {!toFarmLoading && dateRangeValid && fromFarmCode && toFarmOptions.length === 0 ? (
-                <div style={{ marginTop: 6, fontSize: 12, color: "#64748b" }}>
-                  ไม่พบฟาร์มปลายทางจากเงื่อนไขที่เลือก
-                </div>
-              ) : null}
-            </label>
+            )}
           </div>
-
-          {isAdmin ? (
-            <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
-              Preview / Export ของ admin ใช้ได้จากช่วงวันที่ แม้ไม่เลือกฟาร์มก็ได้
-              <br />
-              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทางกับฟาร์มปลายทาง
-            </div>
-          ) : null}
 
           <div
             style={{
-              marginTop: 16,
+              marginTop: 14,
               display: "flex",
               gap: 10,
               flexWrap: "wrap",
@@ -1311,23 +1600,25 @@ export default function ExportCsvPage() {
               {exporting ? "กำลัง Export..." : "Export CSV"}
             </button>
 
-            <button
-              type="button"
-              onClick={handleSubmitConfirm}
-              disabled={!canSubmitRows || submitting || previewLoading || exporting}
-              style={{
-                ...btnDarkStyle,
-                width: isMobile ? "100%" : "auto",
-                flex: isMobile ? "1 1 100%" : "1 1 160px",
-                opacity: !canSubmitRows || submitting || previewLoading || exporting ? 0.6 : 1,
-                cursor:
-                  !canSubmitRows || submitting || previewLoading || exporting
-                    ? "not-allowed"
-                    : "pointer",
-              }}
-            >
-              {submitting ? "กำลัง Submit..." : "Submit"}
-            </button>
+            {reportType === "raw" ? (
+              <button
+                type="button"
+                onClick={handleSubmitConfirm}
+                disabled={!canSubmitRows || submitting || previewLoading || exporting}
+                style={{
+                  ...btnDarkStyle,
+                  width: isMobile ? "100%" : "auto",
+                  flex: isMobile ? "1 1 100%" : "1 1 160px",
+                  opacity: !canSubmitRows || submitting || previewLoading || exporting ? 0.6 : 1,
+                  cursor:
+                    !canSubmitRows || submitting || previewLoading || exporting
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {submitting ? "กำลัง Submit..." : "Submit"}
+              </button>
+            ) : null}
           </div>
 
           {msg ? <div style={{ ...msgStyle, marginTop: 14 }}>{msg}</div> : null}
@@ -1373,37 +1664,80 @@ export default function ExportCsvPage() {
             <table
               style={{
                 width: "100%",
-                minWidth: isMobile ? 980 : 1200,
+                minWidth: reportType === "not_selected" ? (isMobile ? 1100 : 1300) : isMobile ? 1800 : 2200,
                 borderCollapse: "collapse",
                 fontSize: 14,
               }}
             >
               <thead>
-                <tr style={{ background: "#f8fafc", color: "#334155" }}>
-                  <th style={thStyle}>สถานะ</th>
-                  <th style={thStyle}>วันที่คัด</th>
-                  <th style={thStyle}>ฟาร์มที่คัด</th>
-                  <th style={thStyle}>โรงเรือน</th>
-                  <th style={thStyle}>flock</th>
-                  <th style={thStyle}>ฟาร์มปลายทาง</th>
-                  <th style={thStyle}>เบอร์หมู</th>
-                  <th style={thStyle}>วันเกิด</th>
-                  <th style={thStyle}>อายุ(วัน)</th>
-                  <th style={thStyle}>เต้าซ้าย</th>
-                  <th style={thStyle}>เต้าขวา</th>
-                  <th style={thStyle}>backfat</th>
-                  <th style={thStyle}>น้ำหนัก</th>
-                  <th style={thStyle}>หมายเหตุ</th>
-                </tr>
+                {reportType === "not_selected" ? (
+                  <tr style={{ background: "#f8fafc", color: "#334155" }}>
+                    <th style={thStyle}>ฟาร์ม</th>
+                    <th style={thStyle}>รหัสฟาร์ม</th>
+                    <th style={thStyle}>เล้า</th>
+                    <th style={thStyle}>flock</th>
+                    <th style={thStyle}>เบอร์หมู</th>
+                    <th style={thStyle}>วันเกิด</th>
+                    <th style={thStyle}>birth_lot</th>
+                    <th style={thStyle}>heat</th>
+                    <th style={thStyle}>total_heat_count</th>
+                    <th style={thStyle}>heat_1_date</th>
+                    <th style={thStyle}>heat_2_date</th>
+                    <th style={thStyle}>heat_3_date</th>
+                    <th style={thStyle}>heat_4_date</th>
+                  </tr>
+                ) : (
+                  <tr style={{ background: "#f8fafc", color: "#334155" }}>
+                    <th style={thStyle}>สถานะ</th>
+                    <th style={thStyle}>วันที่คัด</th>
+                    <th style={thStyle}>ฟาร์มที่คัด</th>
+                    <th style={thStyle}>ฟาร์มปลายทาง</th>
+                    <th style={thStyle}>โรงเรือน</th>
+                    <th style={thStyle}>flock</th>
+                    <th style={thStyle}>เบอร์หมู</th>
+                    <th style={thStyle}>วันเกิด</th>
+                    <th style={thStyle}>birth_lot</th>
+                    <th style={thStyle}>heat</th>
+                    <th style={thStyle}>total_heat_count</th>
+                    <th style={thStyle}>heat_1_date</th>
+                    <th style={thStyle}>heat_2_date</th>
+                    <th style={thStyle}>heat_3_date</th>
+                    <th style={thStyle}>heat_4_date</th>
+                    <th style={thStyle}>อายุ(วัน)</th>
+                    <th style={thStyle}>เต้าซ้าย</th>
+                    <th style={thStyle}>เต้าขวา</th>
+                    <th style={thStyle}>backfat</th>
+                    <th style={thStyle}>น้ำหนัก</th>
+                    <th style={thStyle}>หมายเหตุ</th>
+                  </tr>
+                )}
               </thead>
 
               <tbody>
                 {previewTop100.length === 0 ? (
                   <tr>
-                    <td colSpan={14} style={emptyTdStyle}>
+                    <td colSpan={reportType === "not_selected" ? 13 : 21} style={emptyTdStyle}>
                       ยังไม่มีข้อมูลแสดง
                     </td>
                   </tr>
+                ) : reportType === "not_selected" ? (
+                  previewTop100.map((row, idx) => (
+                    <tr key={`${row.swine_code}-${idx}`}>
+                      <td style={tdStyle}>{row.farm_name}</td>
+                      <td style={tdStyle}>{row.farm_code}</td>
+                      <td style={tdStyle}>{row.house_no}</td>
+                      <td style={tdStyle}>{row.flock}</td>
+                      <td style={tdStyle}>{row.swine_code}</td>
+                      <td style={tdStyle}>{row.birth_date}</td>
+                      <td style={tdStyle}>{row.birth_lot}</td>
+                      <td style={tdStyle}>{row.is_heat}</td>
+                      <td style={tdStyle}>{row.total_heat_count}</td>
+                      <td style={tdStyle}>{row.heat_1_date}</td>
+                      <td style={tdStyle}>{row.heat_2_date}</td>
+                      <td style={tdStyle}>{row.heat_3_date}</td>
+                      <td style={tdStyle}>{row.heat_4_date}</td>
+                    </tr>
+                  ))
                 ) : (
                   previewTop100.map((row, idx) => (
                     <tr key={`${row.swine_code}-${row.created_at}-${idx}`}>
@@ -1414,11 +1748,18 @@ export default function ExportCsvPage() {
                       </td>
                       <td style={tdStyle}>{row.selected_date}</td>
                       <td style={tdStyle}>{row.from_farm_name}</td>
+                      <td style={tdStyle}>{row.to_farm_name}</td>
                       <td style={tdStyle}>{row.house_no}</td>
                       <td style={tdStyle}>{row.flock}</td>
-                      <td style={tdStyle}>{row.to_farm_name}</td>
                       <td style={tdStyle}>{row.swine_code}</td>
                       <td style={tdStyle}>{row.birth_date}</td>
+                      <td style={tdStyle}>{row.birth_lot}</td>
+                      <td style={tdStyle}>{row.is_heat}</td>
+                      <td style={tdStyle}>{row.total_heat_count}</td>
+                      <td style={tdStyle}>{row.heat_1_date}</td>
+                      <td style={tdStyle}>{row.heat_2_date}</td>
+                      <td style={tdStyle}>{row.heat_3_date}</td>
+                      <td style={tdStyle}>{row.heat_4_date}</td>
                       <td style={tdStyle}>{row.age_days}</td>
                       <td style={tdStyle}>{row.teats_left}</td>
                       <td style={tdStyle}>{row.teats_right}</td>
@@ -1436,28 +1777,3 @@ export default function ExportCsvPage() {
     </div>
   );
 }
-
-const thStyle = {
-  borderBottom: "1px solid #e5e7eb",
-  padding: "12px 10px",
-  textAlign: "left",
-  whiteSpace: "nowrap",
-  fontWeight: 800,
-};
-
-const tdStyle = {
-  borderBottom: "1px solid #e5e7eb",
-  padding: "10px",
-  textAlign: "left",
-  verticalAlign: "top",
-  color: "#0f172a",
-  whiteSpace: "nowrap",
-};
-
-const emptyTdStyle = {
-  borderBottom: "1px solid #e5e7eb",
-  padding: "28px 12px",
-  textAlign: "center",
-  color: "#64748b",
-  fontWeight: 600,
-};

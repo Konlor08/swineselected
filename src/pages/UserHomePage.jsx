@@ -35,37 +35,47 @@ const cardStyle = {
   minWidth: 0,
 };
 
+const actionButtonStyle = {
+  minWidth: 180,
+  width: "100%",
+  maxWidth: 220,
+};
+
 function ActionCard({ title, desc, buttonText, onClick, disabled = false }) {
   return (
     <div
       className="card"
       style={{
         ...cardStyle,
-        display: "grid",
+        display: "flex",
+        flexDirection: "column",
         gap: 10,
+        height: "100%",
         border: "1px solid #e5e7eb",
         borderRadius: 16,
       }}
     >
       <div style={{ fontSize: 18, fontWeight: 900 }}>{title}</div>
+
       <div
         className="small"
         style={{
           color: "#475569",
           lineHeight: 1.7,
-          minHeight: 44,
+          flex: 1,
         }}
       >
         {desc}
       </div>
-      <div>
+
+      <div style={{ marginTop: "auto" }}>
         <button
           type="button"
           className="linkbtn"
           onClick={onClick}
           disabled={disabled}
           style={{
-            minWidth: 180,
+            ...actionButtonStyle,
             opacity: disabled ? 0.65 : 1,
             cursor: disabled ? "not-allowed" : "pointer",
           }}
@@ -150,7 +160,6 @@ export default function UserHomePage() {
   useEffect(() => {
     if (location.state?.msg) {
       setMsg(location.state.msg);
-
       try {
         window.history.replaceState({}, document.title, window.location.pathname);
       } catch (e) {
@@ -223,19 +232,31 @@ export default function UserHomePage() {
       <div
         className="topbar"
         style={{
-          flexWrap: "wrap",
-          gap: 10,
+          display: "flex",
+          justifyContent: "space-between",
           alignItems: "flex-start",
+          flexWrap: "wrap",
+          gap: 12,
           position: "relative",
           zIndex: 20,
         }}
       >
-        <div style={{ minWidth: 0 }}>
+        <div style={{ minWidth: 0, flex: "1 1 320px" }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>SwineSelected</div>
+
           <div className="small" style={{ wordBreak: "break-word", marginTop: 4 }}>
             ผู้ใช้งาน: <b>{displayName || "User"}</b>
           </div>
-          <div className="small" style={{ color: "#64748b", marginTop: 4, lineHeight: 1.7 }}>
+
+          <div
+            className="small"
+            style={{
+              color: "#64748b",
+              marginTop: 4,
+              lineHeight: 1.7,
+              maxWidth: 720,
+            }}
+          >
             <b>Create</b> = ใช้คัดหมูเริ่มต้น
             <br />
             <b>Edit</b> = ใช้แก้ draft และเพิ่มหมูได้ถ้าคัดไม่พอ
@@ -246,7 +267,11 @@ export default function UserHomePage() {
           style={{
             display: "flex",
             gap: 10,
+            rowGap: 10,
             flexWrap: "wrap",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            flex: "0 1 auto",
             position: "relative",
             zIndex: 21,
           }}
@@ -340,7 +365,15 @@ export default function UserHomePage() {
           }}
         >
           <div style={{ fontSize: 18, fontWeight: 900 }}>ลำดับการใช้งาน</div>
-          <div className="small" style={{ color: "#475569", lineHeight: 1.8 }}>
+
+          <div
+            className="small"
+            style={{
+              color: "#475569",
+              lineHeight: 1.8,
+              maxWidth: 760,
+            }}
+          >
             1) กด <b>Create</b> เพื่อเริ่มคัดหมู
             <br />
             2) เลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง
@@ -356,6 +389,7 @@ export default function UserHomePage() {
             display: "grid",
             gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
             gap: 14,
+            alignItems: "stretch",
           }}
         >
           <ActionCard
