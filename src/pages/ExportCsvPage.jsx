@@ -464,60 +464,6 @@ export default function ExportCsvPage() {
     }));
   }, []);
 
-  const handleSaveDeliveryDate = useCallback(async (shipment) => {
-    const shipmentId = clean(shipment?.id);
-    const shipmentNo = clean(shipment?.shipment_no) || shipmentId;
-    const selectedDate = clean(shipment?.selected_date);
-    const targetToFarmId = clean(shipment?.to_farm_id);
-    const draftValue = clean(deliveryDateDrafts[shipmentId]);
-
-    if (!shipmentId) {
-      setMsg("ไม่พบ shipment ที่ต้องการบันทึกวันที่จัดส่ง");
-      return;
-    }
-
-    if (!targetToFarmId) {
-      setMsg("กรุณาเลือกหรือบันทึกฟาร์มปลายทางก่อน แล้วจึงเพิ่มวันที่จัดส่ง");
-      return;
-    }
-
-    if (!draftValue) {
-      setMsg("กรุณาเลือกวันที่จัดส่งก่อนบันทึก");
-      return;
-    }
-
-    if (selectedDate && draftValue < selectedDate) {
-      setMsg(`วันที่จัดส่งของ ${shipmentNo} ต้องไม่น้อยกว่าวันที่คัด (${selectedDate})`);
-      return;
-    }
-
-    setSavingDeliveryDateMap((prev) => ({
-      ...(prev || {}),
-      [shipmentId]: true,
-    }));
-    setMsg("");
-
-    try {
-      const { error } = await supabase
-        .from("swine_shipments")
-        .update({ delivery_date: draftValue })
-        .eq("id", shipmentId);
-
-      if (error) throw error;
-
-      await refreshPreviewRows();
-      setMsg(`บันทึกวันที่จัดส่งของ ${shipmentNo} เรียบร้อยแล้ว`);
-    } catch (e) {
-      console.error("handleSaveDeliveryDate error:", e);
-      setMsg(e?.message || "บันทึกวันที่จัดส่งไม่สำเร็จ");
-    } finally {
-      setSavingDeliveryDateMap((prev) => ({
-        ...(prev || {}),
-        [shipmentId]: false,
-      }));
-    }
-  }, [deliveryDateDrafts, refreshPreviewRows]);
-
   useEffect(() => {
     function onResize() {
       setIsMobile(window.innerWidth <= 768);
@@ -1240,6 +1186,61 @@ export default function ExportCsvPage() {
     toFarmId,
     myScope,
   ]);
+
+  const handleSaveDeliveryDate = useCallback(async (shipment) => {
+    const shipmentId = clean(shipment?.id);
+    const shipmentNo = clean(shipment?.shipment_no) || shipmentId;
+    const selectedDate = clean(shipment?.selected_date);
+    const targetToFarmId = clean(shipment?.to_farm_id);
+    const draftValue = clean(deliveryDateDrafts[shipmentId]);
+
+    if (!shipmentId) {
+      setMsg("ไม่พบ shipment ที่ต้องการบันทึกวันที่จัดส่ง");
+      return;
+    }
+
+    if (!targetToFarmId) {
+      setMsg("กรุณาเลือกหรือบันทึกฟาร์มปลายทางก่อน แล้วจึงเพิ่มวันที่จัดส่ง");
+      return;
+    }
+
+    if (!draftValue) {
+      setMsg("กรุณาเลือกวันที่จัดส่งก่อนบันทึก");
+      return;
+    }
+
+    if (selectedDate && draftValue < selectedDate) {
+      setMsg(`วันที่จัดส่งของ ${shipmentNo} ต้องไม่น้อยกว่าวันที่คัด (${selectedDate})`);
+      return;
+    }
+
+    setSavingDeliveryDateMap((prev) => ({
+      ...(prev || {}),
+      [shipmentId]: true,
+    }));
+    setMsg("");
+
+    try {
+      const { error } = await supabase
+        .from("swine_shipments")
+        .update({ delivery_date: draftValue })
+        .eq("id", shipmentId);
+
+      if (error) throw error;
+
+      await refreshPreviewRows();
+      setMsg(`บันทึกวันที่จัดส่งของ ${shipmentNo} เรียบร้อยแล้ว`);
+    } catch (e) {
+      console.error("handleSaveDeliveryDate error:", e);
+      setMsg(e?.message || "บันทึกวันที่จัดส่งไม่สำเร็จ");
+    } finally {
+      setSavingDeliveryDateMap((prev) => ({
+        ...(prev || {}),
+        [shipmentId]: false,
+      }));
+    }
+  }, [deliveryDateDrafts, refreshPreviewRows]);
+
 
   const handlePreview = useCallback(async () => {
     if (!canPreviewExport) return;
