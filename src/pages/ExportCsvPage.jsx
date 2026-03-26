@@ -89,6 +89,21 @@ function safeNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function safeCell(v) {
+  return v === null || v === undefined ? "" : v;
+}
+
+function getBirthLotValue(row) {
+  return safeText(
+    row?.birth_lot ??
+      row?.birthlot ??
+      row?.birthLot ??
+      row?.birth_lot_no ??
+      row?.birthLotNo ??
+      ""
+  );
+}
+
 function avgFromRows(rows, key) {
   const nums = (rows || []).map((r) => safeNum(r?.[key])).filter((v) => v !== null);
   if (!nums.length) return "";
@@ -100,6 +115,83 @@ function sumFromRows(rows, key) {
   const nums = (rows || []).map((r) => safeNum(r?.[key])).filter((v) => v !== null);
   if (!nums.length) return "";
   return +nums.reduce((a, b) => a + b, 0).toFixed(2);
+}
+
+function uniqueCountFromRows(rows, key) {
+  const set = new Set();
+  for (const row of rows || []) {
+    const value = safeText(row?.[key]);
+    if (value) set.add(value);
+  }
+  return set.size;
+}
+
+function countHeatRows(rows) {
+  return (rows || []).filter((row) => String(row?.is_heat || "").toUpperCase() === "Y").length;
+}
+
+function buildOverallSummaryRows(flatRows) {
+  return [
+    { รายการ: "จำนวน shipment", ค่า: uniqueCountFromRows(flatRows, "shipment_id") },
+    { รายการ: "จำนวนตัวทั้งหมด", ค่า: (flatRows || []).length },
+    { รายการ: "น้ำหนักรวมทั้งหมด", ค่า: sumFromRows(flatRows, "weight") },
+    { รายการ: "น้ำหนักเฉลี่ยทั้งหมด", ค่า: avgFromRows(flatRows, "weight") },
+    { รายการ: "จำนวนฟาร์มที่คัด", ค่า: uniqueCountFromRows(flatRows, "from_farm_code") },
+    { รายการ: "จำนวนฟาร์มปลายทาง", ค่า: uniqueCountFromRows(flatRows, "to_farm_code") },
+    { รายการ: "จำนวน birth_lot", ค่า: uniqueCountFromRows(flatRows, "birth_lot") },
+    { รายการ: "จำนวนหมูติดสัด", ค่า: countHeatRows(flatRows) },
+  ];
+}
+
+function makeSheetColsFromRows(...rowGroups) {
+  let maxCols = 0;
+  const maxLenByCol = [];
+
+  for (const rows of rowGroups) {
+    for (const row of rows || []) {
+      const values = Array.isArray(row) ? row : Object.values(row || {});
+      maxCols = Math.max(maxCols, values.length);
+      values.forEach((value, idx) => {
+        const len = String(value ?? "").length;
+        maxLenByCol[idx] = Math.max(maxLenByCol[idx] || 0, len);
+      });
+    }
+  }
+
+  return Array.from({ length: maxCols }, (_, idx) => ({
+    wch: Math.min(Math.max((maxLenByCol[idx] || 12) + 2, 12), 28),
+  }));
+}
+
+function tryRegisterFont(registerFn, doc) {
+  if (typeof registerFn !== "function") return false;
+
+  const candidates = [jsPDF, doc?.constructor, doc, jsPDF?.API];
+
+  for (const target of candidates) {
+    try {
+      if (target) registerFn(target);
+    } catch (e) {
+      // ลอง target ถัดไป
+    }
+
+    try {
+      const fontList = doc?.getFontList?.() || {};
+      if (fontList?.Sarabun) return true;
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  return false;
+}
+
+function ensurePdfThaiFont(doc) {
+  tryRegisterFont(registerSarabunNormal, doc);
+  tryRegisterFont(registerSarabunBold, doc);
+
+  const fontList = doc?.getFontList?.() || {};
+  return fontList?.Sarabun ? "Sarabun" : "helvetica";
 }
 
 function makeExportDateText(dateFrom, dateTo) {
@@ -203,67 +295,114 @@ function buildBirthLotSummaryRows(flatRows) {
     });
 }
 
-function buildExcelDetailRows(flatRows) {
+function buildExcelDetailRows(flatRows, { showDeliveryDate = false } = {}) {
   return (flatRows || []).map((r) => ({
-    วันที่คัด: r.selected_date,
-    from_flock: r.from_flock,
-    โรงเรือน: r.house_no,
-    flock: r.flock,
-    เบอร์หมู: r.swine_code,
-    dam_code: r.dam_code,
-    sire_code: r.sire_code,
-    birth_lot: r.birth_lot,
-    วันเกิด: r.birth_date,
-    "อายุ(วัน)": r.age_days,
-    เต้าซ้าย: r.teats_left,
-    เต้าขวา: r.teats_right,
-    backfat: r.backfat,
-    น้ำหนัก: r.weight,
-    หมายเหตุ: r.remark,
-    heat: r.is_heat,
-    total_heat_count: r.total_heat_count,
-    heat_1_date: r.heat_1_date,
-    heat_2_date: r.heat_2_date,
-    heat_3_date: r.heat_3_date,
-    heat_4_date: r.heat_4_date,
+    วันที่คัด: safeCell(r.selected_date),
+    ...(showDeliveryDate ? { วันที่จัดส่ง: safeCell(r.delivery_date) } : {}),
+    from_flock: safeCell(r.from_flock),
+    โรงเรือน: safeCell(r.house_no),
+    flock: safeCell(r.flock),
+    เบอร์หมู: safeCell(r.swine_code),
+    dam_code: safeCell(r.dam_code),
+    sire_code: safeCell(r.sire_code),
+    birth_lot: safeCell(r.birth_lot),
+    วันเกิด: safeCell(r.birth_date),
+    "อายุ(วัน)": safeCell(r.age_days),
+    เต้าซ้าย: safeCell(r.teats_left),
+    เต้าขวา: safeCell(r.teats_right),
+    backfat: safeCell(r.backfat),
+    น้ำหนัก: safeCell(r.weight),
+    หมายเหตุ: safeCell(r.remark),
+    heat: safeCell(r.is_heat),
+    total_heat_count: safeCell(r.total_heat_count),
+    heat_1_date: safeCell(r.heat_1_date),
+    heat_2_date: safeCell(r.heat_2_date),
+    heat_3_date: safeCell(r.heat_3_date),
+    heat_4_date: safeCell(r.heat_4_date),
   }));
 }
 
-function exportExcelReport({ flatRows, filename, title = "Swine Report" }) {
+function exportExcelReport({
+  flatRows,
+  filename,
+  title = "Swine Report",
+  showDeliveryDate = false,
+}) {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([[title], []]);
+
+  const overallRows = buildOverallSummaryRows(flatRows);
   const dailyRows = buildDailySummaryRows(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
-  const detailRows = buildExcelDetailRows(flatRows);
+  const detailRows = buildExcelDetailRows(flatRows, { showDeliveryDate });
+
   let nextRow = 2;
+
+  XLSX.utils.sheet_add_aoa(ws, [["สรุปยอดรวมทั้งชุด"]], { origin: { r: nextRow, c: 0 } });
+  nextRow += 1;
+  XLSX.utils.sheet_add_json(ws, overallRows, {
+    origin: { r: nextRow, c: 0 },
+    skipHeader: false,
+  });
+  nextRow += overallRows.length + 3;
+
   XLSX.utils.sheet_add_aoa(ws, [["ยอดรวมรายวัน"]], { origin: { r: nextRow, c: 0 } });
   nextRow += 1;
-  XLSX.utils.sheet_add_json(ws, dailyRows, { origin: { r: nextRow, c: 0 }, skipHeader: false });
+  XLSX.utils.sheet_add_json(ws, dailyRows, {
+    origin: { r: nextRow, c: 0 },
+    skipHeader: false,
+  });
   nextRow += dailyRows.length + 3;
+
   XLSX.utils.sheet_add_aoa(ws, [["สรุปตาม birth_lot"]], { origin: { r: nextRow, c: 0 } });
   nextRow += 1;
-  XLSX.utils.sheet_add_json(ws, birthLotRows, { origin: { r: nextRow, c: 0 }, skipHeader: false });
+  XLSX.utils.sheet_add_json(ws, birthLotRows, {
+    origin: { r: nextRow, c: 0 },
+    skipHeader: false,
+  });
   nextRow += birthLotRows.length + 3;
+
   XLSX.utils.sheet_add_aoa(ws, [["รายละเอียดรายตัว"]], { origin: { r: nextRow, c: 0 } });
   nextRow += 1;
-  XLSX.utils.sheet_add_json(ws, detailRows, { origin: { r: nextRow, c: 0 }, skipHeader: false });
-  ws["!cols"] = Array.from({ length: 21 }, () => ({ wch: 14 }));
+  XLSX.utils.sheet_add_json(ws, detailRows, {
+    origin: { r: nextRow, c: 0 },
+    skipHeader: false,
+  });
+
+  const titleRows = [[title], [], ["สรุปยอดรวมทั้งชุด"], ["ยอดรวมรายวัน"], ["สรุปตาม birth_lot"], ["รายละเอียดรายตัว"]];
+  ws["!cols"] = makeSheetColsFromRows(
+    titleRows,
+    overallRows,
+    dailyRows,
+    birthLotRows,
+    detailRows
+  );
+
   XLSX.utils.book_append_sheet(wb, ws, "Report");
   XLSX.writeFile(wb, filename);
 }
 
-function exportPdfReport({ flatRows, filename, title = "Swine Report", dateText = "", fromFarmText = "", toFarmText = "" }) {
+function exportPdfReport({
+  flatRows,
+  filename,
+  title = "Swine Report",
+  dateText = "",
+  fromFarmText = "",
+  toFarmText = "",
+  showDeliveryDate = false,
+}) {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  registerSarabunNormal(doc);
-  registerSarabunBold(doc);
+  const pdfFont = ensurePdfThaiFont(doc);
 
+  const overallRows = buildOverallSummaryRows(flatRows);
   const dailyRows = buildDailySummaryRows(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
 
-  doc.setFont("Sarabun", "bold");
+  doc.setFont(pdfFont, "bold");
   doc.setFontSize(14);
   doc.text(title, 14, 12);
-  doc.setFont("Sarabun", "normal");
+
+  doc.setFont(pdfFont, "normal");
   doc.setFontSize(9);
   doc.text(`ช่วงวันที่: ${dateText || "-"}`, 14, 18);
   doc.text(`ฟาร์มที่คัด: ${fromFarmText || "all"}`, 14, 23);
@@ -271,6 +410,17 @@ function exportPdfReport({ flatRows, filename, title = "Swine Report", dateText 
 
   autoTable(doc, {
     startY: 34,
+    head: [["รายการ", "ค่า"]],
+    body: overallRows.map((r) => [r["รายการ"], r["ค่า"]]),
+    styles: { font: pdfFont, fontSize: 8.5, cellPadding: 1.8, overflow: "linebreak" },
+    headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [15, 23, 42] },
+    theme: "grid",
+    margin: { left: 14, right: 14 },
+    tableWidth: 90,
+  });
+
+  autoTable(doc, {
+    startY: (doc.lastAutoTable?.finalY || 34) + 6,
     head: [["วันที่จัดส่ง", "จำนวนตัวรวมรายวัน", "น้ำหนักรวมรายวัน", "น้ำหนักเฉลี่ยรายวัน"]],
     body: dailyRows.map((r) => [
       r["วันที่จัดส่ง"],
@@ -278,13 +428,25 @@ function exportPdfReport({ flatRows, filename, title = "Swine Report", dateText 
       r["น้ำหนักรวมรายวัน"],
       r["น้ำหนักเฉลี่ยรายวัน"],
     ]),
-    styles: { font: "Sarabun", fontSize: 8, cellPadding: 1.8 },
-    headStyles: { font: "Sarabun", fillColor: [15, 23, 42] },
+    styles: { font: pdfFont, fontSize: 8, cellPadding: 1.8, overflow: "linebreak" },
+    headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [15, 23, 42] },
+    theme: "grid",
+    margin: { left: 14, right: 14 },
   });
 
   autoTable(doc, {
-    startY: doc.lastAutoTable.finalY + 6,
-    head: [["วันที่จัดส่ง", "ฟาร์มที่คัด", "ฟาร์มปลายทาง", "birth_lot", "จำนวนตัว", "น้ำหนักรวมตาม birthlot", "น้ำหนักเฉลี่ยตาม birthlot", "น้ำหนักรวมทั้งหมด", "น้ำหนักเฉลี่ยทั้งหมด"]],
+    startY: (doc.lastAutoTable?.finalY || 34) + 6,
+    head: [[
+      "วันที่จัดส่ง",
+      "ฟาร์มที่คัด",
+      "ฟาร์มปลายทาง",
+      "birth_lot",
+      "จำนวนตัว",
+      "น้ำหนักรวมตาม birthlot",
+      "น้ำหนักเฉลี่ยตาม birthlot",
+      "น้ำหนักรวมทั้งหมด",
+      "น้ำหนักเฉลี่ยทั้งหมด",
+    ]],
     body: birthLotRows.map((r) => [
       r["วันที่จัดส่ง"],
       r["ฟาร์มที่คัด"],
@@ -296,48 +458,84 @@ function exportPdfReport({ flatRows, filename, title = "Swine Report", dateText 
       r["น้ำหนักรวมทั้งหมด"],
       r["น้ำหนักเฉลี่ยทั้งหมด"],
     ]),
-    styles: { font: "Sarabun", fontSize: 7, cellPadding: 1.5 },
-    headStyles: { font: "Sarabun", fillColor: [22, 163, 74] },
+    styles: { font: pdfFont, fontSize: 7, cellPadding: 1.4, overflow: "linebreak" },
+    headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [22, 163, 74] },
+    theme: "grid",
+    margin: { left: 8, right: 8 },
   });
 
   const detailRows = flatRows || [];
-  const pageSize = 30;
+  const pageSize = 28;
 
   for (let i = 0; i < detailRows.length; i += pageSize) {
     const chunk = detailRows.slice(i, i + pageSize);
+
     doc.addPage("a4", "landscape");
-    doc.setFont("Sarabun", "bold");
+    doc.setFont(pdfFont, "bold");
     doc.setFontSize(11);
     doc.text("รายละเอียดรายตัว", 14, 12);
 
     autoTable(doc, {
       startY: 16,
-      head: [["เบอร์หมู", "dam_code", "sire_code", "birth_lot", "วันเกิด", "อายุ(วัน)", "โรงเรือน", "flock", "เต้าซ้าย", "เต้าขวา", "backfat", "น้ำหนัก", "หมายเหตุ", "heat", "total_heat_count", "heat_1_date", "heat_2_date", "heat_3_date", "heat_4_date"]],
+      head: [[
+        "วันที่คัด",
+        ...(showDeliveryDate ? ["วันที่จัดส่ง"] : []),
+        "เบอร์หมู",
+        "dam_code",
+        "sire_code",
+        "birth_lot",
+        "วันเกิด",
+        "อายุ(วัน)",
+        "โรงเรือน",
+        "flock",
+        "เต้าซ้าย",
+        "เต้าขวา",
+        "backfat",
+        "น้ำหนัก",
+        "หมายเหตุ",
+        "heat",
+        "total_heat_count",
+        "heat_1_date",
+        "heat_2_date",
+        "heat_3_date",
+        "heat_4_date",
+      ]],
       body: chunk.map((r) => [
-        r.swine_code,
-        r.dam_code,
-        r.sire_code,
-        r.birth_lot,
-        r.birth_date,
-        r.age_days,
-        r.house_no,
-        r.flock,
-        r.teats_left,
-        r.teats_right,
-        r.backfat,
-        r.weight,
-        r.remark,
-        r.is_heat,
-        r.total_heat_count,
-        r.heat_1_date,
-        r.heat_2_date,
-        r.heat_3_date,
-        r.heat_4_date,
+        safeCell(r.selected_date),
+        ...(showDeliveryDate ? [safeCell(r.delivery_date)] : []),
+        safeCell(r.swine_code),
+        safeCell(r.dam_code),
+        safeCell(r.sire_code),
+        safeCell(r.birth_lot),
+        safeCell(r.birth_date),
+        safeCell(r.age_days),
+        safeCell(r.house_no),
+        safeCell(r.flock),
+        safeCell(r.teats_left),
+        safeCell(r.teats_right),
+        safeCell(r.backfat),
+        safeCell(r.weight),
+        safeCell(r.remark),
+        safeCell(r.is_heat),
+        safeCell(r.total_heat_count),
+        safeCell(r.heat_1_date),
+        safeCell(r.heat_2_date),
+        safeCell(r.heat_3_date),
+        safeCell(r.heat_4_date),
       ]),
-      styles: { font: "Sarabun", fontSize: 6, cellPadding: 1, overflow: "linebreak" },
-      headStyles: { font: "Sarabun", fillColor: [15, 23, 42] },
-      margin: { left: 8, right: 8 },
+      styles: { font: pdfFont, fontSize: 5.8, cellPadding: 0.9, overflow: "linebreak" },
+      headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [15, 23, 42] },
+      theme: "grid",
+      margin: { left: 6, right: 6 },
     });
+  }
+
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    doc.setFont(pdfFont, "normal");
+    doc.setFontSize(8);
+    doc.text(`หน้า ${page}/${pageCount}`, 287, 205, { align: "right" });
   }
 
   doc.save(filename);
@@ -348,8 +546,21 @@ async function exportRawReportFiles({ flatRows, effectiveDateFrom, effectiveDate
   const toFarmText = toFarmOptions.find((x) => x.value === toFarmId)?.farm_code || clean(toFarmId) || "all";
   const dateText = makeExportDateText(effectiveDateFrom, effectiveDateTo);
   const baseName = `swine_report_${dateText}_${fromFarmText}_${toFarmText}`;
-  exportPdfReport({ flatRows, filename: `${baseName}.pdf`, title: "Swine Report", dateText, fromFarmText, toFarmText });
-  exportExcelReport({ flatRows, filename: `${baseName}.xlsx`, title: "Swine Report" });
+  exportPdfReport({
+    flatRows,
+    filename: `${baseName}.pdf`,
+    title: "Swine Report",
+    dateText,
+    fromFarmText,
+    toFarmText,
+    showDeliveryDate,
+  });
+  exportExcelReport({
+    flatRows,
+    filename: `${baseName}.xlsx`,
+    title: "Swine Report",
+    showDeliveryDate,
+  });
   const csvRows = buildRawCsvRows(flatRows, { showDeliveryDate });
   downloadCsv(`${baseName}.csv`, csvRows);
   return { pdf: `${baseName}.pdf`, xlsx: `${baseName}.xlsx`, csv: `${baseName}.csv` };
@@ -1114,7 +1325,10 @@ export default function ExportCsvPage() {
 
     const map = {};
     for (const row of allRows) {
-      map[clean(row.swine_code)] = row;
+      map[clean(row.swine_code)] = {
+        ...row,
+        birth_lot: getBirthLotValue(row),
+      };
     }
     return map;
   }
@@ -1293,7 +1507,7 @@ export default function ExportCsvPage() {
           swine_code: code,
           dam_code: swine?.dam_code || "",
           sire_code: swine?.sire_code || "",
-          birth_lot: swine.birth_lot || "",
+          birth_lot: getBirthLotValue(swine),
           birth_date: swine.birth_date || "",
           age_days: calcAgeDays(ageRefDate, swine.birth_date),
           is_heat: heat.is_heat,
@@ -1401,7 +1615,7 @@ export default function ExportCsvPage() {
         flock: row?.flock || "",
         swine_code: code,
         birth_date: row?.birth_date || "",
-        birth_lot: row?.birth_lot || "",
+        birth_lot: getBirthLotValue(row),
         is_heat: heat.is_heat,
         total_heat_count: heat.total_heat_count,
         heat_1_date: heat.heat_1_date,
@@ -1647,6 +1861,7 @@ export default function ExportCsvPage() {
           flatRows,
           filename: `${baseName}.xlsx`,
           title: "Swine Report",
+          showDeliveryDate,
         });
         setMsg(`Export Excel สำเร็จ ${flatRows.length} รายการ`);
         return;
@@ -1660,6 +1875,7 @@ export default function ExportCsvPage() {
           dateText,
           fromFarmText,
           toFarmText,
+          showDeliveryDate,
         });
         setMsg(`Export PDF สำเร็จ ${flatRows.length} รายการ`);
         return;
