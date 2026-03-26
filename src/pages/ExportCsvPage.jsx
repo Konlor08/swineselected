@@ -823,7 +823,7 @@ export default function ExportCsvPage() {
     for (const chunk of chunks) {
       const { data, error } = await supabase
         .from("swines")
-        .select("swine_code, house_no, flock, birth_date, birth_lot, farm_code, farm_name")
+        .select("swine_code, house_no, flock, birth_date, birth_lot, dam_code, sire_code, farm_code, farm_name")
         .in("swine_code", chunk);
 
       if (error) throw error;
@@ -1009,8 +1009,10 @@ export default function ExportCsvPage() {
           to_farm_code: shipment.to_farm?.farm_code || "",
           to_farm_name: shipment.to_farm?.farm_name || "",
           swine_code: code,
-          birth_date: swine.birth_date || "",
+          dam_code: swine?.dam_code || "",
+          sire_code: swine?.sire_code || "",
           birth_lot: swine.birth_lot || "",
+          birth_date: swine.birth_date || "",
           age_days: calcAgeDays(ageRefDate, swine.birth_date),
           is_heat: heat.is_heat,
           total_heat_count: heat.total_heat_count,
@@ -1333,7 +1335,6 @@ export default function ExportCsvPage() {
       }
 
       const exportRows = flatRows.map((r) => ({
-        สถานะ: formatStatus(r.shipment_status),
         วันที่คัด: r.selected_date,
         ...(showDeliveryDate ? { วันที่จัดส่ง: r.delivery_date } : {}),
         ฟาร์มที่คัด: r.from_farm_name,
@@ -1342,20 +1343,22 @@ export default function ExportCsvPage() {
         โรงเรือน: r.house_no,
         flock: r.flock,
         เบอร์หมู: r.swine_code,
-        วันเกิด: r.birth_date,
+        dam_code: r.dam_code,
+        sire_code: r.sire_code,
         birth_lot: r.birth_lot,
-        heat: r.is_heat,
-        total_heat_count: r.total_heat_count,
-        heat_1_date: r.heat_1_date,
-        heat_2_date: r.heat_2_date,
-        heat_3_date: r.heat_3_date,
-        heat_4_date: r.heat_4_date,
+        วันเกิด: r.birth_date,
         "อายุ(วัน)": r.age_days,
         เต้าซ้าย: r.teats_left,
         เต้าขวา: r.teats_right,
         backfat: r.backfat,
         น้ำหนัก: r.weight,
         หมายเหตุ: r.remark,
+        heat: r.is_heat,
+        total_heat_count: r.total_heat_count,
+        heat_1_date: r.heat_1_date,
+        heat_2_date: r.heat_2_date,
+        heat_3_date: r.heat_3_date,
+        heat_4_date: r.heat_4_date,
       }));
 
       const fromFarmText =
@@ -2245,7 +2248,6 @@ export default function ExportCsvPage() {
                   </tr>
                 ) : (
                   <tr style={{ background: "#f8fafc", color: "#334155" }}>
-                    <th style={thStyle}>สถานะ</th>
                     <th style={thStyle}>วันที่คัด</th>
                     {showDeliveryDate ? <th style={thStyle}>วันที่จัดส่ง</th> : null}
                     <th style={thStyle}>ฟาร์มที่คัด</th>
@@ -2254,20 +2256,22 @@ export default function ExportCsvPage() {
                     <th style={thStyle}>โรงเรือน</th>
                     <th style={thStyle}>flock</th>
                     <th style={thStyle}>เบอร์หมู</th>
-                    <th style={thStyle}>วันเกิด</th>
+                    <th style={thStyle}>dam_code</th>
+                    <th style={thStyle}>sire_code</th>
                     <th style={thStyle}>birth_lot</th>
-                    <th style={thStyle}>heat</th>
-                    <th style={thStyle}>total_heat_count</th>
-                    <th style={thStyle}>heat_1_date</th>
-                    <th style={thStyle}>heat_2_date</th>
-                    <th style={thStyle}>heat_3_date</th>
-                    <th style={thStyle}>heat_4_date</th>
+                    <th style={thStyle}>วันเกิด</th>
                     <th style={thStyle}>อายุ(วัน)</th>
                     <th style={thStyle}>เต้าซ้าย</th>
                     <th style={thStyle}>เต้าขวา</th>
                     <th style={thStyle}>backfat</th>
                     <th style={thStyle}>น้ำหนัก</th>
                     <th style={thStyle}>หมายเหตุ</th>
+                    <th style={thStyle}>heat</th>
+                    <th style={thStyle}>total_heat_count</th>
+                    <th style={thStyle}>heat_1_date</th>
+                    <th style={thStyle}>heat_2_date</th>
+                    <th style={thStyle}>heat_3_date</th>
+                    <th style={thStyle}>heat_4_date</th>
                   </tr>
                 )}
               </thead>
@@ -2275,7 +2279,7 @@ export default function ExportCsvPage() {
               <tbody>
                 {previewTop100.length === 0 ? (
                   <tr>
-                    <td colSpan={reportType === "not_selected" ? 13 : showDeliveryDate ? 23 : 22} style={emptyTdStyle}>
+                    <td colSpan={reportType === "not_selected" ? 13 : showDeliveryDate ? 24 : 23} style={emptyTdStyle}>
                       ยังไม่มีข้อมูลแสดง
                     </td>
                   </tr>
@@ -2300,11 +2304,6 @@ export default function ExportCsvPage() {
                 ) : (
                   previewTop100.map((row, idx) => (
                     <tr key={`${row.swine_code}-${row.created_at}-${idx}`}>
-                      <td style={tdStyle}>
-                        <span style={statusBadgeStyle(row.shipment_status)}>
-                          {formatStatus(row.shipment_status)}
-                        </span>
-                      </td>
                       <td style={tdStyle}>{row.selected_date}</td>
                       {showDeliveryDate ? <td style={tdStyle}>{row.delivery_date}</td> : null}
                       <td style={tdStyle}>{row.from_farm_name}</td>
@@ -2313,20 +2312,22 @@ export default function ExportCsvPage() {
                       <td style={tdStyle}>{row.house_no}</td>
                       <td style={tdStyle}>{row.flock}</td>
                       <td style={tdStyle}>{row.swine_code}</td>
-                      <td style={tdStyle}>{row.birth_date}</td>
+                      <td style={tdStyle}>{row.dam_code}</td>
+                      <td style={tdStyle}>{row.sire_code}</td>
                       <td style={tdStyle}>{row.birth_lot}</td>
-                      <td style={tdStyle}>{row.is_heat}</td>
-                      <td style={tdStyle}>{row.total_heat_count}</td>
-                      <td style={tdStyle}>{row.heat_1_date}</td>
-                      <td style={tdStyle}>{row.heat_2_date}</td>
-                      <td style={tdStyle}>{row.heat_3_date}</td>
-                      <td style={tdStyle}>{row.heat_4_date}</td>
+                      <td style={tdStyle}>{row.birth_date}</td>
                       <td style={tdStyle}>{row.age_days}</td>
                       <td style={tdStyle}>{row.teats_left}</td>
                       <td style={tdStyle}>{row.teats_right}</td>
                       <td style={tdStyle}>{row.backfat}</td>
                       <td style={tdStyle}>{row.weight}</td>
                       <td style={tdStyle}>{row.remark}</td>
+                      <td style={tdStyle}>{row.is_heat}</td>
+                      <td style={tdStyle}>{row.total_heat_count}</td>
+                      <td style={tdStyle}>{row.heat_1_date}</td>
+                      <td style={tdStyle}>{row.heat_2_date}</td>
+                      <td style={tdStyle}>{row.heat_3_date}</td>
+                      <td style={tdStyle}>{row.heat_4_date}</td>
                     </tr>
                   ))
                 )}
