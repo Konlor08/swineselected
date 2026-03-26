@@ -7,6 +7,8 @@ import { fetchMyProfile } from "../lib/profile";
 import * as XLSX from "xlsx";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { registerSarabunNormal } from "../lib/pdfFonts/sarabun-normal";
+import { registerSarabunBold } from "../lib/pdfFonts/sarabun-bold";
 
 function todayYmdLocal() {
   const d = new Date();
@@ -251,48 +253,118 @@ function exportExcelReport({ flatRows, filename, title = "Swine Report" }) {
 }
 
 function exportPdfReport({ flatRows, filename, title = "Swine Report", dateText = "", fromFarmText = "", toFarmText = "" }) {
+  registerSarabunNormal(jsPDF);
+  registerSarabunBold(jsPDF);
+
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const dailyRows = buildDailySummaryRows(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
-  doc.setFont("helvetica", "bold");
+
+  doc.setFont("Sarabun", "bold");
   doc.setFontSize(14);
   doc.text(title, 14, 12);
-  doc.setFont("helvetica", "normal");
+
+  doc.setFont("Sarabun", "normal");
   doc.setFontSize(9);
   doc.text(`ช่วงวันที่: ${dateText || "-"}`, 14, 18);
   doc.text(`ฟาร์มที่คัด: ${fromFarmText || "all"}`, 14, 23);
   doc.text(`ฟาร์มปลายทาง: ${toFarmText || "all"}`, 14, 28);
+
   autoTable(doc, {
     startY: 34,
     head: [["วันที่จัดส่ง", "จำนวนตัวรวมรายวัน", "น้ำหนักรวมรายวัน", "น้ำหนักเฉลี่ยรายวัน"]],
     body: dailyRows.map((r) => [r["วันที่จัดส่ง"], r["จำนวนตัวรวมรายวัน"], r["น้ำหนักรวมรายวัน"], r["น้ำหนักเฉลี่ยรายวัน"]]),
-    styles: { fontSize: 8, cellPadding: 1.8 },
-    headStyles: { fillColor: [15, 23, 42] },
+    styles: { font: "Sarabun", fontSize: 8, cellPadding: 1.8 },
+    headStyles: { font: "Sarabun", fillColor: [15, 23, 42] },
   });
+
   autoTable(doc, {
     startY: doc.lastAutoTable.finalY + 6,
     head: [["วันที่จัดส่ง", "ฟาร์มที่คัด", "ฟาร์มปลายทาง", "birth_lot", "จำนวนตัว", "น้ำหนักรวมตาม birthlot", "น้ำหนักเฉลี่ยตาม birthlot", "น้ำหนักรวมทั้งหมด", "น้ำหนักเฉลี่ยทั้งหมด"]],
-    body: birthLotRows.map((r) => [r["วันที่จัดส่ง"], r["ฟาร์มที่คัด"], r["ฟาร์มปลายทาง"], r["birth_lot"], r["จำนวนตัว"], r["น้ำหนักรวมตาม_birthlot"], r["น้ำหนักเฉลี่ยตาม_birthlot"], r["น้ำหนักรวมทั้งหมด"], r["น้ำหนักเฉลี่ยทั้งหมด"]]),
-    styles: { fontSize: 7, cellPadding: 1.5 },
-    headStyles: { fillColor: [22, 163, 74] },
+    body: birthLotRows.map((r) => [
+      r["วันที่จัดส่ง"],
+      r["ฟาร์มที่คัด"],
+      r["ฟาร์มปลายทาง"],
+      r["birth_lot"],
+      r["จำนวนตัว"],
+      r["น้ำหนักรวมตาม birthlot"],
+      r["น้ำหนักเฉลี่ยตาม birthlot"],
+      r["น้ำหนักรวมทั้งหมด"],
+      r["น้ำหนักเฉลี่ยทั้งหมด"],
+    ]),
+    styles: { font: "Sarabun", fontSize: 7, cellPadding: 1.5 },
+    headStyles: { font: "Sarabun", fillColor: [22, 163, 74] },
   });
+
   const detailRows = flatRows || [];
   const pageSize = 30;
+
   for (let i = 0; i < detailRows.length; i += pageSize) {
     const chunk = detailRows.slice(i, i + pageSize);
     doc.addPage("a4", "landscape");
-    doc.setFont("helvetica", "bold");
+
+    doc.setFont("Sarabun", "bold");
     doc.setFontSize(11);
     doc.text("รายละเอียดรายตัว", 14, 12);
+
     autoTable(doc, {
       startY: 16,
-      head: [["เบอร์หมู", "dam_code", "sire_code", "birth_lot", "วันเกิด", "อายุ(วัน)", "โรงเรือน", "flock", "เต้าซ้าย", "เต้าขวา", "backfat", "น้ำหนัก", "หมายเหตุ", "heat", "total_heat_count", "heat_1_date", "heat_2_date", "heat_3_date", "heat_4_date"]],
-      body: chunk.map((r) => [r.swine_code, r.dam_code, r.sire_code, r.birth_lot, r.birth_date, r.age_days, r.house_no, r.flock, r.teats_left, r.teats_right, r.backfat, r.weight, r.remark, r.is_heat, r.total_heat_count, r.heat_1_date, r.heat_2_date, r.heat_3_date, r.heat_4_date]),
-      styles: { fontSize: 6, cellPadding: 1, overflow: "linebreak" },
-      headStyles: { fillColor: [15, 23, 42] },
+      head: [[
+        "เบอร์หมู",
+        "dam_code",
+        "sire_code",
+        "birth_lot",
+        "วันเกิด",
+        "อายุ(วัน)",
+        "โรงเรือน",
+        "flock",
+        "เต้าซ้าย",
+        "เต้าขวา",
+        "backfat",
+        "น้ำหนัก",
+        "หมายเหตุ",
+        "heat",
+        "total_heat_count",
+        "heat_1_date",
+        "heat_2_date",
+        "heat_3_date",
+        "heat_4_date",
+      ]],
+      body: chunk.map((r) => [
+        r.swine_code,
+        r.dam_code,
+        r.sire_code,
+        r.birth_lot,
+        r.birth_date,
+        r.age_days,
+        r.house_no,
+        r.flock,
+        r.teats_left,
+        r.teats_right,
+        r.backfat,
+        r.weight,
+        r.remark,
+        r.is_heat,
+        r.total_heat_count,
+        r.heat_1_date,
+        r.heat_2_date,
+        r.heat_3_date,
+        r.heat_4_date,
+      ]),
+      styles: {
+        font: "Sarabun",
+        fontSize: 6,
+        cellPadding: 1,
+        overflow: "linebreak",
+      },
+      headStyles: {
+        font: "Sarabun",
+        fillColor: [15, 23, 42],
+      },
       margin: { left: 8, right: 8 },
     });
   }
+
   doc.save(filename);
 }
 
@@ -522,7 +594,6 @@ export default function ExportCsvPage() {
   const [toFarmLoading, setToFarmLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [activeExportKind, setActiveExportKind] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [msg, setMsg] = useState("");
@@ -1511,11 +1582,10 @@ export default function ExportCsvPage() {
     }
   }, [canPreviewExport, reportType, refreshPreviewRows]);
 
-  const exportCurrentRows = useCallback(async (kind) => {
+  const handleExport = useCallback(async () => {
     if (!canPreviewExport) return;
 
     setExporting(true);
-    setActiveExportKind(kind);
     setMsg("");
 
     try {
@@ -1524,11 +1594,6 @@ export default function ExportCsvPage() {
 
         if (!rows.length) {
           setMsg("ไม่พบข้อมูลสำหรับ export");
-          return;
-        }
-
-        if (kind !== "csv") {
-          setMsg("รายงาน Not Selected รองรับเฉพาะ Export CSV");
           return;
         }
 
@@ -1561,7 +1626,7 @@ export default function ExportCsvPage() {
         const filename = `swine_not_selected_${dateText}_${fromFarmText}.csv`;
 
         downloadCsv(filename, exportRows);
-        setMsg(`Export CSV สำเร็จ ${exportRows.length} รายการ`);
+        setMsg(`Export สำเร็จ ${exportRows.length} รายการ`);
         return;
       }
 
@@ -1575,56 +1640,25 @@ export default function ExportCsvPage() {
         return;
       }
 
-      const fromFarmText =
-        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code ||
-        clean(fromFarmCode) ||
-        "all";
+      const files = await exportRawReportFiles({
+        flatRows,
+        effectiveDateFrom,
+        effectiveDateTo,
+        fromFarmCode,
+        fromFarmOptions,
+        toFarmId,
+        toFarmOptions,
+        showDeliveryDate,
+      });
 
-      const toFarmText =
-        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code ||
-        clean(toFarmId) ||
-        "all";
-
-      const dateText = makeExportDateText(effectiveDateFrom, effectiveDateTo);
-      const baseName = `swine_report_${dateText}_${fromFarmText}_${toFarmText}`;
-
-      if (kind === "csv") {
-        const csvRows = buildRawCsvRows(flatRows, { showDeliveryDate });
-        downloadCsv(`${baseName}.csv`, csvRows);
-        setMsg(`Export CSV สำเร็จ ${flatRows.length} รายการ`);
-        return;
-      }
-
-      if (kind === "excel") {
-        exportExcelReport({
-          flatRows,
-          filename: `${baseName}.xlsx`,
-          title: "Swine Report",
-        });
-        setMsg(`Export Excel สำเร็จ ${flatRows.length} รายการ`);
-        return;
-      }
-
-      if (kind === "pdf") {
-        exportPdfReport({
-          flatRows,
-          filename: `${baseName}.pdf`,
-          title: "Swine Report",
-          dateText,
-          fromFarmText,
-          toFarmText,
-        });
-        setMsg(`Export PDF สำเร็จ ${flatRows.length} รายการ`);
-        return;
-      }
-
-      setMsg("ไม่รู้จักประเภท export");
+      setMsg(
+        `Export สำเร็จ ${flatRows.length} รายการ\nPDF: ${files.pdf}\nExcel: ${files.xlsx}\nCSV: ${files.csv}`
+      );
     } catch (e) {
-      console.error("exportCurrentRows error:", e);
-      setMsg(e?.message || `Export ${kind?.toUpperCase?.() || ""} ไม่สำเร็จ`);
+      console.error("handleExport error:", e);
+      setMsg(e?.message || "Export Report ไม่สำเร็จ");
     } finally {
       setExporting(false);
-      setActiveExportKind("");
     }
   }, [
     canPreviewExport,
@@ -1639,18 +1673,6 @@ export default function ExportCsvPage() {
     toFarmOptions,
     showDeliveryDate,
   ]);
-
-  const handleExportCsv = useCallback(async () => {
-    await exportCurrentRows("csv");
-  }, [exportCurrentRows]);
-
-  const handleExportExcel = useCallback(async () => {
-    await exportCurrentRows("excel");
-  }, [exportCurrentRows]);
-
-  const handleExportPdf = useCallback(async () => {
-    await exportCurrentRows("pdf");
-  }, [exportCurrentRows]);
 
   const handleSubmitConfirm = useCallback(async () => {
     if (!canSubmitRows) return;
@@ -1903,7 +1925,7 @@ export default function ExportCsvPage() {
             >
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: isMobile ? 17 : 18, fontWeight: 900 }}>
-                  Export CSV
+                  Export Report
                 </div>
                 <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6 }}>
                   Role: <b>{myRole || "-"}</b>
@@ -2232,12 +2254,12 @@ export default function ExportCsvPage() {
 
             <button
               type="button"
-              onClick={handleExportCsv}
+              onClick={handleExport}
               disabled={!canPreviewExport || exporting || previewLoading || submitting}
               style={{
                 ...btnGreenStyle,
                 width: isMobile ? "100%" : "auto",
-                flex: isMobile ? "1 1 100%" : "1 1 150px",
+                flex: isMobile ? "1 1 100%" : "1 1 160px",
                 opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
                 cursor:
                   !canPreviewExport || exporting || previewLoading || submitting
@@ -2245,48 +2267,8 @@ export default function ExportCsvPage() {
                     : "pointer",
               }}
             >
-              {exporting && activeExportKind === "csv" ? "กำลัง Export CSV..." : "Export CSV"}
+              {exporting ? "กำลัง Export..." : "Export Report"}
             </button>
-
-            {reportType === "raw" ? (
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                disabled={!canPreviewExport || exporting || previewLoading || submitting}
-                style={{
-                  ...btnGreenStyle,
-                  width: isMobile ? "100%" : "auto",
-                  flex: isMobile ? "1 1 100%" : "1 1 150px",
-                  opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
-                  cursor:
-                    !canPreviewExport || exporting || previewLoading || submitting
-                      ? "not-allowed"
-                      : "pointer",
-                }}
-              >
-                {exporting && activeExportKind === "excel" ? "กำลัง Export Excel..." : "Export Excel"}
-              </button>
-            ) : null}
-
-            {reportType === "raw" ? (
-              <button
-                type="button"
-                onClick={handleExportPdf}
-                disabled={!canPreviewExport || exporting || previewLoading || submitting}
-                style={{
-                  ...btnGreenStyle,
-                  width: isMobile ? "100%" : "auto",
-                  flex: isMobile ? "1 1 100%" : "1 1 150px",
-                  opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
-                  cursor:
-                    !canPreviewExport || exporting || previewLoading || submitting
-                      ? "not-allowed"
-                      : "pointer",
-                }}
-              >
-                {exporting && activeExportKind === "pdf" ? "กำลัง Export PDF..." : "Export PDF"}
-              </button>
-            ) : null}
 
             {reportType === "raw" ? (
               <button
