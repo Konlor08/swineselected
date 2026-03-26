@@ -130,6 +130,15 @@ function countHeatRows(rows) {
   return (rows || []).filter((row) => String(row?.is_heat || "").toUpperCase() === "Y").length;
 }
 
+function uniqueBirthLotCount(rows) {
+  const set = new Set();
+  for (const row of rows || []) {
+    const value = getBirthLotValue(row);
+    if (value) set.add(value);
+  }
+  return set.size;
+}
+
 function buildOverallSummaryRows(flatRows) {
   return [
     { รายการ: "จำนวน shipment", ค่า: uniqueCountFromRows(flatRows, "shipment_id") },
@@ -138,7 +147,7 @@ function buildOverallSummaryRows(flatRows) {
     { รายการ: "น้ำหนักเฉลี่ยทั้งหมด", ค่า: avgFromRows(flatRows, "weight") },
     { รายการ: "จำนวนฟาร์มที่คัด", ค่า: uniqueCountFromRows(flatRows, "from_farm_code") },
     { รายการ: "จำนวนฟาร์มปลายทาง", ค่า: uniqueCountFromRows(flatRows, "to_farm_code") },
-    { รายการ: "จำนวน birth_lot", ค่า: uniqueCountFromRows(flatRows, "birth_lot") },
+    { รายการ: "จำนวน birth_lot", ค่า: uniqueBirthLotCount(flatRows) },
     { รายการ: "จำนวนหมูติดสัด", ค่า: countHeatRows(flatRows) },
   ];
 }
@@ -163,33 +172,18 @@ function makeSheetColsFromRows(...rowGroups) {
   }));
 }
 
-function tryRegisterFont(registerFn, doc) {
-  if (typeof registerFn !== "function") return false;
-
-  const candidates = [jsPDF, doc?.constructor, doc, jsPDF?.API];
-
-  for (const target of candidates) {
-    try {
-      if (target) registerFn(target);
-    } catch (e) {
-      // ลอง target ถัดไป
-    }
-
-    try {
-      const fontList = doc?.getFontList?.() || {};
-      if (fontList?.Sarabun) return true;
-    } catch (e) {
-      // ignore
-    }
+function registerPdfThaiFonts() {
+  try {
+    registerSarabunNormal(jsPDF);
+    registerSarabunBold(jsPDF);
+    return true;
+  } catch (e) {
+    console.error("registerPdfThaiFonts error:", e);
+    return false;
   }
-
-  return false;
 }
 
 function ensurePdfThaiFont(doc) {
-  tryRegisterFont(registerSarabunNormal, doc);
-  tryRegisterFont(registerSarabunBold, doc);
-
   const fontList = doc?.getFontList?.() || {};
   return fontList?.Sarabun ? "Sarabun" : "helvetica";
 }
@@ -212,7 +206,7 @@ function buildRawCsvRows(flatRows, { showDeliveryDate = false } = {}) {
     เบอร์หมู: r.swine_code,
     dam_code: r.dam_code,
     sire_code: r.sire_code,
-    birth_lot: r.birth_lot,
+    birth_lot: getBirthLotValue(r),
     วันเกิด: r.birth_date,
     "อายุ(วัน)": r.age_days,
     เต้าซ้าย: r.teats_left,
@@ -252,8 +246,7 @@ function buildBirthLotSummaryRows(flatRows) {
     const deliveryDate = safeText(r.delivery_date) || safeText(r.selected_date) || "ยังไม่ระบุ";
     const fromFarm = safeText(r.from_farm_name);
     const toFarm = safeText(r.to_farm_name);
-    const birthLot = safeText(r.birth_lot) || "-";
-    const totalKey = [deliveryDate, fromFarm, toFarm].join("||");
+    const birthLot = getBirthLotValue(r) || "-";
     const key = [deliveryDate, fromFarm, toFarm, birthLot].join("||");
     if (!map.has(key)) {
       map.set(key, {
@@ -262,17 +255,11 @@ function buildBirthLotSummaryRows(flatRows) {
         ฟาร์มปลายทาง: toFarm,
         birth_lot: birthLot,
         __rows: [],
-        __totalKey: totalKey,
       });
     }
     map.get(key).__rows.push(r);
   }
   const all = Array.from(map.values());
-  const totalMap = new Map();
-  for (const row of all) {
-    if (!totalMap.has(row.__totalKey)) totalMap.set(row.__totalKey, []);
-    totalMap.get(row.__totalKey).push(...row.__rows);
-  }
   return all
     .sort((a, b) =>
       [a["วันที่จัดส่ง"], a["ฟาร์มที่คัด"], a["ฟาร์มปลายทาง"], a.birth_lot]
@@ -280,7 +267,6 @@ function buildBirthLotSummaryRows(flatRows) {
         .localeCompare([b["วันที่จัดส่ง"], b["ฟาร์มที่คัด"], b["ฟาร์มปลายทาง"], b.birth_lot].join("|"))
     )
     .map((row) => {
-      const totalRows = totalMap.get(row.__totalKey) || [];
       return {
         วันที่จัดส่ง: row["วันที่จัดส่ง"],
         ฟาร์มที่คัด: row["ฟาร์มที่คัด"],
@@ -289,8 +275,8 @@ function buildBirthLotSummaryRows(flatRows) {
         "จำนวนตัว": row.__rows.length,
         "น้ำหนักรวมตาม birthlot": sumFromRows(row.__rows, "weight"),
         "น้ำหนักเฉลี่ยตาม birthlot": avgFromRows(row.__rows, "weight"),
-        "น้ำหนักรวมทั้งหมด": sumFromRows(totalRows, "weight"),
-        "น้ำหนักเฉลี่ยทั้งหมด": avgFromRows(totalRows, "weight"),
+        "น้ำหนักรวมทั้งหมด": "",
+        "น้ำหนักเฉลี่ยทั้งหมด": "",
       };
     });
 }
@@ -352,16 +338,15 @@ function appendJsonTableWithTotalRow(ws, titleText, dataRows, totalRow, nextRow)
     skipHeader: false,
   });
 
-  const dataStartRow = nextRow;
-  const totalRowIndex = dataStartRow + dataRows.length + 1;
+  const columns = Object.keys((dataRows && dataRows[0]) || totalRow || {});
+  const totalRowIndex = nextRow + (dataRows?.length || 0) + 1;
 
-  XLSX.utils.sheet_add_json(ws, [totalRow], {
+  const totalValues = columns.map((key) => safeCell(totalRow?.[key]));
+  XLSX.utils.sheet_add_aoa(ws, [totalValues], {
     origin: { r: totalRowIndex, c: 0 },
-    skipHeader: false,
   });
 
-  const colCount = Object.keys(totalRow || {}).length;
-  applyExcelTotalRowStyle(ws, totalRowIndex, colCount);
+  applyExcelTotalRowStyle(ws, totalRowIndex, columns.length);
 
   return totalRowIndex + 3;
 }
@@ -376,7 +361,7 @@ function buildExcelDetailRows(flatRows, { showDeliveryDate = false } = {}) {
     เบอร์หมู: safeCell(r.swine_code),
     dam_code: safeCell(r.dam_code),
     sire_code: safeCell(r.sire_code),
-    birth_lot: safeCell(r.birth_lot),
+    birth_lot: safeCell(getBirthLotValue(r)),
     วันเกิด: safeCell(r.birth_date),
     "อายุ(วัน)": safeCell(r.age_days),
     เต้าซ้าย: safeCell(r.teats_left),
@@ -473,8 +458,11 @@ function exportPdfReport({
   toFarmText = "",
   showDeliveryDate = false,
 }) {
+  registerPdfThaiFonts();
+
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pdfFont = ensurePdfThaiFont(doc);
+  doc.setFont(pdfFont, "normal");
 
   const overallRows = buildOverallSummaryRows(flatRows);
   const dailyRows = buildDailySummaryRows(flatRows);
@@ -611,7 +599,7 @@ function exportPdfReport({
         safeCell(r.swine_code),
         safeCell(r.dam_code),
         safeCell(r.sire_code),
-        safeCell(r.birth_lot),
+        safeCell(getBirthLotValue(r)),
         safeCell(r.birth_date),
         safeCell(r.age_days),
         safeCell(r.house_no),
@@ -1905,7 +1893,7 @@ export default function ExportCsvPage() {
           flock: r.flock,
           เบอร์หมู: r.swine_code,
           วันเกิด: r.birth_date,
-          birth_lot: r.birth_lot,
+          birth_lot: getBirthLotValue(r),
           heat: r.is_heat,
           total_heat_count: r.total_heat_count,
           heat_1_date: r.heat_1_date,
