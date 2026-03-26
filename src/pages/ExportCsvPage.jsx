@@ -1,10 +1,5 @@
 // src/pages/ExportCsvPage.jsx
 
-
-
-
-
-
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -527,6 +522,7 @@ export default function ExportCsvPage() {
   const [toFarmLoading, setToFarmLoading] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [activeExportKind, setActiveExportKind] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const [msg, setMsg] = useState("");
@@ -1515,10 +1511,11 @@ export default function ExportCsvPage() {
     }
   }, [canPreviewExport, reportType, refreshPreviewRows]);
 
-  const handleExport = useCallback(async () => {
+  const exportCurrentRows = useCallback(async (kind) => {
     if (!canPreviewExport) return;
 
     setExporting(true);
+    setActiveExportKind(kind);
     setMsg("");
 
     try {
@@ -1527,6 +1524,11 @@ export default function ExportCsvPage() {
 
         if (!rows.length) {
           setMsg("ไม่พบข้อมูลสำหรับ export");
+          return;
+        }
+
+        if (kind !== "csv") {
+          setMsg("รายงาน Not Selected รองรับเฉพาะ Export CSV");
           return;
         }
 
@@ -1559,7 +1561,7 @@ export default function ExportCsvPage() {
         const filename = `swine_not_selected_${dateText}_${fromFarmText}.csv`;
 
         downloadCsv(filename, exportRows);
-        setMsg(`Export สำเร็จ ${exportRows.length} รายการ`);
+        setMsg(`Export CSV สำเร็จ ${exportRows.length} รายการ`);
         return;
       }
 
@@ -1573,25 +1575,56 @@ export default function ExportCsvPage() {
         return;
       }
 
-      const files = await exportRawReportFiles({
-        flatRows,
-        effectiveDateFrom,
-        effectiveDateTo,
-        fromFarmCode,
-        fromFarmOptions,
-        toFarmId,
-        toFarmOptions,
-        showDeliveryDate,
-      });
+      const fromFarmText =
+        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code ||
+        clean(fromFarmCode) ||
+        "all";
 
-      setMsg(
-        `Export สำเร็จ ${flatRows.length} รายการ\nPDF: ${files.pdf}\nExcel: ${files.xlsx}\nCSV: ${files.csv}`
-      );
+      const toFarmText =
+        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code ||
+        clean(toFarmId) ||
+        "all";
+
+      const dateText = makeExportDateText(effectiveDateFrom, effectiveDateTo);
+      const baseName = `swine_report_${dateText}_${fromFarmText}_${toFarmText}`;
+
+      if (kind === "csv") {
+        const csvRows = buildRawCsvRows(flatRows, { showDeliveryDate });
+        downloadCsv(`${baseName}.csv`, csvRows);
+        setMsg(`Export CSV สำเร็จ ${flatRows.length} รายการ`);
+        return;
+      }
+
+      if (kind === "excel") {
+        exportExcelReport({
+          flatRows,
+          filename: `${baseName}.xlsx`,
+          title: "Swine Report",
+        });
+        setMsg(`Export Excel สำเร็จ ${flatRows.length} รายการ`);
+        return;
+      }
+
+      if (kind === "pdf") {
+        exportPdfReport({
+          flatRows,
+          filename: `${baseName}.pdf`,
+          title: "Swine Report",
+          dateText,
+          fromFarmText,
+          toFarmText,
+        });
+        setMsg(`Export PDF สำเร็จ ${flatRows.length} รายการ`);
+        return;
+      }
+
+      setMsg("ไม่รู้จักประเภท export");
     } catch (e) {
-      console.error("handleExport error:", e);
-      setMsg(e?.message || "Export Report ไม่สำเร็จ");
+      console.error("exportCurrentRows error:", e);
+      setMsg(e?.message || `Export ${kind?.toUpperCase?.() || ""} ไม่สำเร็จ`);
     } finally {
       setExporting(false);
+      setActiveExportKind("");
     }
   }, [
     canPreviewExport,
@@ -1606,6 +1639,18 @@ export default function ExportCsvPage() {
     toFarmOptions,
     showDeliveryDate,
   ]);
+
+  const handleExportCsv = useCallback(async () => {
+    await exportCurrentRows("csv");
+  }, [exportCurrentRows]);
+
+  const handleExportExcel = useCallback(async () => {
+    await exportCurrentRows("excel");
+  }, [exportCurrentRows]);
+
+  const handleExportPdf = useCallback(async () => {
+    await exportCurrentRows("pdf");
+  }, [exportCurrentRows]);
 
   const handleSubmitConfirm = useCallback(async () => {
     if (!canSubmitRows) return;
@@ -1858,7 +1903,7 @@ export default function ExportCsvPage() {
             >
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: isMobile ? 17 : 18, fontWeight: 900 }}>
-                  Export Report
+                  Export CSV
                 </div>
                 <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6 }}>
                   Role: <b>{myRole || "-"}</b>
@@ -2187,12 +2232,12 @@ export default function ExportCsvPage() {
 
             <button
               type="button"
-              onClick={handleExport}
+              onClick={handleExportCsv}
               disabled={!canPreviewExport || exporting || previewLoading || submitting}
               style={{
                 ...btnGreenStyle,
                 width: isMobile ? "100%" : "auto",
-                flex: isMobile ? "1 1 100%" : "1 1 160px",
+                flex: isMobile ? "1 1 100%" : "1 1 150px",
                 opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
                 cursor:
                   !canPreviewExport || exporting || previewLoading || submitting
@@ -2200,8 +2245,48 @@ export default function ExportCsvPage() {
                     : "pointer",
               }}
             >
-              {exporting ? "กำลัง Export..." : "Export Report"}
+              {exporting && activeExportKind === "csv" ? "กำลัง Export CSV..." : "Export CSV"}
             </button>
+
+            {reportType === "raw" ? (
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                disabled={!canPreviewExport || exporting || previewLoading || submitting}
+                style={{
+                  ...btnGreenStyle,
+                  width: isMobile ? "100%" : "auto",
+                  flex: isMobile ? "1 1 100%" : "1 1 150px",
+                  opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
+                  cursor:
+                    !canPreviewExport || exporting || previewLoading || submitting
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {exporting && activeExportKind === "excel" ? "กำลัง Export Excel..." : "Export Excel"}
+              </button>
+            ) : null}
+
+            {reportType === "raw" ? (
+              <button
+                type="button"
+                onClick={handleExportPdf}
+                disabled={!canPreviewExport || exporting || previewLoading || submitting}
+                style={{
+                  ...btnGreenStyle,
+                  width: isMobile ? "100%" : "auto",
+                  flex: isMobile ? "1 1 100%" : "1 1 150px",
+                  opacity: !canPreviewExport || exporting || previewLoading || submitting ? 0.6 : 1,
+                  cursor:
+                    !canPreviewExport || exporting || previewLoading || submitting
+                      ? "not-allowed"
+                      : "pointer",
+                }}
+              >
+                {exporting && activeExportKind === "pdf" ? "กำลัง Export PDF..." : "Export PDF"}
+              </button>
+            ) : null}
 
             {reportType === "raw" ? (
               <button
