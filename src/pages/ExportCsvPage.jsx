@@ -993,6 +993,8 @@ export default function ExportCsvPage() {
           heat_4_date: "",
         };
 
+        const ageRefDate = clean(shipment?.delivery_date) || clean(shipment?.selected_date);
+
         rows.push({
           shipment_id: shipment.id || "",
           shipment_no: shipment.shipment_no || "",
@@ -1009,7 +1011,7 @@ export default function ExportCsvPage() {
           swine_code: code,
           birth_date: swine.birth_date || "",
           birth_lot: swine.birth_lot || "",
-          age_days: calcAgeDays(shipment.selected_date, swine.birth_date),
+          age_days: calcAgeDays(ageRefDate, swine.birth_date),
           is_heat: heat.is_heat,
           total_heat_count: heat.total_heat_count,
           heat_1_date: heat.heat_1_date,
