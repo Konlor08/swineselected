@@ -173,19 +173,28 @@ function makeSheetColsFromRows(...rowGroups) {
 }
 
 function registerPdfThaiFonts() {
-  try {
-    registerSarabunNormal(jsPDF);
-    registerSarabunBold(jsPDF);
-    return true;
-  } catch (e) {
-    console.error("registerPdfThaiFonts error:", e);
-    return false;
-  }
+  registerSarabunNormal(jsPDF);
+  registerSarabunBold(jsPDF);
 }
 
 function ensurePdfThaiFont(doc) {
   const fontList = doc?.getFontList?.() || {};
-  return fontList?.Sarabun ? "Sarabun" : "helvetica";
+  const sarabunFonts = fontList?.Sarabun;
+
+  const hasNormal = Array.isArray(sarabunFonts)
+    ? sarabunFonts.includes("normal")
+    : Boolean(sarabunFonts);
+  const hasBold = Array.isArray(sarabunFonts)
+    ? sarabunFonts.includes("bold")
+    : Boolean(sarabunFonts);
+
+  if (!hasNormal || !hasBold) {
+    throw new Error(
+      "Sarabun font is not registered correctly. Please check sarabun-regular-base64.js and sarabun-bold-base64.js"
+    );
+  }
+
+  return "Sarabun";
 }
 
 function makeExportDateText(dateFrom, dateTo) {
