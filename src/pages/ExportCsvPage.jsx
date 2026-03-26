@@ -295,6 +295,77 @@ function buildBirthLotSummaryRows(flatRows) {
     });
 }
 
+
+function buildDailySummaryTotalRow(flatRows) {
+  return {
+    วันที่จัดส่ง: "รวม",
+    "จำนวนตัวรวมรายวัน": (flatRows || []).length,
+    "น้ำหนักรวมรายวัน": sumFromRows(flatRows, "weight"),
+    "น้ำหนักเฉลี่ยรายวัน": avgFromRows(flatRows, "weight"),
+  };
+}
+
+function buildBirthLotSummaryTotalRow(flatRows) {
+  const totalWeight = sumFromRows(flatRows, "weight");
+  const avgWeight = avgFromRows(flatRows, "weight");
+
+  return {
+    วันที่จัดส่ง: "รวม",
+    ฟาร์มที่คัด: "",
+    ฟาร์มปลายทาง: "",
+    birth_lot: "",
+    "จำนวนตัว": (flatRows || []).length,
+    "น้ำหนักรวมตาม birthlot": totalWeight,
+    "น้ำหนักเฉลี่ยตาม birthlot": avgWeight,
+    "น้ำหนักรวมทั้งหมด": totalWeight,
+    "น้ำหนักเฉลี่ยทั้งหมด": avgWeight,
+  };
+}
+
+function encodeCellAddress(rowIndexZeroBased, colIndexZeroBased) {
+  return XLSX.utils.encode_cell({ r: rowIndexZeroBased, c: colIndexZeroBased });
+}
+
+function applyExcelTotalRowStyle(ws, rowIndexZeroBased, colCount) {
+  for (let col = 0; col < colCount; col += 1) {
+    const cellRef = encodeCellAddress(rowIndexZeroBased, col);
+    if (!ws[cellRef]) continue;
+
+    ws[cellRef].s = {
+      font: { bold: true, color: { rgb: "000000" } },
+      fill: { patternType: "solid", fgColor: { rgb: "F4B400" } },
+      alignment: { vertical: "center", horizontal: col === 0 ? "left" : "right" },
+      border: {
+        top: { style: "thin", color: { rgb: "D1A000" } },
+        bottom: { style: "thin", color: { rgb: "D1A000" } },
+      },
+    };
+  }
+}
+
+function appendJsonTableWithTotalRow(ws, titleText, dataRows, totalRow, nextRow) {
+  XLSX.utils.sheet_add_aoa(ws, [[titleText]], { origin: { r: nextRow, c: 0 } });
+  nextRow += 1;
+
+  XLSX.utils.sheet_add_json(ws, dataRows, {
+    origin: { r: nextRow, c: 0 },
+    skipHeader: false,
+  });
+
+  const dataStartRow = nextRow;
+  const totalRowIndex = dataStartRow + dataRows.length + 1;
+
+  XLSX.utils.sheet_add_json(ws, [totalRow], {
+    origin: { r: totalRowIndex, c: 0 },
+    skipHeader: false,
+  });
+
+  const colCount = Object.keys(totalRow || {}).length;
+  applyExcelTotalRowStyle(ws, totalRowIndex, colCount);
+
+  return totalRowIndex + 3;
+}
+
 function buildExcelDetailRows(flatRows, { showDeliveryDate = false } = {}) {
   return (flatRows || []).map((r) => ({
     วันที่คัด: safeCell(r.selected_date),
@@ -333,7 +404,9 @@ function exportExcelReport({
 
   const overallRows = buildOverallSummaryRows(flatRows);
   const dailyRows = buildDailySummaryRows(flatRows);
+  const dailyTotalRow = buildDailySummaryTotalRow(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
+  const birthLotTotalRow = buildBirthLotSummaryTotalRow(flatRows);
   const detailRows = buildExcelDetailRows(flatRows, { showDeliveryDate });
 
   let nextRow = 2;
@@ -346,21 +419,21 @@ function exportExcelReport({
   });
   nextRow += overallRows.length + 3;
 
-  XLSX.utils.sheet_add_aoa(ws, [["ยอดรวมรายวัน"]], { origin: { r: nextRow, c: 0 } });
-  nextRow += 1;
-  XLSX.utils.sheet_add_json(ws, dailyRows, {
-    origin: { r: nextRow, c: 0 },
-    skipHeader: false,
-  });
-  nextRow += dailyRows.length + 3;
+  nextRow = appendJsonTableWithTotalRow(
+    ws,
+    "ยอดรวมรายวัน",
+    dailyRows,
+    dailyTotalRow,
+    nextRow
+  );
 
-  XLSX.utils.sheet_add_aoa(ws, [["สรุปตาม birth_lot"]], { origin: { r: nextRow, c: 0 } });
-  nextRow += 1;
-  XLSX.utils.sheet_add_json(ws, birthLotRows, {
-    origin: { r: nextRow, c: 0 },
-    skipHeader: false,
-  });
-  nextRow += birthLotRows.length + 3;
+  nextRow = appendJsonTableWithTotalRow(
+    ws,
+    "สรุปตาม birth_lot",
+    birthLotRows,
+    birthLotTotalRow,
+    nextRow
+  );
 
   XLSX.utils.sheet_add_aoa(ws, [["รายละเอียดรายตัว"]], { origin: { r: nextRow, c: 0 } });
   nextRow += 1;
@@ -369,12 +442,21 @@ function exportExcelReport({
     skipHeader: false,
   });
 
-  const titleRows = [[title], [], ["สรุปยอดรวมทั้งชุด"], ["ยอดรวมรายวัน"], ["สรุปตาม birth_lot"], ["รายละเอียดรายตัว"]];
+  const titleRows = [
+    [title],
+    [],
+    ["สรุปยอดรวมทั้งชุด"],
+    ["ยอดรวมรายวัน"],
+    ["สรุปตาม birth_lot"],
+    ["รายละเอียดรายตัว"],
+  ];
   ws["!cols"] = makeSheetColsFromRows(
     titleRows,
     overallRows,
     dailyRows,
+    [dailyTotalRow],
     birthLotRows,
+    [birthLotTotalRow],
     detailRows
   );
 
@@ -396,7 +478,9 @@ function exportPdfReport({
 
   const overallRows = buildOverallSummaryRows(flatRows);
   const dailyRows = buildDailySummaryRows(flatRows);
+  const dailyTotalRow = buildDailySummaryTotalRow(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
+  const birthLotTotalRow = buildBirthLotSummaryTotalRow(flatRows);
 
   doc.setFont(pdfFont, "bold");
   doc.setFontSize(14);
@@ -428,8 +512,16 @@ function exportPdfReport({
       r["น้ำหนักรวมรายวัน"],
       r["น้ำหนักเฉลี่ยรายวัน"],
     ]),
+    foot: [[
+      dailyTotalRow["วันที่จัดส่ง"],
+      dailyTotalRow["จำนวนตัวรวมรายวัน"],
+      dailyTotalRow["น้ำหนักรวมรายวัน"],
+      dailyTotalRow["น้ำหนักเฉลี่ยรายวัน"],
+    ]],
+    showFoot: "lastPage",
     styles: { font: pdfFont, fontSize: 8, cellPadding: 1.8, overflow: "linebreak" },
     headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [15, 23, 42] },
+    footStyles: { font: pdfFont, fontStyle: "bold", fillColor: [244, 180, 0], textColor: 20 },
     theme: "grid",
     margin: { left: 14, right: 14 },
   });
@@ -458,8 +550,21 @@ function exportPdfReport({
       r["น้ำหนักรวมทั้งหมด"],
       r["น้ำหนักเฉลี่ยทั้งหมด"],
     ]),
+    foot: [[
+      birthLotTotalRow["วันที่จัดส่ง"],
+      birthLotTotalRow["ฟาร์มที่คัด"],
+      birthLotTotalRow["ฟาร์มปลายทาง"],
+      birthLotTotalRow["birth_lot"],
+      birthLotTotalRow["จำนวนตัว"],
+      birthLotTotalRow["น้ำหนักรวมตาม birthlot"],
+      birthLotTotalRow["น้ำหนักเฉลี่ยตาม birthlot"],
+      birthLotTotalRow["น้ำหนักรวมทั้งหมด"],
+      birthLotTotalRow["น้ำหนักเฉลี่ยทั้งหมด"],
+    ]],
+    showFoot: "lastPage",
     styles: { font: pdfFont, fontSize: 7, cellPadding: 1.4, overflow: "linebreak" },
     headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [22, 163, 74] },
+    footStyles: { font: pdfFont, fontStyle: "bold", fillColor: [244, 180, 0], textColor: 20 },
     theme: "grid",
     margin: { left: 8, right: 8 },
   });
