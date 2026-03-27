@@ -88,6 +88,17 @@ function applyNewItemPreviewNumbers(rows, startNo) {
   }));
 }
 
+function applySelectedDateRange(query, fromDate, toDate) {
+  let q = query;
+  const from = clean(fromDate);
+  const to = clean(toDate);
+
+  if (from) q = q.gte("selected_date", from);
+  if (to) q = q.lte("selected_date", to);
+
+  return q;
+}
+
 const fullInputStyle = {
   width: "100%",
   padding: 10,
@@ -125,6 +136,8 @@ export default function EditShipmentPage() {
     searchParams.get("id") || searchParams.get("shipmentId")
   );
 
+  const today = todayYmdLocal();
+
   const [pageLoading, setPageLoading] = useState(true);
   const [myRole, setMyRole] = useState("");
   const [msg, setMsg] = useState("");
@@ -133,7 +146,8 @@ export default function EditShipmentPage() {
   const [userFarmName, setUserFarmName] = useState("");
   const [userFlock, setUserFlock] = useState("");
 
-  const [filterDate, setFilterDate] = useState(todayYmdLocal());
+  const [filterDateFrom, setFilterDateFrom] = useState(today);
+  const [filterDateTo, setFilterDateTo] = useState(today);
   const [filterFromFarmCode, setFilterFromFarmCode] = useState("");
   const [filterToFarmId, setFilterToFarmId] = useState("");
 
@@ -165,7 +179,15 @@ export default function EditShipmentPage() {
   const [selectedCandidateSwineId, setSelectedCandidateSwineId] = useState("");
 
   const canUsePage = myRole === "admin" || myRole === "user";
-  const canSearch = !!filterDate && !!filterFromFarmCode && !!filterToFarmId;
+  const dateRangeInvalid =
+    !!filterDateFrom && !!filterDateTo && filterDateFrom > filterDateTo;
+
+  const canSearch =
+    !!filterDateFrom &&
+    !!filterDateTo &&
+    !dateRangeInvalid &&
+    !!filterFromFarmCode &&
+    !!filterToFarmId;
 
   useEffect(() => {
     let alive = true;
@@ -309,15 +331,6 @@ export default function EditShipmentPage() {
     );
   }, [shipmentHeader?.from_farm_code, editToFarmMeta?.farm_code]);
 
-  const newGroupKey = useMemo(() => {
-    if (!shipmentHeader?.id) return null;
-    return {
-      selectedDate: clean(shipmentHeader.selected_date),
-      fromFarmCode: clean(shipmentHeader.from_farm_code),
-      toFarmId: clean(editToFarmId),
-    };
-  }, [shipmentHeader, editToFarmId]);
-
   const existingItemCodeSet = useMemo(() => {
     return new Set(itemRows.map((x) => clean(x.swine_code)).filter(Boolean));
   }, [itemRows]);
@@ -333,20 +346,44 @@ export default function EditShipmentPage() {
   }, [previewStartNo]);
 
   useEffect(() => {
-    if (!canUsePage || !filterDate) {
+    if (!canUsePage || !filterDateFrom || !filterDateTo || dateRangeInvalid) {
       setFromFarmOptions([]);
       return;
     }
     void loadFromFarmOptions();
-  }, [canUsePage, filterDate, myRole, userFarmCode, userFarmName]);
+  }, [
+    canUsePage,
+    filterDateFrom,
+    filterDateTo,
+    dateRangeInvalid,
+    myRole,
+    userFarmCode,
+    userFarmName,
+    userFlock,
+  ]);
 
   useEffect(() => {
-    if (!canUsePage || !filterDate || !filterFromFarmCode) {
+    if (
+      !canUsePage ||
+      !filterDateFrom ||
+      !filterDateTo ||
+      dateRangeInvalid ||
+      !filterFromFarmCode
+    ) {
       setToFarmOptions([]);
       return;
     }
     void loadToFarmOptions();
-  }, [canUsePage, filterDate, filterFromFarmCode, myRole, userFarmCode, userFlock]);
+  }, [
+    canUsePage,
+    filterDateFrom,
+    filterDateTo,
+    dateRangeInvalid,
+    filterFromFarmCode,
+    myRole,
+    userFarmCode,
+    userFlock,
+  ]);
 
   useEffect(() => {
     let alive = true;
@@ -381,7 +418,7 @@ export default function EditShipmentPage() {
   }, [editToFarmId]);
 
   const fetchShipmentListByFilters = useCallback(
-    async ({ selectedDate, fromFarmCode, toFarmId }) => {
+    async ({ selectedDateFrom, selectedDateTo, fromFarmCode, toFarmId }) => {
       let query = supabase
         .from("swine_shipments")
         .select(`
@@ -408,12 +445,13 @@ export default function EditShipmentPage() {
             )
           )
         `)
-        .eq("selected_date", selectedDate)
         .eq("from_farm_code", fromFarmCode)
         .eq("to_farm_id", toFarmId)
         .eq("status", "draft")
+        .order("selected_date", { ascending: false })
         .order("created_at", { ascending: false });
 
+      query = applySelectedDateRange(query, selectedDateFrom, selectedDateTo);
       query = await applyRoleFilter(query, { useFlockJoin: true });
 
       const { data, error } = await query;
@@ -461,10 +499,10 @@ export default function EditShipmentPage() {
             )
           )
         `)
-        .eq("selected_date", filterDate)
         .eq("status", "draft")
         .order("from_farm_name", { ascending: true });
 
+      query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
       query = await applyRoleFilter(query, { useFlockJoin: true });
 
       const { data, error } = await query;
@@ -517,11 +555,11 @@ export default function EditShipmentPage() {
             )
           )
         `)
-        .eq("selected_date", filterDate)
         .eq("from_farm_code", filterFromFarmCode)
         .eq("status", "draft")
         .order("created_at", { ascending: false });
 
+      query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
       query = await applyRoleFilter(query, { useFlockJoin: true });
 
       const { data, error } = await query;
@@ -557,7 +595,8 @@ export default function EditShipmentPage() {
 
   async function fetchShipmentList() {
     return fetchShipmentListByFilters({
-      selectedDate: filterDate,
+      selectedDateFrom: filterDateFrom,
+      selectedDateTo: filterDateTo,
       fromFarmCode: filterFromFarmCode,
       toFarmId: filterToFarmId,
     });
@@ -566,10 +605,10 @@ export default function EditShipmentPage() {
   async function refreshShipmentList(args = null) {
     try {
       const rows = await fetchShipmentListByFilters({
-        selectedDate: args?.selectedDate || newGroupKey?.selectedDate || filterDate,
-        fromFarmCode:
-          args?.fromFarmCode || newGroupKey?.fromFarmCode || filterFromFarmCode,
-        toFarmId: args?.toFarmId || newGroupKey?.toFarmId || filterToFarmId,
+        selectedDateFrom: args?.selectedDateFrom ?? filterDateFrom,
+        selectedDateTo: args?.selectedDateTo ?? filterDateTo,
+        fromFarmCode: args?.fromFarmCode ?? filterFromFarmCode,
+        toFarmId: args?.toFarmId ?? filterToFarmId,
       });
       setShipmentList(rows);
     } catch (e) {
@@ -760,17 +799,19 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        setFilterDate(data.selected_date || "");
-        setFilterFromFarmCode(data.from_farm_code || "");
-        setFilterToFarmId(data.to_farm_id || "");
+        setFilterDateFrom((prev) => clean(prev) || clean(data.selected_date) || "");
+        setFilterDateTo((prev) => clean(prev) || clean(data.selected_date) || "");
+        setFilterFromFarmCode((prev) => clean(prev) || clean(data.from_farm_code) || "");
+        setFilterToFarmId((prev) => clean(prev) || clean(data.to_farm_id) || "");
 
         setShipmentIdToUrl(shipmentId);
 
         const [rows] = await Promise.all([
           fetchShipmentListByFilters({
-            selectedDate: data.selected_date,
-            fromFarmCode: data.from_farm_code,
-            toFarmId: data.to_farm_id,
+            selectedDateFrom: filterDateFrom || data.selected_date,
+            selectedDateTo: filterDateTo || data.selected_date,
+            fromFarmCode: filterFromFarmCode || data.from_farm_code,
+            toFarmId: filterToFarmId || data.to_farm_id,
           }),
           loadAvailableSwinesOfFarm(data.from_farm_code),
         ]);
@@ -799,6 +840,10 @@ export default function EditShipmentPage() {
     [
       applyRoleFilter,
       fetchShipmentListByFilters,
+      filterDateFrom,
+      filterDateTo,
+      filterFromFarmCode,
+      filterToFarmId,
       loadAvailableSwinesOfFarm,
       myRole,
       userFlock,
@@ -839,8 +884,7 @@ export default function EditShipmentPage() {
     openShipment,
   ]);
 
-  function handleDateChange(value) {
-    setFilterDate(value);
+  function resetSearchStateAfterDateChange() {
     setFilterFromFarmCode(myRole === "admin" ? "" : clean(userFarmCode));
     setFilterToFarmId("");
     setFromFarmOptions([]);
@@ -848,6 +892,16 @@ export default function EditShipmentPage() {
     setShipmentList([]);
     clearEditor();
     setMsg("");
+  }
+
+  function handleDateFromChange(value) {
+    setFilterDateFrom(value);
+    resetSearchStateAfterDateChange();
+  }
+
+  function handleDateToChange(value) {
+    setFilterDateTo(value);
+    resetSearchStateAfterDateChange();
   }
 
   function handleFromFarmChange(value) {
@@ -868,8 +922,18 @@ export default function EditShipmentPage() {
   }
 
   async function handleSearch() {
-    if (!canSearch) {
-      setMsg("กรุณาเลือกวันคัด + ฟาร์มต้นทาง + ฟาร์มปลายทาง");
+    if (!filterDateFrom || !filterDateTo) {
+      setMsg("กรุณาเลือกวันคัดเริ่มต้นและวันคัดสิ้นสุด");
+      return;
+    }
+
+    if (dateRangeInvalid) {
+      setMsg("วันคัดเริ่มต้นต้องไม่มากกว่าวันคัดสิ้นสุด");
+      return;
+    }
+
+    if (!filterFromFarmCode || !filterToFarmId) {
+      setMsg("กรุณาเลือกฟาร์มต้นทาง + ฟาร์มปลายทาง");
       return;
     }
 
@@ -882,7 +946,7 @@ export default function EditShipmentPage() {
       setShipmentList(rows);
 
       if (!rows.length) {
-        setMsg("ไม่พบ shipment สถานะ draft ตามเงื่อนไขที่เลือก");
+        setMsg("ไม่พบ shipment สถานะ draft ตามช่วงวันที่และเงื่อนไขที่เลือก");
       }
     } catch (e) {
       console.error("handleSearch error:", e);
@@ -1280,7 +1344,8 @@ export default function EditShipmentPage() {
       step = "รีโหลด shipment หลังบันทึก";
       await openShipment(shipmentId, { silent: true });
       await refreshShipmentList({
-        selectedDate: nextGroup.selectedDate,
+        selectedDateFrom: filterDateFrom,
+        selectedDateTo: filterDateTo,
         fromFarmCode: nextGroup.fromFarmCode,
         toFarmId: nextGroup.toFarmId,
       });
@@ -1415,16 +1480,31 @@ export default function EditShipmentPage() {
           >
             <div>
               <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                วันคัด
+                วันคัดเริ่มต้น
               </div>
               <input
                 type="date"
-                value={filterDate}
-                onChange={(e) => handleDateChange(e.target.value)}
+                value={filterDateFrom}
+                onChange={(e) => handleDateFromChange(e.target.value)}
                 style={fullInputStyle}
               />
               <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                แสดงผล: {formatDateDisplay(filterDate)}
+                แสดงผล: {formatDateDisplay(filterDateFrom)}
+              </div>
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                วันคัดสิ้นสุด
+              </div>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => handleDateToChange(e.target.value)}
+                style={fullInputStyle}
+              />
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                แสดงผล: {formatDateDisplay(filterDateTo)}
               </div>
             </div>
 
@@ -1435,7 +1515,13 @@ export default function EditShipmentPage() {
               <select
                 value={filterFromFarmCode}
                 onChange={(e) => handleFromFarmChange(e.target.value)}
-                disabled={!filterDate || fromFarmLoading || myRole !== "admin"}
+                disabled={
+                  !filterDateFrom ||
+                  !filterDateTo ||
+                  dateRangeInvalid ||
+                  fromFarmLoading ||
+                  myRole !== "admin"
+                }
                 style={fullInputStyle}
               >
                 <option value="">
@@ -1456,7 +1542,13 @@ export default function EditShipmentPage() {
               <select
                 value={filterToFarmId}
                 onChange={(e) => handleToFarmChange(e.target.value)}
-                disabled={!filterDate || !filterFromFarmCode || toFarmLoading}
+                disabled={
+                  !filterDateFrom ||
+                  !filterDateTo ||
+                  dateRangeInvalid ||
+                  !filterFromFarmCode ||
+                  toFarmLoading
+                }
                 style={fullInputStyle}
               >
                 <option value="">
@@ -1470,6 +1562,16 @@ export default function EditShipmentPage() {
               </select>
             </div>
           </div>
+
+          {dateRangeInvalid ? (
+            <div className="small" style={{ color: "#b91c1c", fontWeight: 700 }}>
+              วันคัดเริ่มต้นต้องไม่มากกว่าวันคัดสิ้นสุด
+            </div>
+          ) : (
+            <div className="small" style={{ color: "#666" }}>
+              ถ้าต้องการค้นหาแค่วันเดียว ให้เลือกวันเริ่มต้นและวันสิ้นสุดเป็นวันเดียวกัน
+            </div>
+          )}
 
           <div>
             <button
