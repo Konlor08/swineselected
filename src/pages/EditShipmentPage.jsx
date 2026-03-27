@@ -208,24 +208,9 @@ export default function EditShipmentPage() {
         if (!alive) return;
 
         const nextRole = String(profile?.role || "user").toLowerCase();
-        const nextFarmCode = clean(
-          profile?.farm_code ||
-            profile?.from_farm_code ||
-            profile?.farmCode ||
-            profile?.default_farm_code
-        );
-        const nextFarmName = clean(
-          profile?.farm_name ||
-            profile?.from_farm_name ||
-            profile?.farmName ||
-            profile?.default_farm_name
-        );
-        const nextFlock = clean(
-          profile?.flock ||
-            profile?.flock_code ||
-            profile?.default_flock ||
-            profile?.flock_no
-        );
+        const nextFarmCode = clean(profile?.farm_code);
+        const nextFarmName = clean(profile?.farm_name);
+        const nextFlock = clean(profile?.flock);
 
         setMyRole(nextRole);
         setUserFarmCode(nextFarmCode);
@@ -266,11 +251,11 @@ export default function EditShipmentPage() {
 
       query = query.eq("from_farm_code", farmCode);
 
-      if (opts.useFlockJoin) {
+      if (opts.useFromFlock) {
         if (!flock) {
-          return query.eq("items.swine.flock", "__no_flock__");
+          return query.eq("from_flock", "__no_flock__");
         }
-        query = query.eq("items.swine.flock", flock);
+        query = query.eq("from_flock", flock);
       }
 
       return query;
@@ -428,6 +413,7 @@ export default function EditShipmentPage() {
           delivery_date,
           from_farm_code,
           from_farm_name,
+          from_flock,
           to_farm_id,
           remark,
           status,
@@ -437,12 +423,6 @@ export default function EditShipmentPage() {
             id,
             farm_code,
             farm_name
-          ),
-          items:swine_shipment_items!inner (
-            id,
-            swine:swines!swine_shipment_items_swine_id_fkey!inner (
-              flock
-            )
           )
         `)
         .eq("from_farm_code", fromFarmCode)
@@ -452,7 +432,7 @@ export default function EditShipmentPage() {
         .order("created_at", { ascending: false });
 
       query = applySelectedDateRange(query, selectedDateFrom, selectedDateTo);
-      query = await applyRoleFilter(query, { useFlockJoin: true });
+      query = await applyRoleFilter(query, { useFromFlock: true });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -489,21 +469,12 @@ export default function EditShipmentPage() {
 
       let query = supabase
         .from("swine_shipments")
-        .select(`
-          from_farm_code,
-          from_farm_name,
-          items:swine_shipment_items!inner (
-            id,
-            swine:swines!swine_shipment_items_swine_id_fkey!inner (
-              flock
-            )
-          )
-        `)
+        .select("from_farm_code, from_farm_name")
         .eq("status", "draft")
         .order("from_farm_name", { ascending: true });
 
       query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
-      query = await applyRoleFilter(query, { useFlockJoin: true });
+      query = await applyRoleFilter(query, { useFromFlock: true });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -547,12 +518,6 @@ export default function EditShipmentPage() {
             id,
             farm_code,
             farm_name
-          ),
-          items:swine_shipment_items!inner (
-            id,
-            swine:swines!swine_shipment_items_swine_id_fkey!inner (
-              flock
-            )
           )
         `)
         .eq("from_farm_code", filterFromFarmCode)
@@ -560,7 +525,7 @@ export default function EditShipmentPage() {
         .order("created_at", { ascending: false });
 
       query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
-      query = await applyRoleFilter(query, { useFlockJoin: true });
+      query = await applyRoleFilter(query, { useFromFlock: true });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -619,13 +584,16 @@ export default function EditShipmentPage() {
   }
 
   const loadAvailableSwinesOfFarm = useCallback(
-    async (fromFarmCode) => {
+    async (fromFarmCode, fromFlock) => {
       const safeFarmCode =
         myRole === "admin"
           ? clean(fromFarmCode)
           : clean(userFarmCode || fromFarmCode);
 
-      if (!safeFarmCode) {
+      const safeFlock =
+        myRole === "admin" ? clean(fromFlock) : clean(userFlock || fromFlock);
+
+      if (!safeFarmCode || !safeFlock) {
         setAvailableSwines([]);
         return;
       }
@@ -636,17 +604,8 @@ export default function EditShipmentPage() {
         let swineQuery = supabase
           .from("swines")
           .select("id, swine_code, farm_code, house_no, flock, birth_date")
-          .eq("farm_code", safeFarmCode);
-
-        if (myRole !== "admin") {
-          if (!clean(userFlock)) {
-            setAvailableSwines([]);
-            return;
-          }
-          swineQuery = swineQuery.eq("flock", clean(userFlock));
-        }
-
-        swineQuery = swineQuery
+          .eq("farm_code", safeFarmCode)
+          .eq("flock", safeFlock)
           .order("house_no", { ascending: true })
           .order("swine_code", { ascending: true })
           .limit(5000);
@@ -722,6 +681,7 @@ export default function EditShipmentPage() {
             delivery_date,
             from_farm_code,
             from_farm_name,
+            from_flock,
             to_farm_id,
             remark,
             status,
@@ -732,7 +692,7 @@ export default function EditShipmentPage() {
               farm_code,
               farm_name
             ),
-            items:swine_shipment_items!inner (
+            items:swine_shipment_items (
               id,
               selection_no,
               swine_id,
@@ -743,7 +703,7 @@ export default function EditShipmentPage() {
               weight,
               created_at,
               updated_at,
-              swine:swines!swine_shipment_items_swine_id_fkey!inner (
+              swine:swines!swine_shipment_items_swine_id_fkey (
                 id,
                 house_no,
                 flock,
@@ -755,20 +715,11 @@ export default function EditShipmentPage() {
           .eq("status", "draft")
           .single();
 
-        query = await applyRoleFilter(query, { useFlockJoin: true });
+        query = await applyRoleFilter(query, { useFromFlock: true });
 
         const { data, error } = await query;
         if (error) throw error;
         if (!data) throw new Error("ไม่พบ shipment");
-
-        if (myRole !== "admin") {
-          const blocked = (data.items || []).some(
-            (it) => clean(it?.swine?.flock) !== clean(userFlock)
-          );
-          if (blocked) {
-            throw new Error("ไม่มีสิทธิ์เปิด shipment นี้");
-          }
-        }
 
         const mappedItems = (data.items || [])
           .map((it) => ({
@@ -799,8 +750,6 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        setFilterDateFrom((prev) => clean(prev) || clean(data.selected_date) || "");
-        setFilterDateTo((prev) => clean(prev) || clean(data.selected_date) || "");
         setFilterFromFarmCode((prev) => clean(prev) || clean(data.from_farm_code) || "");
         setFilterToFarmId((prev) => clean(prev) || clean(data.to_farm_id) || "");
 
@@ -813,7 +762,7 @@ export default function EditShipmentPage() {
             fromFarmCode: filterFromFarmCode || data.from_farm_code,
             toFarmId: filterToFarmId || data.to_farm_id,
           }),
-          loadAvailableSwinesOfFarm(data.from_farm_code),
+          loadAvailableSwinesOfFarm(data.from_farm_code, data.from_flock),
         ]);
 
         setShipmentList(rows);
@@ -845,8 +794,6 @@ export default function EditShipmentPage() {
       filterFromFarmCode,
       filterToFarmId,
       loadAvailableSwinesOfFarm,
-      myRole,
-      userFlock,
       setShipmentIdToUrl,
     ]
   );
@@ -1177,6 +1124,7 @@ export default function EditShipmentPage() {
             delivery_date,
             from_farm_code,
             from_farm_name,
+            from_flock,
             to_farm_id,
             remark,
             status,
@@ -1626,6 +1574,9 @@ export default function EditShipmentPage() {
                           ปลายทาง: <b>{row.to_farm?.farm_name || "-"}</b>
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                          Flock ต้นทาง: <b>{row.from_flock || "-"}</b>
+                        </div>
+                        <div className="small" style={{ marginTop: 6, color: "#666" }}>
                           วันส่ง: <b>{formatDateDisplay(row.delivery_date)}</b>
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#666" }}>
@@ -1706,6 +1657,17 @@ export default function EditShipmentPage() {
                       shipmentHeader.from_farm_code ||
                       ""
                     }
+                    readOnly
+                    style={{ ...fullInputStyle, background: "#f8fafc" }}
+                  />
+                </div>
+
+                <div>
+                  <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                    Flock ต้นทาง
+                  </div>
+                  <input
+                    value={shipmentHeader.from_flock || ""}
                     readOnly
                     style={{ ...fullInputStyle, background: "#f8fafc" }}
                   />
