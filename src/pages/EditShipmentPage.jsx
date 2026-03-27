@@ -129,6 +129,10 @@ export default function EditShipmentPage() {
   const [myRole, setMyRole] = useState("");
   const [msg, setMsg] = useState("");
 
+  const [userFarmCode, setUserFarmCode] = useState("");
+  const [userFarmName, setUserFarmName] = useState("");
+  const [userFlock, setUserFlock] = useState("");
+
   const [filterDate, setFilterDate] = useState(todayYmdLocal());
   const [filterFromFarmCode, setFilterFromFarmCode] = useState("");
   const [filterToFarmId, setFilterToFarmId] = useState("");
@@ -181,7 +185,38 @@ export default function EditShipmentPage() {
         const profile = await fetchMyProfile(uid);
         if (!alive) return;
 
-        setMyRole(String(profile?.role || "user").toLowerCase());
+        const nextRole = String(profile?.role || "user").toLowerCase();
+        const nextFarmCode = clean(
+          profile?.farm_code ||
+            profile?.from_farm_code ||
+            profile?.farmCode ||
+            profile?.default_farm_code
+        );
+        const nextFarmName = clean(
+          profile?.farm_name ||
+            profile?.from_farm_name ||
+            profile?.farmName ||
+            profile?.default_farm_name
+        );
+        const nextFlock = clean(
+          profile?.flock ||
+            profile?.flock_code ||
+            profile?.default_flock ||
+            profile?.flock_no
+        );
+
+        setMyRole(nextRole);
+        setUserFarmCode(nextFarmCode);
+        setUserFarmName(nextFarmName);
+        setUserFlock(nextFlock);
+
+        if (nextRole !== "admin") {
+          setFilterFromFarmCode(nextFarmCode || "");
+
+          if (!nextFarmCode || !nextFlock) {
+            setMsg("ไม่พบ farm/flock ใน profile ของผู้ใช้งาน");
+          }
+        }
       } catch (e) {
         console.error("EditShipmentPage init error:", e);
         if (alive) setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
@@ -196,28 +231,29 @@ export default function EditShipmentPage() {
     };
   }, []);
 
-  async function getCurrentUserId() {
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error) throw error;
-    return user?.id || null;
-  }
-
   const applyRoleFilter = useCallback(
-    async (query) => {
+    async (query, opts = {}) => {
       if (myRole === "admin") return query;
 
-      const uid = await getCurrentUserId();
-      if (!uid) {
-        return query.eq("created_by", "__no_user__");
+      const farmCode = clean(opts.farmCode || userFarmCode);
+      const flock = clean(opts.flock || userFlock);
+
+      if (!farmCode) {
+        return query.eq("from_farm_code", "__no_farm__");
       }
 
-      return query.eq("created_by", uid);
+      query = query.eq("from_farm_code", farmCode);
+
+      if (opts.useFlockJoin) {
+        if (!flock) {
+          return query.eq("items.swine.flock", "__no_flock__");
+        }
+        query = query.eq("items.swine.flock", flock);
+      }
+
+      return query;
     },
-    [myRole]
+    [myRole, userFarmCode, userFlock]
   );
 
   const clearShipmentIdFromUrl = useCallback(() => {
@@ -302,7 +338,7 @@ export default function EditShipmentPage() {
       return;
     }
     void loadFromFarmOptions();
-  }, [canUsePage, filterDate, myRole]);
+  }, [canUsePage, filterDate, myRole, userFarmCode, userFarmName]);
 
   useEffect(() => {
     if (!canUsePage || !filterDate || !filterFromFarmCode) {
@@ -310,7 +346,7 @@ export default function EditShipmentPage() {
       return;
     }
     void loadToFarmOptions();
-  }, [canUsePage, filterDate, filterFromFarmCode, myRole]);
+  }, [canUsePage, filterDate, filterFromFarmCode, myRole, userFarmCode, userFlock]);
 
   useEffect(() => {
     let alive = true;
@@ -364,6 +400,12 @@ export default function EditShipmentPage() {
             id,
             farm_code,
             farm_name
+          ),
+          items:swine_shipment_items!inner (
+            id,
+            swine:swines!swine_shipment_items_swine_id_fkey!inner (
+              flock
+            )
           )
         `)
         .eq("selected_date", selectedDate)
@@ -372,7 +414,7 @@ export default function EditShipmentPage() {
         .eq("status", "draft")
         .order("created_at", { ascending: false });
 
-      query = await applyRoleFilter(query);
+      query = await applyRoleFilter(query, { useFlockJoin: true });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -386,14 +428,44 @@ export default function EditShipmentPage() {
     setFromFarmLoading(true);
 
     try {
+      if (myRole !== "admin") {
+        const fixedCode = clean(userFarmCode);
+        const fixedName = clean(userFarmName);
+
+        if (!fixedCode) {
+          setFromFarmOptions([]);
+          return;
+        }
+
+        const fixedOption = {
+          value: fixedCode,
+          label: fixedName ? `${fixedCode} - ${fixedName}` : fixedCode,
+          code: fixedCode,
+          name: fixedName,
+        };
+
+        setFromFarmOptions([fixedOption]);
+        setFilterFromFarmCode(fixedCode);
+        return;
+      }
+
       let query = supabase
         .from("swine_shipments")
-        .select("from_farm_code, from_farm_name")
+        .select(`
+          from_farm_code,
+          from_farm_name,
+          items:swine_shipment_items!inner (
+            id,
+            swine:swines!swine_shipment_items_swine_id_fkey!inner (
+              flock
+            )
+          )
+        `)
         .eq("selected_date", filterDate)
         .eq("status", "draft")
         .order("from_farm_name", { ascending: true });
 
-      query = await applyRoleFilter(query);
+      query = await applyRoleFilter(query, { useFlockJoin: true });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -437,6 +509,12 @@ export default function EditShipmentPage() {
             id,
             farm_code,
             farm_name
+          ),
+          items:swine_shipment_items!inner (
+            id,
+            swine:swines!swine_shipment_items_swine_id_fkey!inner (
+              flock
+            )
           )
         `)
         .eq("selected_date", filterDate)
@@ -444,7 +522,7 @@ export default function EditShipmentPage() {
         .eq("status", "draft")
         .order("created_at", { ascending: false });
 
-      query = await applyRoleFilter(query);
+      query = await applyRoleFilter(query, { useFlockJoin: true });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -501,70 +579,89 @@ export default function EditShipmentPage() {
     }
   }
 
-  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode) => {
-    if (!fromFarmCode) {
-      setAvailableSwines([]);
-      return;
-    }
+  const loadAvailableSwinesOfFarm = useCallback(
+    async (fromFarmCode) => {
+      const safeFarmCode =
+        myRole === "admin"
+          ? clean(fromFarmCode)
+          : clean(userFarmCode || fromFarmCode);
 
-    setAvailableLoading(true);
-
-    try {
-      const { data: farmSwines, error: e1 } = await supabase
-        .from("swines")
-        .select("id, swine_code, farm_code, house_no, flock, birth_date")
-        .eq("farm_code", fromFarmCode)
-        .order("house_no", { ascending: true })
-        .order("swine_code", { ascending: true })
-        .limit(5000);
-
-      if (e1) throw e1;
-
-      const swines = (farmSwines || []).map((x) => ({
-        ...x,
-        swine_code: clean(x.swine_code),
-        house_no: clean(x.house_no),
-        flock: clean(x.flock),
-      }));
-
-      const codes = swines.map((x) => x.swine_code).filter(Boolean);
-
-      if (!codes.length) {
+      if (!safeFarmCode) {
         setAvailableSwines([]);
         return;
       }
 
-      const codeChunks = chunkArray(codes, 500);
-      const availableCodeSet = new Set();
+      setAvailableLoading(true);
 
-      for (const chunk of codeChunks) {
-        const { data: availableRows, error: e2 } = await supabase
-          .from("swine_master")
-          .select("swine_code")
-          .eq("delivery_state", "available")
-          .in("swine_code", chunk);
+      try {
+        let swineQuery = supabase
+          .from("swines")
+          .select("id, swine_code, farm_code, house_no, flock, birth_date")
+          .eq("farm_code", safeFarmCode);
 
-        if (e2) throw e2;
-
-        for (const row of availableRows || []) {
-          const code = clean(row?.swine_code);
-          if (code) availableCodeSet.add(code);
+        if (myRole !== "admin") {
+          if (!clean(userFlock)) {
+            setAvailableSwines([]);
+            return;
+          }
+          swineQuery = swineQuery.eq("flock", clean(userFlock));
         }
+
+        swineQuery = swineQuery
+          .order("house_no", { ascending: true })
+          .order("swine_code", { ascending: true })
+          .limit(5000);
+
+        const { data: farmSwines, error: e1 } = await swineQuery;
+        if (e1) throw e1;
+
+        const swines = (farmSwines || []).map((x) => ({
+          ...x,
+          swine_code: clean(x.swine_code),
+          house_no: clean(x.house_no),
+          flock: clean(x.flock),
+        }));
+
+        const codes = swines.map((x) => x.swine_code).filter(Boolean);
+
+        if (!codes.length) {
+          setAvailableSwines([]);
+          return;
+        }
+
+        const codeChunks = chunkArray(codes, 500);
+        const availableCodeSet = new Set();
+
+        for (const chunk of codeChunks) {
+          const { data: availableRows, error: e2 } = await supabase
+            .from("swine_master")
+            .select("swine_code")
+            .eq("delivery_state", "available")
+            .in("swine_code", chunk);
+
+          if (e2) throw e2;
+
+          for (const row of availableRows || []) {
+            const code = clean(row?.swine_code);
+            if (code) availableCodeSet.add(code);
+          }
+        }
+
+        const availableOnly = swines.filter((x) =>
+          availableCodeSet.has(clean(x.swine_code))
+        );
+
+        setAvailableSwines(availableOnly);
+      } catch (e) {
+        console.error("loadAvailableSwinesOfFarm error:", e);
+        setAvailableSwines([]);
+        setMsg(e?.message || "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ");
+      } finally {
+        setAvailableLoading(false);
       }
-
-      const availableOnly = swines.filter((x) =>
-        availableCodeSet.has(clean(x.swine_code))
-      );
-
-      setAvailableSwines(availableOnly);
-    } catch (e) {
-      console.error("loadAvailableSwinesOfFarm error:", e);
-      setAvailableSwines([]);
-      setMsg(e?.message || "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ");
-    } finally {
-      setAvailableLoading(false);
-    }
-  }, []);
+    },
+    [myRole, userFarmCode, userFlock]
+  );
 
   const openShipment = useCallback(
     async (shipmentId, opts = {}) => {
@@ -596,7 +693,7 @@ export default function EditShipmentPage() {
               farm_code,
               farm_name
             ),
-            items:swine_shipment_items (
+            items:swine_shipment_items!inner (
               id,
               selection_no,
               swine_id,
@@ -607,7 +704,7 @@ export default function EditShipmentPage() {
               weight,
               created_at,
               updated_at,
-              swine:swines!swine_shipment_items_swine_id_fkey (
+              swine:swines!swine_shipment_items_swine_id_fkey!inner (
                 id,
                 house_no,
                 flock,
@@ -619,11 +716,20 @@ export default function EditShipmentPage() {
           .eq("status", "draft")
           .single();
 
-        query = await applyRoleFilter(query);
+        query = await applyRoleFilter(query, { useFlockJoin: true });
 
         const { data, error } = await query;
         if (error) throw error;
         if (!data) throw new Error("ไม่พบ shipment");
+
+        if (myRole !== "admin") {
+          const blocked = (data.items || []).some(
+            (it) => clean(it?.swine?.flock) !== clean(userFlock)
+          );
+          if (blocked) {
+            throw new Error("ไม่มีสิทธิ์เปิด shipment นี้");
+          }
+        }
 
         const mappedItems = (data.items || [])
           .map((it) => ({
@@ -694,6 +800,8 @@ export default function EditShipmentPage() {
       applyRoleFilter,
       fetchShipmentListByFilters,
       loadAvailableSwinesOfFarm,
+      myRole,
+      userFlock,
       setShipmentIdToUrl,
     ]
   );
@@ -733,7 +841,7 @@ export default function EditShipmentPage() {
 
   function handleDateChange(value) {
     setFilterDate(value);
-    setFilterFromFarmCode("");
+    setFilterFromFarmCode(myRole === "admin" ? "" : clean(userFarmCode));
     setFilterToFarmId("");
     setFromFarmOptions([]);
     setToFarmOptions([]);
@@ -743,7 +851,8 @@ export default function EditShipmentPage() {
   }
 
   function handleFromFarmChange(value) {
-    setFilterFromFarmCode(value);
+    const nextValue = myRole === "admin" ? value : clean(userFarmCode);
+    setFilterFromFarmCode(nextValue);
     setFilterToFarmId("");
     setToFarmOptions([]);
     setShipmentList([]);
@@ -1281,6 +1390,22 @@ export default function EditShipmentPage() {
         <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>ค้นหา Shipment สถานะ Draft</div>
 
+          {myRole !== "admin" ? (
+            <div
+              className="small"
+              style={{
+                background: "#f8fafc",
+                border: "1px solid #e2e8f0",
+                padding: 10,
+                borderRadius: 10,
+                color: "#334155",
+              }}
+            >
+              สิทธิ์ผู้ใช้ถูกกรองตาม Farm: <b>{userFarmCode || "-"}</b> และ Flock:{" "}
+              <b>{userFlock || "-"}</b>
+            </div>
+          ) : null}
+
           <div
             style={{
               display: "grid",
@@ -1310,7 +1435,7 @@ export default function EditShipmentPage() {
               <select
                 value={filterFromFarmCode}
                 onChange={(e) => handleFromFarmChange(e.target.value)}
-                disabled={!filterDate || fromFarmLoading}
+                disabled={!filterDate || fromFarmLoading || myRole !== "admin"}
                 style={fullInputStyle}
               >
                 <option value="">
