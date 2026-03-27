@@ -5,7 +5,9 @@ export async function fetchMyProfile(userId) {
 
   const { data, error, status } = await supabase
     .from("profiles")
-    .select("user_id, display_name, role, is_active, branch_id, team_name")
+    .select(
+      "user_id, username, email, display_name, role, is_active, branch_id, team_name, farm_code, farm_name, flock"
+    )
     .eq("user_id", userId)
     .maybeSingle();
 
