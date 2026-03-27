@@ -172,9 +172,34 @@ function makeSheetColsFromRows(...rowGroups) {
   }));
 }
 
-function registerPdfThaiFonts() {
-  registerSarabunNormal(jsPDF);
-  registerSarabunBold(jsPDF);
+function registerPdfThaiFonts(doc) {
+  const targets = [doc, doc?.constructor, jsPDF];
+
+  let normalRegistered = false;
+  let boldRegistered = false;
+  let lastError = null;
+
+  for (const target of targets) {
+    if (!target) continue;
+
+    try {
+      if (!normalRegistered) {
+        registerSarabunNormal(target);
+        normalRegistered = true;
+      }
+      if (!boldRegistered) {
+        registerSarabunBold(target);
+        boldRegistered = true;
+      }
+      if (normalRegistered && boldRegistered) break;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+
+  if (!normalRegistered || !boldRegistered) {
+    throw lastError || new Error("Sarabun font registration failed");
+  }
 }
 
 function ensurePdfThaiFont(doc) {
@@ -275,21 +300,16 @@ function buildBirthLotSummaryRows(flatRows) {
         .join("|")
         .localeCompare([b["วันที่จัดส่ง"], b["ฟาร์มที่คัด"], b["ฟาร์มปลายทาง"], b.birth_lot].join("|"))
     )
-    .map((row) => {
-      return {
-        วันที่จัดส่ง: row["วันที่จัดส่ง"],
-        ฟาร์มที่คัด: row["ฟาร์มที่คัด"],
-        ฟาร์มปลายทาง: row["ฟาร์มปลายทาง"],
-        birth_lot: row.birth_lot,
-        "จำนวนตัว": row.__rows.length,
-        "น้ำหนักรวมตาม birthlot": sumFromRows(row.__rows, "weight"),
-        "น้ำหนักเฉลี่ยตาม birthlot": avgFromRows(row.__rows, "weight"),
-        "น้ำหนักรวมทั้งหมด": "",
-        "น้ำหนักเฉลี่ยทั้งหมด": "",
-      };
-    });
+    .map((row) => ({
+      วันที่จัดส่ง: row["วันที่จัดส่ง"],
+      ฟาร์มที่คัด: row["ฟาร์มที่คัด"],
+      ฟาร์มปลายทาง: row["ฟาร์มปลายทาง"],
+      birth_lot: row.birth_lot,
+      "จำนวนตัว": row.__rows.length,
+      "น้ำหนักรวมตาม birthlot": sumFromRows(row.__rows, "weight"),
+      "น้ำหนักเฉลี่ยตาม birthlot": avgFromRows(row.__rows, "weight"),
+    }));
 }
-
 
 function buildDailySummaryTotalRow(flatRows) {
   return {
@@ -301,19 +321,14 @@ function buildDailySummaryTotalRow(flatRows) {
 }
 
 function buildBirthLotSummaryTotalRow(flatRows) {
-  const totalWeight = sumFromRows(flatRows, "weight");
-  const avgWeight = avgFromRows(flatRows, "weight");
-
   return {
     วันที่จัดส่ง: "รวม",
     ฟาร์มที่คัด: "",
     ฟาร์มปลายทาง: "",
     birth_lot: "",
     "จำนวนตัว": (flatRows || []).length,
-    "น้ำหนักรวมตาม birthlot": totalWeight,
-    "น้ำหนักเฉลี่ยตาม birthlot": avgWeight,
-    "น้ำหนักรวมทั้งหมด": totalWeight,
-    "น้ำหนักเฉลี่ยทั้งหมด": avgWeight,
+    "น้ำหนักรวมตาม birthlot": sumFromRows(flatRows, "weight"),
+    "น้ำหนักเฉลี่ยตาม birthlot": avgFromRows(flatRows, "weight"),
   };
 }
 
@@ -467,9 +482,10 @@ function exportPdfReport({
   toFarmText = "",
   showDeliveryDate = false,
 }) {
-  registerPdfThaiFonts();
-
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+  registerPdfThaiFonts(doc);
+
   const pdfFont = ensurePdfThaiFont(doc);
   doc.setFont(pdfFont, "normal");
 
@@ -533,8 +549,6 @@ function exportPdfReport({
       "จำนวนตัว",
       "น้ำหนักรวมตาม birthlot",
       "น้ำหนักเฉลี่ยตาม birthlot",
-      "น้ำหนักรวมทั้งหมด",
-      "น้ำหนักเฉลี่ยทั้งหมด",
     ]],
     body: birthLotRows.map((r) => [
       r["วันที่จัดส่ง"],
@@ -544,8 +558,6 @@ function exportPdfReport({
       r["จำนวนตัว"],
       r["น้ำหนักรวมตาม birthlot"],
       r["น้ำหนักเฉลี่ยตาม birthlot"],
-      r["น้ำหนักรวมทั้งหมด"],
-      r["น้ำหนักเฉลี่ยทั้งหมด"],
     ]),
     foot: [[
       birthLotTotalRow["วันที่จัดส่ง"],
@@ -555,8 +567,6 @@ function exportPdfReport({
       birthLotTotalRow["จำนวนตัว"],
       birthLotTotalRow["น้ำหนักรวมตาม birthlot"],
       birthLotTotalRow["น้ำหนักเฉลี่ยตาม birthlot"],
-      birthLotTotalRow["น้ำหนักรวมทั้งหมด"],
-      birthLotTotalRow["น้ำหนักเฉลี่ยทั้งหมด"],
     ]],
     showFoot: "lastPage",
     styles: { font: pdfFont, fontSize: 7, cellPadding: 1.4, overflow: "linebreak" },
