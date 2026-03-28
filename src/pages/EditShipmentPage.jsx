@@ -170,21 +170,6 @@ function formatActionError(actionLabel, error, fallback = "เกิดข้อ
   return actionLabel ? `${actionLabel}: ${detail}` : detail;
 }
 
-function mergeShipmentRow(list, shipment) {
-  if (!shipment?.id) return Array.isArray(list) ? list : [];
-  const base = Array.isArray(list) ? list : [];
-  const idx = base.findIndex((x) => clean(x?.id) === clean(shipment.id));
-
-  if (idx < 0) return base;
-
-  const next = [...base];
-  next[idx] = {
-    ...next[idx],
-    ...shipment,
-  };
-  return next;
-}
-
 const OFFLINE_BANNER_TEXT =
   "ขณะนี้อุปกรณ์ออฟไลน์ ระบบจะยังไม่สามารถค้นหา เปิด หรือบันทึกข้อมูลผ่านเซิร์ฟเวอร์ได้";
 
@@ -217,6 +202,16 @@ const selectedCardStyle = {
   boxShadow: "inset 0 0 0 1px #fde68a",
 };
 
+// เก็บผลค้นหาและ filter ของหน้านี้ไว้
+// กันกรณี component re-render/remount แล้วรายการ draft หาย
+const pageSearchMemory = {
+  filterDateFrom: "",
+  filterDateTo: "",
+  filterFromFarmCode: "",
+  filterToFarmId: "",
+  shipmentList: [],
+};
+
 export default function EditShipmentPage() {
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -241,10 +236,18 @@ export default function EditShipmentPage() {
   const [permissionsLoaded, setPermissionsLoaded] = useState(false);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
 
-  const [filterDateFrom, setFilterDateFrom] = useState(today);
-  const [filterDateTo, setFilterDateTo] = useState(today);
-  const [filterFromFarmCode, setFilterFromFarmCode] = useState("");
-  const [filterToFarmId, setFilterToFarmId] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState(
+    clean(pageSearchMemory.filterDateFrom) || today
+  );
+  const [filterDateTo, setFilterDateTo] = useState(
+    clean(pageSearchMemory.filterDateTo) || today
+  );
+  const [filterFromFarmCode, setFilterFromFarmCode] = useState(
+    clean(pageSearchMemory.filterFromFarmCode)
+  );
+  const [filterToFarmId, setFilterToFarmId] = useState(
+    clean(pageSearchMemory.filterToFarmId)
+  );
 
   const [fromFarmLoading, setFromFarmLoading] = useState(false);
   const [toFarmLoading, setToFarmLoading] = useState(false);
@@ -253,11 +256,13 @@ export default function EditShipmentPage() {
   const [availableLoading, setAvailableLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const [shipmentList, setShipmentList] = useState([]);
-  const [shipmentListCache, setShipmentListCache] = useState([]);
-
   const [fromFarmOptions, setFromFarmOptions] = useState([]);
   const [toFarmOptions, setToFarmOptions] = useState([]);
+  const [shipmentList, setShipmentList] = useState(
+    Array.isArray(pageSearchMemory.shipmentList)
+      ? pageSearchMemory.shipmentList
+      : []
+  );
 
   const [selectedShipmentId, setSelectedShipmentId] = useState("");
   const [shipmentHeader, setShipmentHeader] = useState(null);
@@ -273,7 +278,8 @@ export default function EditShipmentPage() {
   const [availableSwines, setAvailableSwines] = useState([]);
   const [addHouse, setAddHouse] = useState("");
   const [addSwineQ, setAddSwineQ] = useState("");
-  const [selectedCandidateSwineId, setSelectedCandidateSwineId] = useState("");
+  const [selectedCandidateSwineId, setSelectedCandidateSwineId] =
+    useState("");
 
   const canUsePage = myRole === "admin" || myRole === "user";
   const isAdmin = myRole === "admin";
@@ -311,14 +317,25 @@ export default function EditShipmentPage() {
     return getNextSelectionStart(itemRows);
   }, [itemRows]);
 
-  const visibleShipmentList = useMemo(() => {
-    if (shipmentListCache.length > 0) return shipmentListCache;
-    return shipmentList;
-  }, [shipmentList, shipmentListCache]);
-
   useEffect(() => {
     setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
   }, [previewStartNo]);
+
+  useEffect(() => {
+    pageSearchMemory.filterDateFrom = filterDateFrom;
+    pageSearchMemory.filterDateTo = filterDateTo;
+    pageSearchMemory.filterFromFarmCode = filterFromFarmCode;
+    pageSearchMemory.filterToFarmId = filterToFarmId;
+    pageSearchMemory.shipmentList = Array.isArray(shipmentList)
+      ? shipmentList
+      : [];
+  }, [
+    filterDateFrom,
+    filterDateTo,
+    filterFromFarmCode,
+    filterToFarmId,
+    shipmentList,
+  ]);
 
   useEffect(() => {
     function handleOnline() {
@@ -372,18 +389,6 @@ export default function EditShipmentPage() {
       return next;
     });
   }, [setSearchParams]);
-
-  const setShipmentIdToUrl = useCallback(
-    (shipmentId) => {
-      setSearchParams((prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("id", shipmentId);
-        next.delete("shipmentId");
-        return next;
-      });
-    },
-    [setSearchParams]
-  );
 
   const clearEditor = useCallback(
     ({ clearUrl = true } = {}) => {
@@ -912,7 +917,6 @@ export default function EditShipmentPage() {
         toFarmId: args?.toFarmId ?? filterToFarmId,
       });
       setShipmentList(rows);
-      setShipmentListCache(rows);
     } catch (e) {
       console.error("refreshShipmentList error:", e);
       setMsg(
@@ -1129,11 +1133,10 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        setShipmentIdToUrl(shipmentId);
-
-        setShipmentList((prev) => mergeShipmentRow(prev, data));
-        setShipmentListCache((prev) => mergeShipmentRow(prev, data));
-
+        // สำคัญ:
+        // ไม่แก้ filter ที่ใช้ค้นหา
+        // และไม่ set URL ใหม่ตอนเปิดจาก list
+        // เพื่อกัน shipment list หาย
         await loadAvailableSwinesOfFarm(data.from_farm_code, data.from_flock);
       } catch (e) {
         console.error("openShipment error:", e);
@@ -1168,7 +1171,6 @@ export default function EditShipmentPage() {
       permissionsLoaded,
       userCanAccessShipment,
       loadAvailableSwinesOfFarm,
-      setShipmentIdToUrl,
       isOffline,
     ]
   );
@@ -1223,7 +1225,7 @@ export default function EditShipmentPage() {
     setFilterToFarmId("");
     setToFarmOptions([]);
     setShipmentList([]);
-    setShipmentListCache([]);
+    pageSearchMemory.shipmentList = [];
     clearEditor();
     setMsg("");
   }
@@ -1243,7 +1245,7 @@ export default function EditShipmentPage() {
     setFilterToFarmId("");
     setToFarmOptions([]);
     setShipmentList([]);
-    setShipmentListCache([]);
+    pageSearchMemory.shipmentList = [];
     clearEditor();
     setMsg("");
   }
@@ -1251,7 +1253,7 @@ export default function EditShipmentPage() {
   function handleToFarmChange(value) {
     setFilterToFarmId(value);
     setShipmentList([]);
-    setShipmentListCache([]);
+    pageSearchMemory.shipmentList = [];
     clearEditor();
     setMsg("");
   }
@@ -1291,7 +1293,6 @@ export default function EditShipmentPage() {
     try {
       const rows = await fetchShipmentList();
       setShipmentList(rows);
-      setShipmentListCache(rows);
 
       if (!rows.length) {
         setMsg("ไม่พบ shipment สถานะ draft ตามช่วงวันที่และเงื่อนไขที่เลือก");
@@ -1299,7 +1300,7 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("handleSearch error:", e);
       setShipmentList([]);
-      setShipmentListCache([]);
+      pageSearchMemory.shipmentList = [];
       setMsg(
         formatActionError(
           "ค้นหา shipment ไม่สำเร็จ",
@@ -1728,8 +1729,6 @@ export default function EditShipmentPage() {
 
       if (updatedHeader?.id) {
         setShipmentHeader(updatedHeader);
-        setShipmentList((prev) => mergeShipmentRow(prev, updatedHeader));
-        setShipmentListCache((prev) => mergeShipmentRow(prev, updatedHeader));
       }
 
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
@@ -2069,16 +2068,16 @@ export default function EditShipmentPage() {
 
         <div className="card" style={{ display: "grid", gap: 10, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>
-            รายการ Draft ที่พบ ({visibleShipmentList.length})
+            รายการ Draft ที่พบ ({shipmentList.length})
           </div>
 
-          {visibleShipmentList.length === 0 ? (
+          {shipmentList.length === 0 ? (
             <div className="small" style={{ color: "#666" }}>
               ยังไม่มีรายการแสดง
             </div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {visibleShipmentList.map((row) => {
+              {shipmentList.map((row) => {
                 const active = selectedShipmentId === row.id;
                 return (
                   <div
