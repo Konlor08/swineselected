@@ -170,6 +170,21 @@ function formatActionError(actionLabel, error, fallback = "เกิดข้อ
   return actionLabel ? `${actionLabel}: ${detail}` : detail;
 }
 
+function mergeShipmentRow(list, shipment) {
+  if (!shipment?.id) return Array.isArray(list) ? list : [];
+  const base = Array.isArray(list) ? list : [];
+  const idx = base.findIndex((x) => clean(x?.id) === clean(shipment.id));
+
+  if (idx < 0) return base;
+
+  const next = [...base];
+  next[idx] = {
+    ...next[idx],
+    ...shipment,
+  };
+  return next;
+}
+
 const OFFLINE_BANNER_TEXT =
   "ขณะนี้อุปกรณ์ออฟไลน์ ระบบจะยังไม่สามารถค้นหา เปิด หรือบันทึกข้อมูลผ่านเซิร์ฟเวอร์ได้";
 
@@ -238,9 +253,11 @@ export default function EditShipmentPage() {
   const [availableLoading, setAvailableLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  const [shipmentList, setShipmentList] = useState([]);
+  const [shipmentListCache, setShipmentListCache] = useState([]);
+
   const [fromFarmOptions, setFromFarmOptions] = useState([]);
   const [toFarmOptions, setToFarmOptions] = useState([]);
-  const [shipmentList, setShipmentList] = useState([]);
 
   const [selectedShipmentId, setSelectedShipmentId] = useState("");
   const [shipmentHeader, setShipmentHeader] = useState(null);
@@ -293,6 +310,11 @@ export default function EditShipmentPage() {
   const previewStartNo = useMemo(() => {
     return getNextSelectionStart(itemRows);
   }, [itemRows]);
+
+  const visibleShipmentList = useMemo(() => {
+    if (shipmentListCache.length > 0) return shipmentListCache;
+    return shipmentList;
+  }, [shipmentList, shipmentListCache]);
 
   useEffect(() => {
     setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
@@ -876,7 +898,9 @@ export default function EditShipmentPage() {
 
   async function refreshShipmentList(args = null) {
     if (isOffline) {
-      setMsg("รีเฟรชรายการ draft ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+      setMsg(
+        "รีเฟรชรายการ draft ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
+      );
       return;
     }
 
@@ -888,6 +912,7 @@ export default function EditShipmentPage() {
         toFarmId: args?.toFarmId ?? filterToFarmId,
       });
       setShipmentList(rows);
+      setShipmentListCache(rows);
     } catch (e) {
       console.error("refreshShipmentList error:", e);
       setMsg(
@@ -901,83 +926,86 @@ export default function EditShipmentPage() {
     }
   }
 
-  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode, fromFlock) => {
-    const safeFarmCode = clean(fromFarmCode);
-    const safeFlock = clean(fromFlock);
+  const loadAvailableSwinesOfFarm = useCallback(
+    async (fromFarmCode, fromFlock) => {
+      const safeFarmCode = clean(fromFarmCode);
+      const safeFlock = clean(fromFlock);
 
-    if (!safeFarmCode || !safeFlock) {
-      setAvailableSwines([]);
-      return;
-    }
-
-    if (isOffline) {
-      setAvailableSwines([]);
-      return;
-    }
-
-    setAvailableLoading(true);
-
-    try {
-      const { data: farmSwines, error: e1 } = await supabase
-        .from("swines")
-        .select("id, swine_code, farm_code, house_no, flock, birth_date")
-        .eq("farm_code", safeFarmCode)
-        .eq("flock", safeFlock)
-        .order("house_no", { ascending: true })
-        .order("swine_code", { ascending: true })
-        .limit(5000);
-
-      if (e1) throw e1;
-
-      const swines = (farmSwines || []).map((x) => ({
-        ...x,
-        swine_code: clean(x.swine_code),
-        house_no: clean(x.house_no),
-        flock: clean(x.flock),
-      }));
-
-      const codes = swines.map((x) => x.swine_code).filter(Boolean);
-
-      if (!codes.length) {
+      if (!safeFarmCode || !safeFlock) {
         setAvailableSwines([]);
         return;
       }
 
-      const codeChunks = chunkArray(codes, 500);
-      const availableCodeSet = new Set();
-
-      for (const chunk of codeChunks) {
-        const { data: availableRows, error: e2 } = await supabase
-          .from("swine_master")
-          .select("swine_code")
-          .eq("delivery_state", "available")
-          .in("swine_code", chunk);
-
-        if (e2) throw e2;
-
-        for (const row of availableRows || []) {
-          const code = clean(row?.swine_code);
-          if (code) availableCodeSet.add(code);
-        }
+      if (isOffline) {
+        setAvailableSwines([]);
+        return;
       }
 
-      setAvailableSwines(
-        swines.filter((x) => availableCodeSet.has(clean(x.swine_code)))
-      );
-    } catch (e) {
-      console.error("loadAvailableSwinesOfFarm error:", e);
-      setAvailableSwines([]);
-      setMsg(
-        formatActionError(
-          "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ",
-          e,
-          "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ"
-        )
-      );
-    } finally {
-      setAvailableLoading(false);
-    }
-  }, [isOffline]);
+      setAvailableLoading(true);
+
+      try {
+        const { data: farmSwines, error: e1 } = await supabase
+          .from("swines")
+          .select("id, swine_code, farm_code, house_no, flock, birth_date")
+          .eq("farm_code", safeFarmCode)
+          .eq("flock", safeFlock)
+          .order("house_no", { ascending: true })
+          .order("swine_code", { ascending: true })
+          .limit(5000);
+
+        if (e1) throw e1;
+
+        const swines = (farmSwines || []).map((x) => ({
+          ...x,
+          swine_code: clean(x.swine_code),
+          house_no: clean(x.house_no),
+          flock: clean(x.flock),
+        }));
+
+        const codes = swines.map((x) => x.swine_code).filter(Boolean);
+
+        if (!codes.length) {
+          setAvailableSwines([]);
+          return;
+        }
+
+        const codeChunks = chunkArray(codes, 500);
+        const availableCodeSet = new Set();
+
+        for (const chunk of codeChunks) {
+          const { data: availableRows, error: e2 } = await supabase
+            .from("swine_master")
+            .select("swine_code")
+            .eq("delivery_state", "available")
+            .in("swine_code", chunk);
+
+          if (e2) throw e2;
+
+          for (const row of availableRows || []) {
+            const code = clean(row?.swine_code);
+            if (code) availableCodeSet.add(code);
+          }
+        }
+
+        setAvailableSwines(
+          swines.filter((x) => availableCodeSet.has(clean(x.swine_code)))
+        );
+      } catch (e) {
+        console.error("loadAvailableSwinesOfFarm error:", e);
+        setAvailableSwines([]);
+        setMsg(
+          formatActionError(
+            "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ",
+            e,
+            "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ"
+          )
+        );
+      } finally {
+        setAvailableLoading(false);
+      }
+    },
+    [isOffline]
+  );
 
   const userCanAccessShipment = useCallback(
     (shipment) => {
@@ -1005,7 +1033,9 @@ export default function EditShipmentPage() {
 
       if (isOffline) {
         if (!silent) {
-          setMsg("เปิด shipment ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+          setMsg(
+            "เปิด shipment ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
+          );
         }
         return;
       }
@@ -1099,10 +1129,10 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        setFilterFromFarmCode(
-          (prev) => clean(prev) || clean(data.from_farm_code) || ""
-        );
         setShipmentIdToUrl(shipmentId);
+
+        setShipmentList((prev) => mergeShipmentRow(prev, data));
+        setShipmentListCache((prev) => mergeShipmentRow(prev, data));
 
         await loadAvailableSwinesOfFarm(data.from_farm_code, data.from_flock);
       } catch (e) {
@@ -1193,6 +1223,7 @@ export default function EditShipmentPage() {
     setFilterToFarmId("");
     setToFarmOptions([]);
     setShipmentList([]);
+    setShipmentListCache([]);
     clearEditor();
     setMsg("");
   }
@@ -1212,6 +1243,7 @@ export default function EditShipmentPage() {
     setFilterToFarmId("");
     setToFarmOptions([]);
     setShipmentList([]);
+    setShipmentListCache([]);
     clearEditor();
     setMsg("");
   }
@@ -1219,13 +1251,16 @@ export default function EditShipmentPage() {
   function handleToFarmChange(value) {
     setFilterToFarmId(value);
     setShipmentList([]);
+    setShipmentListCache([]);
     clearEditor();
     setMsg("");
   }
 
   async function handleSearch() {
     if (isOffline) {
-      setMsg("ค้นหา shipment ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+      setMsg(
+        "ค้นหา shipment ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
+      );
       return;
     }
 
@@ -1256,6 +1291,7 @@ export default function EditShipmentPage() {
     try {
       const rows = await fetchShipmentList();
       setShipmentList(rows);
+      setShipmentListCache(rows);
 
       if (!rows.length) {
         setMsg("ไม่พบ shipment สถานะ draft ตามช่วงวันที่และเงื่อนไขที่เลือก");
@@ -1263,6 +1299,7 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("handleSearch error:", e);
       setShipmentList([]);
+      setShipmentListCache([]);
       setMsg(
         formatActionError(
           "ค้นหา shipment ไม่สำเร็จ",
@@ -1452,7 +1489,9 @@ export default function EditShipmentPage() {
 
   async function handleSaveAll() {
     if (isOffline) {
-      setMsg("บันทึกไม่สำเร็จ: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+      setMsg(
+        "บันทึกไม่สำเร็จ: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
+      );
       return;
     }
 
@@ -1689,6 +1728,8 @@ export default function EditShipmentPage() {
 
       if (updatedHeader?.id) {
         setShipmentHeader(updatedHeader);
+        setShipmentList((prev) => mergeShipmentRow(prev, updatedHeader));
+        setShipmentListCache((prev) => mergeShipmentRow(prev, updatedHeader));
       }
 
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
@@ -2028,16 +2069,16 @@ export default function EditShipmentPage() {
 
         <div className="card" style={{ display: "grid", gap: 10, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>
-            รายการ Draft ที่พบ ({shipmentList.length})
+            รายการ Draft ที่พบ ({visibleShipmentList.length})
           </div>
 
-          {shipmentList.length === 0 ? (
+          {visibleShipmentList.length === 0 ? (
             <div className="small" style={{ color: "#666" }}>
               ยังไม่มีรายการแสดง
             </div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {shipmentList.map((row) => {
+              {visibleShipmentList.map((row) => {
                 const active = selectedShipmentId === row.id;
                 return (
                   <div
