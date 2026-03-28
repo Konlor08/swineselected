@@ -112,6 +112,67 @@ function applySelectedDateRange(query, fromDate, toDate) {
   return q;
 }
 
+function getRawErrorMessage(error) {
+  if (!error) return "";
+  if (typeof error === "string") return clean(error);
+  return clean(
+    error?.message ||
+      error?.details ||
+      error?.hint ||
+      error?.error_description ||
+      error?.description ||
+      ""
+  );
+}
+
+function isLikelyNetworkError(error) {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return true;
+  }
+
+  const raw = getRawErrorMessage(error).toLowerCase();
+
+  return (
+    raw.includes("failed to fetch") ||
+    raw.includes("fetch failed") ||
+    raw.includes("networkerror") ||
+    raw.includes("network request failed") ||
+    raw.includes("load failed") ||
+    raw.includes("err_network") ||
+    raw.includes("err_internet_disconnected") ||
+    raw.includes("internet disconnected") ||
+    raw.includes("connection refused") ||
+    raw.includes("connection reset") ||
+    raw.includes("dns") ||
+    raw.includes("offline")
+  );
+}
+
+function isLikelyTimeoutError(error) {
+  const raw = getRawErrorMessage(error).toLowerCase();
+  return raw.includes("timeout") || raw.includes("timed out");
+}
+
+function getFriendlyErrorMessage(error, fallback = "เกิดข้อผิดพลาด") {
+  if (isLikelyNetworkError(error)) {
+    return "เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่";
+  }
+
+  if (isLikelyTimeoutError(error)) {
+    return "เซิร์ฟเวอร์ตอบกลับช้าเกินไป กรุณาลองใหม่อีกครั้ง";
+  }
+
+  return getRawErrorMessage(error) || fallback;
+}
+
+function formatActionError(actionLabel, error, fallback = "เกิดข้อผิดพลาด") {
+  const detail = getFriendlyErrorMessage(error, fallback);
+  return actionLabel ? `${actionLabel}: ${detail}` : detail;
+}
+
+const OFFLINE_BANNER_TEXT =
+  "ขณะนี้อุปกรณ์ออฟไลน์ ระบบจะยังไม่สามารถค้นหา เปิด หรือบันทึกข้อมูลผ่านเซิร์ฟเวอร์ได้";
+
 const fullInputStyle = {
   width: "100%",
   padding: 10,
@@ -154,6 +215,10 @@ export default function EditShipmentPage() {
   const [pageLoading, setPageLoading] = useState(true);
   const [myRole, setMyRole] = useState("");
   const [msg, setMsg] = useState("");
+  const [bootError, setBootError] = useState("");
+  const [isOffline, setIsOffline] = useState(
+    typeof navigator !== "undefined" ? !navigator.onLine : false
+  );
 
   const [userId, setUserId] = useState("");
   const [permissionMap, setPermissionMap] = useState({});
@@ -205,7 +270,8 @@ export default function EditShipmentPage() {
     !!filterDateTo &&
     !dateRangeInvalid &&
     !!filterFromFarmCode &&
-    permissionsReady;
+    permissionsReady &&
+    !isOffline;
 
   const mustChooseFromFarm =
     isAdmin || fromFarmOptions.length === 0 || fromFarmOptions.length > 1;
@@ -232,6 +298,28 @@ export default function EditShipmentPage() {
     setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
   }, [previewStartNo]);
 
+  useEffect(() => {
+    function handleOnline() {
+      setIsOffline(false);
+    }
+
+    function handleOffline() {
+      setIsOffline(true);
+    }
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline);
+      window.addEventListener("offline", handleOffline);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", handleOnline);
+        window.removeEventListener("offline", handleOffline);
+      }
+    };
+  }, []);
+
   const handleBack = useCallback(() => {
     const idx =
       typeof window !== "undefined" &&
@@ -247,6 +335,12 @@ export default function EditShipmentPage() {
 
     nav("/", { replace: true });
   }, [nav]);
+
+  const handleReloadPage = useCallback(() => {
+    if (typeof window !== "undefined") {
+      window.location.reload();
+    }
+  }, []);
 
   const clearShipmentIdFromUrl = useCallback(() => {
     setSearchParams((prev) => {
@@ -307,10 +401,12 @@ export default function EditShipmentPage() {
     async function init() {
       setPageLoading(true);
       setMsg("");
+      setBootError("");
 
       try {
         const { data } = await supabase.auth.getSession();
         const uid = data?.session?.user?.id;
+
         if (!uid) {
           if (alive) {
             setMyRole("");
@@ -330,7 +426,15 @@ export default function EditShipmentPage() {
         setPermissionsLoaded(role === "admin");
       } catch (e) {
         console.error("EditShipmentPage init error:", e);
-        if (alive) setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+        if (alive) {
+          const friendly = formatActionError(
+            "โหลดข้อมูลเริ่มต้นไม่สำเร็จ",
+            e,
+            "โหลดข้อมูลเริ่มต้นไม่สำเร็จ"
+          );
+          setBootError(friendly);
+          setMsg(friendly);
+        }
       } finally {
         if (alive) setPageLoading(false);
       }
@@ -404,7 +508,13 @@ export default function EditShipmentPage() {
       console.error("loadUserFarmPermissions error:", e);
       setPermissionMap({});
       setPermissionFarmOptions([]);
-      setMsg(e?.message || "โหลดสิทธิ์ฟาร์มของผู้ใช้ไม่สำเร็จ");
+      setMsg(
+        formatActionError(
+          "โหลดสิทธิ์ฟาร์มของผู้ใช้ไม่สำเร็จ",
+          e,
+          "โหลดสิทธิ์ฟาร์มของผู้ใช้ไม่สำเร็จ"
+        )
+      );
     } finally {
       setPermissionsLoading(false);
       setPermissionsLoaded(true);
@@ -413,12 +523,15 @@ export default function EditShipmentPage() {
 
   useEffect(() => {
     if (!userId) return;
+    if (isOffline) return;
+
     if (isAdmin) {
       setPermissionsLoaded(true);
       return;
     }
+
     void loadUserFarmPermissions();
-  }, [userId, isAdmin, loadUserFarmPermissions]);
+  }, [userId, isAdmin, loadUserFarmPermissions, isOffline]);
 
   const applyRoleFilter = useCallback(
     (query, opts = {}) => {
@@ -451,6 +564,11 @@ export default function EditShipmentPage() {
   );
 
   async function loadFromFarmOptions() {
+    if (isOffline) {
+      setFromFarmOptions([]);
+      return;
+    }
+
     setFromFarmLoading(true);
 
     try {
@@ -487,14 +605,26 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("loadFromFarmOptions error:", e);
       setFromFarmOptions([]);
-      setMsg(e?.message || "โหลดฟาร์มต้นทางไม่สำเร็จ");
+      setMsg(
+        formatActionError(
+          "โหลดฟาร์มต้นทางไม่สำเร็จ",
+          e,
+          "โหลดฟาร์มต้นทางไม่สำเร็จ"
+        )
+      );
     } finally {
       setFromFarmLoading(false);
     }
   }
 
   useEffect(() => {
-    if (!canUsePage || !filterDateFrom || !filterDateTo || dateRangeInvalid) {
+    if (
+      !canUsePage ||
+      !filterDateFrom ||
+      !filterDateTo ||
+      dateRangeInvalid ||
+      isOffline
+    ) {
       setFromFarmOptions([]);
       return;
     }
@@ -512,6 +642,7 @@ export default function EditShipmentPage() {
     dateRangeInvalid,
     permissionsReady,
     applyRoleFilter,
+    isOffline,
   ]);
 
   useEffect(() => {
@@ -548,6 +679,11 @@ export default function EditShipmentPage() {
   ]);
 
   async function loadToFarmOptions() {
+    if (isOffline) {
+      setToFarmOptions([]);
+      return;
+    }
+
     setToFarmLoading(true);
 
     try {
@@ -593,7 +729,13 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("loadToFarmOptions error:", e);
       setToFarmOptions([]);
-      setMsg(e?.message || "โหลดฟาร์มปลายทางไม่สำเร็จ");
+      setMsg(
+        formatActionError(
+          "โหลดฟาร์มปลายทางไม่สำเร็จ",
+          e,
+          "โหลดฟาร์มปลายทางไม่สำเร็จ"
+        )
+      );
     } finally {
       setToFarmLoading(false);
     }
@@ -605,7 +747,8 @@ export default function EditShipmentPage() {
       !filterDateFrom ||
       !filterDateTo ||
       dateRangeInvalid ||
-      !filterFromFarmCode
+      !filterFromFarmCode ||
+      isOffline
     ) {
       setToFarmOptions([]);
       return;
@@ -625,6 +768,7 @@ export default function EditShipmentPage() {
     filterFromFarmCode,
     permissionsReady,
     applyRoleFilter,
+    isOffline,
   ]);
 
   useEffect(() => {
@@ -633,6 +777,16 @@ export default function EditShipmentPage() {
     async function loadEditToFarmMeta() {
       if (!editToFarmId) {
         setEditToFarmMeta(null);
+        return;
+      }
+
+      if (isOffline) {
+        if (
+          clean(shipmentHeader?.to_farm_id) === clean(editToFarmId) &&
+          shipmentHeader?.to_farm
+        ) {
+          setEditToFarmMeta(shipmentHeader.to_farm);
+        }
         return;
       }
 
@@ -649,7 +803,16 @@ export default function EditShipmentPage() {
         setEditToFarmMeta(data || null);
       } catch (e) {
         console.error("loadEditToFarmMeta error:", e);
-        if (alive) setEditToFarmMeta(null);
+        if (alive) {
+          setEditToFarmMeta(null);
+          setMsg(
+            formatActionError(
+              "โหลดข้อมูลฟาร์มปลายทางไม่สำเร็จ",
+              e,
+              "โหลดข้อมูลฟาร์มปลายทางไม่สำเร็จ"
+            )
+          );
+        }
       }
     }
 
@@ -657,7 +820,7 @@ export default function EditShipmentPage() {
     return () => {
       alive = false;
     };
-  }, [editToFarmId]);
+  }, [editToFarmId, isOffline, shipmentHeader]);
 
   const fetchShipmentListByFilters = useCallback(
     async ({ selectedDateFrom, selectedDateTo, fromFarmCode, toFarmId }) => {
@@ -712,6 +875,11 @@ export default function EditShipmentPage() {
   }
 
   async function refreshShipmentList(args = null) {
+    if (isOffline) {
+      setMsg("รีเฟรชรายการ draft ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+      return;
+    }
+
     try {
       const rows = await fetchShipmentListByFilters({
         selectedDateFrom: args?.selectedDateFrom ?? filterDateFrom,
@@ -722,7 +890,13 @@ export default function EditShipmentPage() {
       setShipmentList(rows);
     } catch (e) {
       console.error("refreshShipmentList error:", e);
-      setMsg(e?.message || "รีเฟรชรายการ draft ไม่สำเร็จ");
+      setMsg(
+        formatActionError(
+          "รีเฟรชรายการ draft ไม่สำเร็จ",
+          e,
+          "รีเฟรชรายการ draft ไม่สำเร็จ"
+        )
+      );
       throw e;
     }
   }
@@ -732,6 +906,11 @@ export default function EditShipmentPage() {
     const safeFlock = clean(fromFlock);
 
     if (!safeFarmCode || !safeFlock) {
+      setAvailableSwines([]);
+      return;
+    }
+
+    if (isOffline) {
       setAvailableSwines([]);
       return;
     }
@@ -788,11 +967,17 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("loadAvailableSwinesOfFarm error:", e);
       setAvailableSwines([]);
-      setMsg(e?.message || "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ");
+      setMsg(
+        formatActionError(
+          "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ",
+          e,
+          "โหลดรายการหมูสำหรับเพิ่มไม่สำเร็จ"
+        )
+      );
     } finally {
       setAvailableLoading(false);
     }
-  }, []);
+  }, [isOffline]);
 
   const userCanAccessShipment = useCallback(
     (shipment) => {
@@ -817,6 +1002,13 @@ export default function EditShipmentPage() {
       const { silent = false } = opts;
 
       if (!shipmentId) return;
+
+      if (isOffline) {
+        if (!silent) {
+          setMsg("เปิด shipment ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+        }
+        return;
+      }
 
       if (!isAdmin && !permissionsLoaded) {
         if (!silent) setMsg("กำลังโหลดสิทธิ์ผู้ใช้ กรุณาลองใหม่อีกครั้ง");
@@ -927,7 +1119,15 @@ export default function EditShipmentPage() {
         setAddHouse("");
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
-        if (!silent) setMsg(e?.message || "เปิด shipment เพื่อแก้ไขไม่สำเร็จ");
+        if (!silent) {
+          setMsg(
+            formatActionError(
+              "เปิด shipment เพื่อแก้ไขไม่สำเร็จ",
+              e,
+              "เปิด shipment เพื่อแก้ไขไม่สำเร็จ"
+            )
+          );
+        }
         throw e;
       } finally {
         setDetailLoading(false);
@@ -939,11 +1139,12 @@ export default function EditShipmentPage() {
       userCanAccessShipment,
       loadAvailableSwinesOfFarm,
       setShipmentIdToUrl,
+      isOffline,
     ]
   );
 
   useEffect(() => {
-    if (pageLoading || !canUsePage || !shipmentIdFromUrl) return;
+    if (pageLoading || !canUsePage || !shipmentIdFromUrl || isOffline) return;
     if (!permissionsReady) return;
 
     if (
@@ -960,7 +1161,15 @@ export default function EditShipmentPage() {
         await openShipment(shipmentIdFromUrl, { silent: true });
       } catch (e) {
         console.error("auto open by url error:", e);
-        if (alive) setMsg(e?.message || "เปิด draft จาก URL ไม่สำเร็จ");
+        if (alive) {
+          setMsg(
+            formatActionError(
+              "เปิด draft จาก URL ไม่สำเร็จ",
+              e,
+              "เปิด draft จาก URL ไม่สำเร็จ"
+            )
+          );
+        }
       }
     }
 
@@ -976,6 +1185,7 @@ export default function EditShipmentPage() {
     shipmentHeader?.id,
     openShipment,
     permissionsReady,
+    isOffline,
   ]);
 
   function resetSearchStateAfterDateChange() {
@@ -1014,6 +1224,11 @@ export default function EditShipmentPage() {
   }
 
   async function handleSearch() {
+    if (isOffline) {
+      setMsg("ค้นหา shipment ไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+      return;
+    }
+
     if (!permissionsReady) {
       setMsg("กำลังโหลดสิทธิ์ผู้ใช้ กรุณารอสักครู่");
       return;
@@ -1048,7 +1263,13 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("handleSearch error:", e);
       setShipmentList([]);
-      setMsg(e?.message || "ค้นหา shipment ไม่สำเร็จ");
+      setMsg(
+        formatActionError(
+          "ค้นหา shipment ไม่สำเร็จ",
+          e,
+          "ค้นหา shipment ไม่สำเร็จ"
+        )
+      );
     } finally {
       setShipmentListLoading(false);
     }
@@ -1230,6 +1451,11 @@ export default function EditShipmentPage() {
   }
 
   async function handleSaveAll() {
+    if (isOffline) {
+      setMsg("บันทึกไม่สำเร็จ: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+      return;
+    }
+
     if (!shipmentHeader?.id) {
       setMsg("กรุณาเลือก shipment ก่อน");
       return;
@@ -1476,13 +1702,17 @@ export default function EditShipmentPage() {
         raw: e,
       });
 
-      setMsg(
-        `บันทึกไม่สำเร็จ ที่ขั้นตอน: ${step}${
-          e?.message ? ` | ${e.message}` : ""
-        }${e?.details ? ` | details: ${e.details}` : ""}${
-          e?.hint ? ` | hint: ${e.hint}` : ""
-        }`
-      );
+      if (isLikelyNetworkError(e) || isLikelyTimeoutError(e)) {
+        setMsg(`บันทึกไม่สำเร็จ: ${getFriendlyErrorMessage(e)}`);
+      } else {
+        setMsg(
+          `บันทึกไม่สำเร็จ ที่ขั้นตอน: ${step}${
+            e?.message ? ` | ${e.message}` : ""
+          }${e?.details ? ` | details: ${e.details}` : ""}${
+            e?.hint ? ` | hint: ${e.hint}` : ""
+          }`
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -1493,6 +1723,39 @@ export default function EditShipmentPage() {
       <div className="page">
         <div className="card" style={{ maxWidth: 720, margin: "40px auto" }}>
           Loading...
+        </div>
+      </div>
+    );
+  }
+
+  if (bootError && !canUsePage) {
+    return (
+      <div className="page">
+        <div
+          className="card"
+          style={{
+            maxWidth: 720,
+            margin: "40px auto",
+            display: "grid",
+            gap: 12,
+          }}
+        >
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#b91c1c" }}>
+            {bootError}
+          </div>
+
+          <div className="small" style={{ color: "#666", lineHeight: 1.7 }}>
+            เมื่อเชื่อมต่ออินเทอร์เน็ตได้แล้ว ให้ลองโหลดหน้าใหม่อีกครั้ง
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button className="linkbtn" type="button" onClick={handleReloadPage}>
+              ลองใหม่
+            </button>
+            <button className="linkbtn" type="button" onClick={handleBack}>
+              Back
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1549,6 +1812,22 @@ export default function EditShipmentPage() {
           minWidth: 0,
         }}
       >
+        {isOffline ? (
+          <div className="card" style={{ padding: 12, ...cardStyle }}>
+            <div
+              className="small"
+              style={{
+                color: "#92400e",
+                fontWeight: 700,
+                lineHeight: 1.7,
+                wordBreak: "break-word",
+              }}
+            >
+              {OFFLINE_BANNER_TEXT}
+            </div>
+          </div>
+        ) : null}
+
         {msg ? (
           <div className="card" style={{ padding: 12, ...cardStyle }}>
             <div
@@ -1645,7 +1924,8 @@ export default function EditShipmentPage() {
                     !filterDateTo ||
                     dateRangeInvalid ||
                     fromFarmLoading ||
-                    !permissionsReady
+                    !permissionsReady ||
+                    isOffline
                   }
                   style={fullInputStyle}
                 >
@@ -1654,6 +1934,8 @@ export default function EditShipmentPage() {
                       ? "กำลังโหลดสิทธิ์..."
                       : fromFarmLoading
                       ? "กำลังโหลด..."
+                      : isOffline
+                      ? "ออฟไลน์อยู่"
                       : "เลือกฟาร์มต้นทาง"}
                   </option>
                   {fromFarmOptions.map((opt) => (
@@ -1684,7 +1966,8 @@ export default function EditShipmentPage() {
                   dateRangeInvalid ||
                   !filterFromFarmCode ||
                   toFarmLoading ||
-                  !permissionsReady
+                  !permissionsReady ||
+                  isOffline
                 }
                 style={fullInputStyle}
               >
@@ -1693,6 +1976,8 @@ export default function EditShipmentPage() {
                     ? "กำลังโหลดสิทธิ์..."
                     : toFarmLoading
                     ? "กำลังโหลด..."
+                    : isOffline
+                    ? "ออฟไลน์อยู่"
                     : "ทุกฟาร์มปลายทาง"}
                 </option>
                 {toFarmOptions.map((opt) => (
@@ -1807,7 +2092,7 @@ export default function EditShipmentPage() {
                           className="linkbtn"
                           type="button"
                           onClick={() => openShipment(row.id)}
-                          disabled={detailLoading || !permissionsReady}
+                          disabled={detailLoading || !permissionsReady || isOffline}
                         >
                           {detailLoading && selectedShipmentId === row.id
                             ? "กำลังเปิด..."
@@ -1883,16 +2168,44 @@ export default function EditShipmentPage() {
                 </div>
 
                 <div style={{ minWidth: 0 }}>
-                  <FarmPickerInlineAdd
-                    label="ฟาร์มปลายทาง"
-                    value={editToFarmId}
-                    excludeId={null}
-                    onChange={(id) => {
-                      setMsg("");
-                      setEditToFarmId(id || "");
-                    }}
-                    requireBranch={false}
-                  />
+                  {isOffline ? (
+                    <>
+                      <div
+                        className="small"
+                        style={{ marginBottom: 6, fontWeight: 700 }}
+                      >
+                        ฟาร์มปลายทาง
+                      </div>
+                      <input
+                        readOnly
+                        value={
+                          editToFarmMeta?.farm_name ||
+                          shipmentHeader?.to_farm?.farm_name ||
+                          shipmentHeader?.to_farm?.farm_code ||
+                          ""
+                        }
+                        placeholder="ออฟไลน์อยู่ ยังไม่สามารถค้นหาฟาร์มปลายทางได้"
+                        style={{ ...fullInputStyle, background: "#f8fafc" }}
+                      />
+                      <div
+                        className="small"
+                        style={{ marginTop: 6, color: "#92400e" }}
+                      >
+                        ขณะนี้ออฟไลน์ จึงซ่อนตัวเลือกฟาร์มปลายทางชั่วคราว
+                      </div>
+                    </>
+                  ) : (
+                    <FarmPickerInlineAdd
+                      label="ฟาร์มปลายทาง"
+                      value={editToFarmId}
+                      excludeId={null}
+                      onChange={(id) => {
+                        setMsg("");
+                        setEditToFarmId(id || "");
+                      }}
+                      requireBranch={false}
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -2293,7 +2606,7 @@ export default function EditShipmentPage() {
                 className="linkbtn"
                 type="button"
                 onClick={handleSaveAll}
-                disabled={!shipmentHeader?.id || saving}
+                disabled={!shipmentHeader?.id || saving || isOffline}
               >
                 {saving ? "Saving..." : "บันทึกทั้งหมด"}
               </button>
@@ -2312,10 +2625,6 @@ export default function EditShipmentPage() {
             </div>
           </>
         ) : null}
-      
-      
-      
-      
       </div>
     </div>
   );
