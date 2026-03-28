@@ -207,7 +207,8 @@ export default function EditShipmentPage() {
     !!filterFromFarmCode &&
     permissionsReady;
 
-  const mustChooseFromFarm = isAdmin || fromFarmOptions.length > 1;
+  const mustChooseFromFarm =
+    isAdmin || fromFarmOptions.length === 0 || fromFarmOptions.length > 1;
 
   const allowedFlocksForSelectedFarm = useMemo(() => {
     if (!filterFromFarmCode) return [];
@@ -453,18 +454,14 @@ export default function EditShipmentPage() {
     setFromFarmLoading(true);
 
     try {
-      if (!isAdmin) {
-        setFromFarmOptions(permissionFarmOptions);
-        return;
-      }
-
       let query = supabase
         .from("swine_shipments")
-        .select("from_farm_code, from_farm_name")
+        .select("from_farm_code, from_farm_name, from_flock")
         .eq("status", "draft")
         .order("from_farm_name", { ascending: true });
 
       query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
+      query = applyRoleFilter(query, { fromFarmCode: "" });
 
       const { data, error } = await query;
       if (error) throw error;
@@ -521,19 +518,35 @@ export default function EditShipmentPage() {
   useEffect(() => {
     if (!permissionsReady) return;
     if (isAdmin) return;
+    if (fromFarmLoading) return;
 
     if (fromFarmOptions.length === 1) {
       const onlyFarm = clean(fromFarmOptions[0]?.value);
       if (onlyFarm && clean(filterFromFarmCode) !== onlyFarm) {
-        setFilterFromFarmCode(onlyFarm);
+        handleFromFarmChange(onlyFarm);
       }
       return;
     }
 
-    if (fromFarmOptions.length === 0 && filterFromFarmCode) {
-      setFilterFromFarmCode("");
+    if (
+      fromFarmOptions.length > 1 &&
+      filterFromFarmCode &&
+      !fromFarmOptions.some((x) => clean(x.value) === clean(filterFromFarmCode))
+    ) {
+      handleFromFarmChange("");
+      return;
     }
-  }, [permissionsReady, isAdmin, fromFarmOptions, filterFromFarmCode]);
+
+    if (fromFarmOptions.length === 0 && filterFromFarmCode) {
+      handleFromFarmChange("");
+    }
+  }, [
+    permissionsReady,
+    isAdmin,
+    fromFarmLoading,
+    fromFarmOptions,
+    filterFromFarmCode,
+  ]);
 
   async function loadToFarmOptions() {
     setToFarmLoading(true);
@@ -896,9 +909,7 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        setFilterFromFarmCode(
-          (prev) => clean(prev) || clean(data.from_farm_code) || ""
-        );
+        setFilterFromFarmCode((prev) => clean(prev) || clean(data.from_farm_code) || "");
         setShipmentIdToUrl(shipmentId);
 
         const [rows] = await Promise.all([
