@@ -207,6 +207,8 @@ export default function EditShipmentPage() {
     !!filterFromFarmCode &&
     permissionsReady;
 
+  const mustChooseFromFarm = isAdmin || fromFarmOptions.length > 1;
+
   const allowedFlocksForSelectedFarm = useMemo(() => {
     if (!filterFromFarmCode) return [];
     const entry = permissionMap[filterFromFarmCode];
@@ -515,6 +517,23 @@ export default function EditShipmentPage() {
     permissionFarmOptions,
     permissionsReady,
   ]);
+
+  useEffect(() => {
+    if (!permissionsReady) return;
+    if (isAdmin) return;
+
+    if (fromFarmOptions.length === 1) {
+      const onlyFarm = clean(fromFarmOptions[0]?.value);
+      if (onlyFarm && clean(filterFromFarmCode) !== onlyFarm) {
+        setFilterFromFarmCode(onlyFarm);
+      }
+      return;
+    }
+
+    if (fromFarmOptions.length === 0 && filterFromFarmCode) {
+      setFilterFromFarmCode("");
+    }
+  }, [permissionsReady, isAdmin, fromFarmOptions, filterFromFarmCode]);
 
   async function loadToFarmOptions() {
     setToFarmLoading(true);
@@ -1550,7 +1569,9 @@ export default function EditShipmentPage() {
                 color: "#334155",
               }}
             >
-              เลือกได้เฉพาะฟาร์มที่เคยคัด และจะเห็นเฉพาะ draft ของ flock ที่เคยคัดในฟาร์มนั้น
+              {fromFarmOptions.length <= 1
+                ? "ระบบเลือกฟาร์มต้นทางให้อัตโนมัติ และจะแสดงเฉพาะ draft ของ flock ที่คุณเคยคัด"
+                : "เลือกได้เฉพาะฟาร์มที่เคยคัด และจะเห็นเฉพาะ draft ของ flock ที่เคยคัดในฟาร์มนั้น"}
               {filterFromFarmCode && allowedFlocksForSelectedFarm.length ? (
                 <>
                   {" "}
@@ -1602,31 +1623,40 @@ export default function EditShipmentPage() {
               <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
                 ฟาร์มต้นทาง
               </div>
-              <select
-                value={filterFromFarmCode}
-                onChange={(e) => handleFromFarmChange(e.target.value)}
-                disabled={
-                  !filterDateFrom ||
-                  !filterDateTo ||
-                  dateRangeInvalid ||
-                  fromFarmLoading ||
-                  !permissionsReady
-                }
-                style={fullInputStyle}
-              >
-                <option value="">
-                  {!permissionsReady
-                    ? "กำลังโหลดสิทธิ์..."
-                    : fromFarmLoading
-                    ? "กำลังโหลด..."
-                    : "เลือกฟาร์มต้นทาง"}
-                </option>
-                {fromFarmOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+
+              {mustChooseFromFarm ? (
+                <select
+                  value={filterFromFarmCode}
+                  onChange={(e) => handleFromFarmChange(e.target.value)}
+                  disabled={
+                    !filterDateFrom ||
+                    !filterDateTo ||
+                    dateRangeInvalid ||
+                    fromFarmLoading ||
+                    !permissionsReady
+                  }
+                  style={fullInputStyle}
+                >
+                  <option value="">
+                    {!permissionsReady
+                      ? "กำลังโหลดสิทธิ์..."
+                      : fromFarmLoading
+                      ? "กำลังโหลด..."
+                      : "เลือกฟาร์มต้นทาง"}
                   </option>
-                ))}
-              </select>
+                  {fromFarmOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  readOnly
+                  value={fromFarmOptions[0]?.label || "-"}
+                  style={{ ...fullInputStyle, background: "#f8fafc" }}
+                />
+              )}
             </div>
 
             <div>
