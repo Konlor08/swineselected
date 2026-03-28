@@ -230,11 +230,19 @@ export default function EditShipmentPage() {
   }, [previewStartNo]);
 
   const handleBack = useCallback(() => {
-    if (window.history.length > 1) {
+    const idx =
+      typeof window !== "undefined" &&
+      window.history?.state &&
+      typeof window.history.state.idx === "number"
+        ? window.history.state.idx
+        : 0;
+
+    if (idx > 0) {
       nav(-1);
       return;
     }
-    nav("/");
+
+    nav("/", { replace: true });
   }, [nav]);
 
   const clearShipmentIdFromUrl = useCallback(() => {
