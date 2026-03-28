@@ -510,9 +510,8 @@ export default function EditShipmentPage() {
     filterDateFrom,
     filterDateTo,
     dateRangeInvalid,
-    isAdmin,
-    permissionFarmOptions,
     permissionsReady,
+    applyRoleFilter,
   ]);
 
   useEffect(() => {
@@ -624,9 +623,8 @@ export default function EditShipmentPage() {
     filterDateTo,
     dateRangeInvalid,
     filterFromFarmCode,
-    permissionMap,
-    isAdmin,
     permissionsReady,
+    applyRoleFilter,
   ]);
 
   useEffect(() => {
@@ -909,20 +907,12 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        setFilterFromFarmCode((prev) => clean(prev) || clean(data.from_farm_code) || "");
+        setFilterFromFarmCode(
+          (prev) => clean(prev) || clean(data.from_farm_code) || ""
+        );
         setShipmentIdToUrl(shipmentId);
 
-        const [rows] = await Promise.all([
-          fetchShipmentListByFilters({
-            selectedDateFrom: filterDateFrom || data.selected_date,
-            selectedDateTo: filterDateTo || data.selected_date,
-            fromFarmCode: filterFromFarmCode || data.from_farm_code,
-            toFarmId: filterToFarmId,
-          }),
-          loadAvailableSwinesOfFarm(data.from_farm_code, data.from_flock),
-        ]);
-
-        setShipmentList(rows);
+        await loadAvailableSwinesOfFarm(data.from_farm_code, data.from_flock);
       } catch (e) {
         console.error("openShipment error:", e);
         setShipmentHeader(null);
@@ -947,11 +937,6 @@ export default function EditShipmentPage() {
       isAdmin,
       permissionsLoaded,
       userCanAccessShipment,
-      fetchShipmentListByFilters,
-      filterDateFrom,
-      filterDateTo,
-      filterFromFarmCode,
-      filterToFarmId,
       loadAvailableSwinesOfFarm,
       setShipmentIdToUrl,
     ]
@@ -1199,7 +1184,11 @@ export default function EditShipmentPage() {
       clean(oldGroup?.fromFarmCode) === clean(newGroup?.fromFarmCode) &&
       clean(oldGroup?.toFarmId) === clean(newGroup?.toFarmId);
 
-    const runGroupResequenceAppendEnd = async (group, priorityShipmentId, label) => {
+    const runGroupResequenceAppendEnd = async (
+      group,
+      priorityShipmentId,
+      label
+    ) => {
       if (
         !clean(group?.selectedDate) ||
         !clean(group?.fromFarmCode) ||
@@ -1223,7 +1212,11 @@ export default function EditShipmentPage() {
     };
 
     if (sameGroup) {
-      await runGroupResequenceAppendEnd(newGroup, null, "resequence current group");
+      await runGroupResequenceAppendEnd(
+        newGroup,
+        null,
+        "resequence current group"
+      );
       return;
     }
 
@@ -1368,7 +1361,10 @@ export default function EditShipmentPage() {
           );
         }
 
-        const newCodes = insertRows.map((x) => clean(x.swine_code)).filter(Boolean);
+        const newCodes = insertRows
+          .map((x) => clean(x.swine_code))
+          .filter(Boolean);
+
         if (newCodes.length) {
           step = "เปลี่ยนสถานะหมูใหม่เป็น reserved";
           const reserveRes = await withTimeout(
@@ -1461,14 +1457,14 @@ export default function EditShipmentPage() {
       await refreshShipmentList({
         selectedDateFrom: filterDateFrom,
         selectedDateTo: filterDateTo,
-        fromFarmCode: nextGroup.fromFarmCode,
-        toFarmId: nextGroup.toFarmId,
+        fromFarmCode: filterFromFarmCode || nextGroup.fromFarmCode,
+        toFarmId: filterToFarmId,
       });
 
       if (updatedHeader?.id) {
         setShipmentHeader(updatedHeader);
       }
-      setFilterToFarmId(nextGroup.toFarmId);
+
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
     } catch (e) {
       console.error("handleSaveAll error:", {
@@ -1525,9 +1521,12 @@ export default function EditShipmentPage() {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>Edit Shipment (Draft)</div>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>
+            Edit Shipment (Draft)
+          </div>
           <div className="small" style={{ wordBreak: "break-word" }}>
-            แก้ shipment draft เพื่อเปลี่ยนปลายทาง และแก้ข้อมูลรายการหมูใน shipment
+            แก้ shipment draft เพื่อเปลี่ยนปลายทาง และแก้ข้อมูลรายการหมูใน
+            shipment
           </div>
         </div>
 
@@ -1580,7 +1579,9 @@ export default function EditShipmentPage() {
                 color: "#334155",
               }}
             >
-              {fromFarmOptions.length <= 1
+              {fromFarmOptions.length === 0
+                ? "ไม่พบฟาร์มที่มี draft ตามสิทธิ์และช่วงวันที่ที่เลือก"
+                : fromFarmOptions.length === 1
                 ? "ระบบเลือกฟาร์มต้นทางให้อัตโนมัติ และจะแสดงเฉพาะ draft ของ flock ที่คุณเคยคัด"
                 : "เลือกได้เฉพาะฟาร์มที่เคยคัด และจะเห็นเฉพาะ draft ของ flock ที่เคยคัดในฟาร์มนั้น"}
               {filterFromFarmCode && allowedFlocksForSelectedFarm.length ? (
@@ -1709,7 +1710,9 @@ export default function EditShipmentPage() {
             </div>
           ) : null}
 
-          {!isAdmin && permissionsReady && permissionFarmOptions.length === 0 ? (
+          {!isAdmin &&
+          permissionsReady &&
+          permissionFarmOptions.length === 0 ? (
             <div className="small" style={{ color: "#b91c1c", fontWeight: 700 }}>
               ไม่พบฟาร์มที่คุณเคยคัด จึงยังไม่สามารถค้นหา draft ได้
             </div>
@@ -1721,7 +1724,8 @@ export default function EditShipmentPage() {
             </div>
           ) : (
             <div className="small" style={{ color: "#666" }}>
-              ถ้าต้องการค้นหาแค่วันเดียว ให้เลือกวันเริ่มต้นและวันสิ้นสุดเป็นวันเดียวกัน
+              ถ้าต้องการค้นหาแค่วันเดียว
+              ให้เลือกวันเริ่มต้นและวันสิ้นสุดเป็นวันเดียวกัน
             </div>
           )}
 
@@ -1773,7 +1777,8 @@ export default function EditShipmentPage() {
                           {row.shipment_no || row.id}
                         </div>
                         <div className="small" style={{ marginTop: 6, color: "#444" }}>
-                          วันคัด: <b>{formatDateDisplay(row.selected_date)}</b> | ต้นทาง:{" "}
+                          วันคัด: <b>{formatDateDisplay(row.selected_date)}</b> |
+                          ต้นทาง:{" "}
                           <b>{row.from_farm_name || row.from_farm_code || "-"}</b> |
                           ปลายทาง: <b>{row.to_farm?.farm_name || "-"}</b>
                         </div>
@@ -1927,7 +1932,9 @@ export default function EditShipmentPage() {
             </div>
 
             <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-              <div style={{ fontWeight: 800 }}>เบอร์หมูใน Draft ({itemRows.length})</div>
+              <div style={{ fontWeight: 800 }}>
+                เบอร์หมูใน Draft ({itemRows.length})
+              </div>
 
               {itemRows.length === 0 ? (
                 <div className="small" style={{ color: "#666" }}>
@@ -2137,7 +2144,9 @@ export default function EditShipmentPage() {
                     {addCandidateSwines.map((swine) => (
                       <option key={swine.id} value={swine.id}>
                         {swine.swine_code}
-                        {clean(swine.house_no) ? ` | House ${clean(swine.house_no)}` : ""}
+                        {clean(swine.house_no)
+                          ? ` | House ${clean(swine.house_no)}`
+                          : ""}
                       </option>
                     ))}
                   </select>
@@ -2161,7 +2170,9 @@ export default function EditShipmentPage() {
                     background: "#f8fbff",
                   }}
                 >
-                  <div style={{ fontWeight: 800 }}>{selectedCandidateSwine.swine_code}</div>
+                  <div style={{ fontWeight: 800 }}>
+                    {selectedCandidateSwine.swine_code}
+                  </div>
                   <div className="small" style={{ marginTop: 6, color: "#666" }}>
                     House: {clean(selectedCandidateSwine.house_no) || "-"} | Flock:{" "}
                     {clean(selectedCandidateSwine.flock) || "-"} | วันเกิด:{" "}
