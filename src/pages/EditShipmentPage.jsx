@@ -202,8 +202,6 @@ const selectedCardStyle = {
   boxShadow: "inset 0 0 0 1px #fde68a",
 };
 
-// เก็บผลค้นหาและ filter ของหน้านี้ไว้
-// กันกรณี component re-render/remount แล้วรายการ draft หาย
 const pageSearchMemory = {
   filterDateFrom: "",
   filterDateTo: "",
@@ -284,6 +282,7 @@ export default function EditShipmentPage() {
   const canUsePage = myRole === "admin" || myRole === "user";
   const isAdmin = myRole === "admin";
   const permissionsReady = isAdmin || permissionsLoaded;
+  const isEditingMode = !!shipmentHeader?.id;
 
   const dateRangeInvalid =
     !!filterDateFrom && !!filterDateTo && filterDateFrom > filterDateTo;
@@ -316,6 +315,11 @@ export default function EditShipmentPage() {
   const previewStartNo = useMemo(() => {
     return getNextSelectionStart(itemRows);
   }, [itemRows]);
+
+  const visibleShipmentList = useMemo(() => {
+    if (!isEditingMode) return shipmentList;
+    return shipmentList.filter((row) => clean(row?.id) === clean(selectedShipmentId));
+  }, [shipmentList, isEditingMode, selectedShipmentId]);
 
   useEffect(() => {
     setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
@@ -413,6 +417,33 @@ export default function EditShipmentPage() {
     },
     [clearShipmentIdFromUrl]
   );
+
+  const exitEditingMode = useCallback(async () => {
+    clearEditor();
+    setMsg("");
+
+    if (!filterDateFrom || !filterDateTo || !filterFromFarmCode || dateRangeInvalid) {
+      return;
+    }
+
+    try {
+      await refreshShipmentList({
+        selectedDateFrom: filterDateFrom,
+        selectedDateTo: filterDateTo,
+        fromFarmCode: filterFromFarmCode,
+        toFarmId: filterToFarmId,
+      });
+    } catch {
+      // handled in refreshShipmentList
+    }
+  }, [
+    clearEditor,
+    dateRangeInvalid,
+    filterDateFrom,
+    filterDateTo,
+    filterFromFarmCode,
+    filterToFarmId,
+  ]);
 
   const editIsSameFarm = useMemo(() => {
     return (
@@ -726,7 +757,8 @@ export default function EditShipmentPage() {
         `)
         .eq("from_farm_code", filterFromFarmCode)
         .eq("status", "draft")
-        .order("created_at", { ascending: false });
+        .order("selected_date", { ascending: true })
+        .order("created_at", { ascending: true });
 
       query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
       query = applyRoleFilter(query, { fromFarmCode: filterFromFarmCode });
@@ -874,8 +906,8 @@ export default function EditShipmentPage() {
         `)
         .eq("from_farm_code", fromFarmCode)
         .eq("status", "draft")
-        .order("selected_date", { ascending: false })
-        .order("created_at", { ascending: false });
+        .order("selected_date", { ascending: true })
+        .order("created_at", { ascending: true });
 
       if (clean(toFarmId)) {
         query = query.eq("to_farm_id", toFarmId);
@@ -1133,10 +1165,6 @@ export default function EditShipmentPage() {
         setAddSwineQ("");
         setSelectedCandidateSwineId("");
 
-        // สำคัญ:
-        // ไม่แก้ filter ที่ใช้ค้นหา
-        // และไม่ set URL ใหม่ตอนเปิดจาก list
-        // เพื่อกัน shipment list หาย
         await loadAvailableSwinesOfFarm(data.from_farm_code, data.from_flock);
       } catch (e) {
         console.error("openShipment error:", e);
@@ -1718,8 +1746,7 @@ export default function EditShipmentPage() {
         newGroup: nextGroup,
       });
 
-      step = "รีโหลด shipment หลังบันทึก";
-      await openShipment(shipmentId, { silent: true });
+      step = "รีโหลดรายการหลังบันทึก";
       await refreshShipmentList({
         selectedDateFrom: filterDateFrom,
         selectedDateTo: filterDateTo,
@@ -1731,6 +1758,7 @@ export default function EditShipmentPage() {
         setShipmentHeader(updatedHeader);
       }
 
+      clearEditor();
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
     } catch (e) {
       console.error("handleSaveAll error:", {
@@ -1965,7 +1993,8 @@ export default function EditShipmentPage() {
                     dateRangeInvalid ||
                     fromFarmLoading ||
                     !permissionsReady ||
-                    isOffline
+                    isOffline ||
+                    isEditingMode
                   }
                   style={fullInputStyle}
                 >
@@ -2007,7 +2036,8 @@ export default function EditShipmentPage() {
                   !filterFromFarmCode ||
                   toFarmLoading ||
                   !permissionsReady ||
-                  isOffline
+                  isOffline ||
+                  isEditingMode
                 }
                 style={fullInputStyle}
               >
@@ -2054,30 +2084,41 @@ export default function EditShipmentPage() {
             </div>
           )}
 
-          <div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <button
               className="linkbtn"
               type="button"
               onClick={handleSearch}
-              disabled={!canSearch || shipmentListLoading}
+              disabled={!canSearch || shipmentListLoading || isEditingMode}
             >
               {shipmentListLoading ? "กำลังค้นหา..." : "ค้นหา Draft"}
             </button>
+
+            {isEditingMode ? (
+              <button
+                className="linkbtn"
+                type="button"
+                onClick={exitEditingMode}
+                disabled={saving}
+              >
+                กลับไปดูรายการทั้งหมด
+              </button>
+            ) : null}
           </div>
         </div>
 
         <div className="card" style={{ display: "grid", gap: 10, ...cardStyle }}>
           <div style={{ fontWeight: 800 }}>
-            รายการ Draft ที่พบ ({shipmentList.length})
+            รายการ Draft ที่พบ ({visibleShipmentList.length})
           </div>
 
-          {shipmentList.length === 0 ? (
+          {visibleShipmentList.length === 0 ? (
             <div className="small" style={{ color: "#666" }}>
               ยังไม่มีรายการแสดง
             </div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {shipmentList.map((row) => {
+              {visibleShipmentList.map((row) => {
                 const active = selectedShipmentId === row.id;
                 return (
                   <div
@@ -2128,16 +2169,18 @@ export default function EditShipmentPage() {
                       </div>
 
                       <div style={{ display: "flex", alignItems: "center" }}>
-                        <button
-                          className="linkbtn"
-                          type="button"
-                          onClick={() => openShipment(row.id)}
-                          disabled={detailLoading || !permissionsReady || isOffline}
-                        >
-                          {detailLoading && selectedShipmentId === row.id
-                            ? "กำลังเปิด..."
-                            : "เปิดแก้ไข"}
-                        </button>
+                        {!isEditingMode ? (
+                          <button
+                            className="linkbtn"
+                            type="button"
+                            onClick={() => openShipment(row.id)}
+                            disabled={detailLoading || !permissionsReady || isOffline}
+                          >
+                            {detailLoading && selectedShipmentId === row.id
+                              ? "กำลังเปิด..."
+                              : "เปิดแก้ไข"}
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   </div>
@@ -2654,10 +2697,7 @@ export default function EditShipmentPage() {
               <button
                 className="linkbtn"
                 type="button"
-                onClick={() => {
-                  clearEditor();
-                  setMsg("");
-                }}
+                onClick={exitEditingMode}
                 disabled={saving}
               >
                 ปิดการแก้ไข
