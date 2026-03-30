@@ -279,6 +279,8 @@ export default function EditShipmentPage() {
   const [selectedCandidateSwineId, setSelectedCandidateSwineId] =
     useState("");
 
+  const [editSwineSearch, setEditSwineSearch] = useState("");
+
   const canUsePage = myRole === "admin" || myRole === "user";
   const isAdmin = myRole === "admin";
   const permissionsReady = isAdmin || permissionsLoaded;
@@ -320,6 +322,25 @@ export default function EditShipmentPage() {
     if (!isEditingMode) return shipmentList;
     return shipmentList.filter((row) => clean(row?.id) === clean(selectedShipmentId));
   }, [shipmentList, isEditingMode, selectedShipmentId]);
+
+  const editSwineSearchLower = clean(editSwineSearch).toLowerCase();
+
+  const filteredItemRows = useMemo(() => {
+    if (!editSwineSearchLower) return itemRows;
+    return itemRows.filter((row) =>
+      clean(row?.swine_code).toLowerCase().includes(editSwineSearchLower)
+    );
+  }, [itemRows, editSwineSearchLower]);
+
+  const filteredNewItemRows = useMemo(() => {
+    if (!editSwineSearchLower) return newItemRows;
+    return newItemRows.filter((row) =>
+      clean(row?.swine_code).toLowerCase().includes(editSwineSearchLower)
+    );
+  }, [newItemRows, editSwineSearchLower]);
+
+  const totalEditableSwines = itemRows.length + newItemRows.length;
+  const foundEditableSwines = filteredItemRows.length + filteredNewItemRows.length;
 
   useEffect(() => {
     setNewItemRows((prev) => applyNewItemPreviewNumbers(prev, previewStartNo));
@@ -402,6 +423,7 @@ export default function EditShipmentPage() {
       setEditToFarmId("");
       setEditToFarmMeta(null);
       setEditDeliveryDate("");
+      setEditSwineSearch("");
 
       setItemRows([]);
       setRemovedItemRows([]);
@@ -1157,6 +1179,7 @@ export default function EditShipmentPage() {
         setEditToFarmId(clean(data.to_farm_id));
         setEditToFarmMeta(data.to_farm || null);
         setEditDeliveryDate(clean(data.delivery_date));
+        setEditSwineSearch("");
 
         setItemRows(mappedItems);
         setRemovedItemRows([]);
@@ -1173,6 +1196,7 @@ export default function EditShipmentPage() {
         setEditToFarmId("");
         setEditToFarmMeta(null);
         setEditDeliveryDate("");
+        setEditSwineSearch("");
         setItemRows([]);
         setRemovedItemRows([]);
         setNewItemRows([]);
@@ -2328,17 +2352,62 @@ export default function EditShipmentPage() {
             </div>
 
             <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-              <div style={{ fontWeight: 800 }}>
-                เบอร์หมูใน Draft ({itemRows.length})
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>
+                  เบอร์หมูใน Draft ({foundEditableSwines})
+                </div>
+
+                <div className="small" style={{ color: "#666" }}>
+                  ทั้งหมด {totalEditableSwines} | พบ {foundEditableSwines}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(240px, 420px) auto",
+                  gap: 10,
+                  alignItems: "center",
+                }}
+              >
+                <input
+                  value={editSwineSearch}
+                  onChange={(e) => setEditSwineSearch(e.target.value)}
+                  placeholder="ค้นหา swine_code ใน draft ที่กำลังแก้..."
+                  style={fullInputStyle}
+                />
+                <div>
+                  {editSwineSearch ? (
+                    <button
+                      className="linkbtn"
+                      type="button"
+                      onClick={() => setEditSwineSearch("")}
+                    >
+                      ล้างการค้นหา
+                    </button>
+                  ) : null}
+                </div>
               </div>
 
               {itemRows.length === 0 ? (
                 <div className="small" style={{ color: "#666" }}>
                   ยังไม่มีหมูใน draft นี้
                 </div>
+              ) : filteredItemRows.length === 0 ? (
+                <div className="small" style={{ color: "#666" }}>
+                  ไม่พบเบอร์หมูที่ตรงกับคำค้นในรายการเดิม
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: 10 }}>
-                  {itemRows.map((row) => (
+                  {filteredItemRows.map((row) => (
                     <div
                       key={row.id}
                       style={{
@@ -2591,95 +2660,101 @@ export default function EditShipmentPage() {
               {newItemRows.length > 0 ? (
                 <div style={{ display: "grid", gap: 10 }}>
                   <div style={{ fontWeight: 800 }}>
-                    รายการหมูที่เพิ่มใหม่ ({newItemRows.length})
+                    รายการหมูที่เพิ่มใหม่ ({filteredNewItemRows.length})
                   </div>
 
-                  {newItemRows.map((row) => (
-                    <div
-                      key={row.temp_id}
-                      style={{
-                        border: "1px solid #86efac",
-                        borderRadius: 14,
-                        padding: 12,
-                        background: "#f0fdf4",
-                      }}
-                    >
+                  {filteredNewItemRows.length === 0 ? (
+                    <div className="small" style={{ color: "#666" }}>
+                      ไม่พบเบอร์หมูที่ตรงกับคำค้นในรายการที่เพิ่มใหม่
+                    </div>
+                  ) : (
+                    filteredNewItemRows.map((row) => (
                       <div
+                        key={row.temp_id}
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 10,
-                          flexWrap: "wrap",
-                          alignItems: "center",
+                          border: "1px solid #86efac",
+                          borderRadius: 14,
+                          padding: 12,
+                          background: "#f0fdf4",
                         }}
                       >
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                            #{row.preview_selection_no} — {row.swine_code}
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 10,
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                          }}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                              #{row.preview_selection_no} — {row.swine_code}
+                            </div>
+                            <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                              House: {row.house_no || "-"} | Flock: {row.flock || "-"} |
+                              วันเกิด: {formatDateDisplay(row.birth_date)}
+                            </div>
                           </div>
-                          <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                            House: {row.house_no || "-"} | Flock: {row.flock || "-"} |
-                            วันเกิด: {formatDateDisplay(row.birth_date)}
-                          </div>
+
+                          <button
+                            className="linkbtn"
+                            type="button"
+                            onClick={() => removeNewSwine(row.temp_id)}
+                            disabled={saving}
+                          >
+                            เอาออก
+                          </button>
                         </div>
 
-                        <button
-                          className="linkbtn"
-                          type="button"
-                          onClick={() => removeNewSwine(row.temp_id)}
-                          disabled={saving}
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                            gap: 8,
+                            marginTop: 10,
+                          }}
                         >
-                          เอาออก
-                        </button>
+                          <input
+                            value={row.teats_left}
+                            onChange={(e) =>
+                              setNewField(row.temp_id, "teats_left", e.target.value)
+                            }
+                            placeholder="เต้าซ้าย"
+                            inputMode="numeric"
+                            style={smallInputStyle}
+                          />
+                          <input
+                            value={row.teats_right}
+                            onChange={(e) =>
+                              setNewField(row.temp_id, "teats_right", e.target.value)
+                            }
+                            placeholder="เต้าขวา"
+                            inputMode="numeric"
+                            style={smallInputStyle}
+                          />
+                          <input
+                            value={row.backfat}
+                            onChange={(e) =>
+                              setNewField(row.temp_id, "backfat", e.target.value)
+                            }
+                            placeholder="Backfat"
+                            inputMode="decimal"
+                            style={smallInputStyle}
+                          />
+                          <input
+                            value={row.weight}
+                            onChange={(e) =>
+                              setNewField(row.temp_id, "weight", e.target.value)
+                            }
+                            placeholder="น้ำหนัก"
+                            inputMode="decimal"
+                            style={smallInputStyle}
+                          />
+                        </div>
                       </div>
-
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-                          gap: 8,
-                          marginTop: 10,
-                        }}
-                      >
-                        <input
-                          value={row.teats_left}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "teats_left", e.target.value)
-                          }
-                          placeholder="เต้าซ้าย"
-                          inputMode="numeric"
-                          style={smallInputStyle}
-                        />
-                        <input
-                          value={row.teats_right}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "teats_right", e.target.value)
-                          }
-                          placeholder="เต้าขวา"
-                          inputMode="numeric"
-                          style={smallInputStyle}
-                        />
-                        <input
-                          value={row.backfat}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "backfat", e.target.value)
-                          }
-                          placeholder="Backfat"
-                          inputMode="decimal"
-                          style={smallInputStyle}
-                        />
-                        <input
-                          value={row.weight}
-                          onChange={(e) =>
-                            setNewField(row.temp_id, "weight", e.target.value)
-                          }
-                          placeholder="น้ำหนัก"
-                          inputMode="decimal"
-                          style={smallInputStyle}
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               ) : null}
             </div>
