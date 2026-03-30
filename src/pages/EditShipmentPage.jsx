@@ -385,16 +385,13 @@ export default function EditShipmentPage() {
   }, []);
 
   const handleBack = useCallback(() => {
-    const idx =
-      typeof window !== "undefined" &&
-      window.history?.state &&
-      typeof window.history.state.idx === "number"
-        ? window.history.state.idx
-        : 0;
-
-    if (idx > 0) {
-      nav(-1);
-      return;
+    try {
+      if (typeof window !== "undefined" && window.history.length > 1) {
+        nav(-1);
+        return;
+      }
+    } catch (e) {
+      console.error("handleBack error:", e);
     }
 
     nav("/", { replace: true });
@@ -2769,7 +2766,6 @@ export default function EditShipmentPage() {
                 {saving ? "Saving..." : "บันทึกทั้งหมด"}
               </button>
 
-              
               <button
                 className="linkbtn"
                 type="button"
