@@ -234,7 +234,8 @@ export default function EditShipmentPage() {
   const savedSelection = useMemo(() => readSavedStep1Selection(), []);
 
   const initialStepRaw = Number(searchParams.get("step") || 1);
-  const initialStep = Number.isFinite(initialStepRaw) && initialStepRaw > 1 ? 2 : 1;
+  const initialStep =
+    Number.isFinite(initialStepRaw) && initialStepRaw > 1 ? 2 : 1;
 
   const initialFarmCode =
     clean(searchParams.get("fromFarmCode")) || clean(savedSelection.fromFarmCode);
@@ -311,15 +312,6 @@ export default function EditShipmentPage() {
   }, []);
 
   const handleBack = useCallback(() => {
-    try {
-      if (typeof window !== "undefined" && window.history.length > 1) {
-        nav(-1);
-        return;
-      }
-    } catch (e) {
-      console.error("handleBack error:", e);
-    }
-
     nav("/", { replace: true });
   }, [nav]);
 
@@ -569,25 +561,28 @@ export default function EditShipmentPage() {
   }, [step, canContinue]);
 
   useEffect(() => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
 
-      next.set("step", String(step));
+        next.set("step", String(step));
 
-      if (clean(selectedFarmCode)) {
-        next.set("fromFarmCode", clean(selectedFarmCode));
-      } else {
-        next.delete("fromFarmCode");
-      }
+        if (clean(selectedFarmCode)) {
+          next.set("fromFarmCode", clean(selectedFarmCode));
+        } else {
+          next.delete("fromFarmCode");
+        }
 
-      if (clean(selectedFlock)) {
-        next.set("fromFlock", clean(selectedFlock));
-      } else {
-        next.delete("fromFlock");
-      }
+        if (clean(selectedFlock)) {
+          next.set("fromFlock", clean(selectedFlock));
+        } else {
+          next.delete("fromFlock");
+        }
 
-      return next;
-    });
+        return next;
+      },
+      { replace: true }
+    );
   }, [selectedFarmCode, selectedFlock, step, setSearchParams]);
 
   useEffect(() => {
