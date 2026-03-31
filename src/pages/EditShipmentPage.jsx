@@ -117,6 +117,7 @@ function readSavedStep1Selection() {
       fromFlock: "",
       filterDateFrom: "",
       filterDateTo: "",
+      swineSearchQ: "",
     };
   }
 
@@ -128,6 +129,7 @@ function readSavedStep1Selection() {
         fromFlock: "",
         filterDateFrom: "",
         filterDateTo: "",
+        swineSearchQ: "",
       };
     }
 
@@ -137,6 +139,7 @@ function readSavedStep1Selection() {
       fromFlock: clean(parsed?.fromFlock),
       filterDateFrom: clean(parsed?.filterDateFrom),
       filterDateTo: clean(parsed?.filterDateTo),
+      swineSearchQ: clean(parsed?.swineSearchQ),
     };
   } catch {
     return {
@@ -144,11 +147,12 @@ function readSavedStep1Selection() {
       fromFlock: "",
       filterDateFrom: "",
       filterDateTo: "",
+      swineSearchQ: "",
     };
   }
 }
 
-function saveStep1Selection(selection) {
+function saveStepSelection(selection) {
   if (typeof window === "undefined") return;
 
   try {
@@ -159,6 +163,7 @@ function saveStep1Selection(selection) {
         fromFlock: clean(selection?.fromFlock),
         filterDateFrom: clean(selection?.filterDateFrom),
         filterDateTo: clean(selection?.filterDateTo),
+        swineSearchQ: clean(selection?.swineSearchQ),
         savedAt: new Date().toISOString(),
       })
     );
@@ -259,6 +264,11 @@ const cardStyle = {
   minWidth: 0,
 };
 
+const selectedCardStyle = {
+  background: "#fef9c3",
+  boxShadow: "inset 0 0 0 1px #fde68a",
+};
+
 export default function EditShipmentPage() {
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -268,7 +278,11 @@ export default function EditShipmentPage() {
 
   const initialStepRaw = Number(searchParams.get("step") || 1);
   const initialStep =
-    Number.isFinite(initialStepRaw) && initialStepRaw > 1 ? 2 : 1;
+    Number.isFinite(initialStepRaw) && initialStepRaw > 2
+      ? 3
+      : Number.isFinite(initialStepRaw) && initialStepRaw > 1
+      ? 2
+      : 1;
 
   const initialFarmCode =
     clean(searchParams.get("fromFarmCode")) || clean(savedSelection.fromFarmCode);
@@ -285,6 +299,9 @@ export default function EditShipmentPage() {
     clean(searchParams.get("toDate")) ||
     clean(savedSelection.filterDateTo) ||
     today;
+
+  const initialSwineSearchQ =
+    clean(searchParams.get("swineCode")) || clean(savedSelection.swineSearchQ);
 
   const [pageLoading, setPageLoading] = useState(true);
   const [myRole, setMyRole] = useState("");
@@ -308,6 +325,11 @@ export default function EditShipmentPage() {
   const [selectedFarmCode, setSelectedFarmCode] = useState(initialFarmCode);
   const [selectedFlock, setSelectedFlock] = useState(initialFlock);
   const [step, setStep] = useState(initialStep);
+
+  const [swineSearchQ, setSwineSearchQ] = useState(initialSwineSearchQ);
+  const [swineSearchLoading, setSwineSearchLoading] = useState(false);
+  const [swineSearchResults, setSwineSearchResults] = useState([]);
+  const [selectedSwineResultKey, setSelectedSwineResultKey] = useState("");
 
   const canUsePage = myRole === "admin" || myRole === "user";
   const isAdmin = myRole === "admin";
@@ -334,8 +356,20 @@ export default function EditShipmentPage() {
     );
   }, [flockOptions, selectedFlock]);
 
+  const selectedSwineResult = useMemo(() => {
+    return (
+      swineSearchResults.find(
+        (row) => clean(row?.key) === clean(selectedSwineResultKey)
+      ) || null
+    );
+  }, [swineSearchResults, selectedSwineResultKey]);
+
   const canContinue =
-    !!selectedFarmCode && !!selectedFlock && !!filterDateFrom && !!filterDateTo && !dateRangeInvalid;
+    !!selectedFarmCode &&
+    !!selectedFlock &&
+    !!filterDateFrom &&
+    !!filterDateTo &&
+    !dateRangeInvalid;
 
   useEffect(() => {
     function handleOnline() {
@@ -637,6 +671,12 @@ export default function EditShipmentPage() {
   }, [step, canContinue]);
 
   useEffect(() => {
+    if (step > 2 && !selectedSwineResult) {
+      setStep(2);
+    }
+  }, [step, selectedSwineResult]);
+
+  useEffect(() => {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -667,6 +707,12 @@ export default function EditShipmentPage() {
           next.delete("fromFlock");
         }
 
+        if (clean(swineSearchQ)) {
+          next.set("swineCode", clean(swineSearchQ));
+        } else {
+          next.delete("swineCode");
+        }
+
         return next;
       },
       { replace: true }
@@ -676,22 +722,29 @@ export default function EditShipmentPage() {
     filterDateTo,
     selectedFarmCode,
     selectedFlock,
+    swineSearchQ,
     step,
     setSearchParams,
   ]);
 
   useEffect(() => {
-    if (!filterDateFrom || !filterDateTo || !selectedFarmCode || !selectedFlock) {
-      return;
-    }
-
-    saveStep1Selection({
+    saveStepSelection({
       fromFarmCode: selectedFarmCode,
       fromFlock: selectedFlock,
       filterDateFrom,
       filterDateTo,
+      swineSearchQ,
     });
-  }, [filterDateFrom, filterDateTo, selectedFarmCode, selectedFlock]);
+  }, [filterDateFrom, filterDateTo, selectedFarmCode, selectedFlock, swineSearchQ]);
+
+  function resetStep2State({ keepSearchText = false } = {}) {
+    setSwineSearchResults([]);
+    setSelectedSwineResultKey("");
+    setStep((prev) => (prev > 1 ? 2 : prev));
+    if (!keepSearchText) {
+      setSwineSearchQ("");
+    }
+  }
 
   function handleDateFromChange(value) {
     setFilterDateFrom(value);
@@ -699,6 +752,9 @@ export default function EditShipmentPage() {
     setSelectedFlock("");
     setStep(1);
     setMsg("");
+    setSwineSearchQ("");
+    setSwineSearchResults([]);
+    setSelectedSwineResultKey("");
   }
 
   function handleDateToChange(value) {
@@ -707,6 +763,9 @@ export default function EditShipmentPage() {
     setSelectedFlock("");
     setStep(1);
     setMsg("");
+    setSwineSearchQ("");
+    setSwineSearchResults([]);
+    setSelectedSwineResultKey("");
   }
 
   function handleFarmChange(value) {
@@ -714,12 +773,18 @@ export default function EditShipmentPage() {
     setSelectedFlock("");
     setMsg("");
     setStep(1);
+    setSwineSearchQ("");
+    setSwineSearchResults([]);
+    setSelectedSwineResultKey("");
   }
 
   function handleFlockChange(value) {
     setSelectedFlock(clean(value));
     setMsg("");
     setStep(1);
+    setSwineSearchQ("");
+    setSwineSearchResults([]);
+    setSelectedSwineResultKey("");
   }
 
   function handleGoNext() {
@@ -743,12 +808,245 @@ export default function EditShipmentPage() {
       return;
     }
 
-    setMsg("บันทึกค่า Step 1 แล้ว ✅");
+    setMsg("");
     setStep(2);
   }
 
   function handleBackToStep1() {
     setStep(1);
+    setMsg("");
+  }
+
+  async function handleSearchSwine() {
+    if (isOffline) {
+      setMsg(
+        "ค้นหาเบอร์หมูไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
+      );
+      return;
+    }
+
+    if (!filterDateFrom || !filterDateTo) {
+      setMsg("กรุณาเลือกช่วงวันที่ก่อน");
+      return;
+    }
+
+    if (dateRangeInvalid) {
+      setMsg("วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด");
+      return;
+    }
+
+    if (!selectedFarmCode || !selectedFlock) {
+      setMsg("กรุณาเลือกฟาร์มและ flock ก่อน");
+      return;
+    }
+
+    const q = clean(swineSearchQ);
+    if (!q) {
+      setMsg("กรุณาพิมพ์เบอร์หมูที่ต้องการค้นหา");
+      return;
+    }
+
+    setSwineSearchLoading(true);
+    setMsg("");
+    setSwineSearchResults([]);
+    setSelectedSwineResultKey("");
+
+    try {
+      let shipmentQuery = supabase
+        .from("swine_shipments")
+        .select(
+          "id, shipment_no, selected_date, created_at, from_farm_code, from_farm_name, from_flock, status"
+        )
+        .eq("status", "draft")
+        .eq("from_farm_code", selectedFarmCode)
+        .eq("from_flock", selectedFlock)
+        .order("selected_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .limit(5000);
+
+      shipmentQuery = applySelectedDateRange(
+        shipmentQuery,
+        filterDateFrom,
+        filterDateTo
+      );
+
+      const { data: shipmentRows, error: shipmentError } = await shipmentQuery;
+      if (shipmentError) throw shipmentError;
+
+      const shipmentList = shipmentRows || [];
+      const shipmentMap = new Map(
+        shipmentList.map((row) => [clean(row.id), row])
+      );
+
+      const shipmentIds = shipmentList.map((row) => row.id).filter(Boolean);
+
+      if (shipmentIds.length > 0) {
+        const { data: itemRows, error: itemError } = await supabase
+          .from("swine_shipment_items")
+          .select(`
+            id,
+            swine_id,
+            swine_code,
+            shipment_id,
+            swine:swines!swine_shipment_items_swine_id_fkey (
+              id,
+              house_no
+            )
+          `)
+          .in("shipment_id", shipmentIds)
+          .ilike("swine_code", `%${q}%`)
+          .order("swine_code", { ascending: true })
+          .limit(200);
+
+        if (itemError) throw itemError;
+
+        const resultMap = new Map();
+
+        for (const row of itemRows || []) {
+          const swineCode = clean(row?.swine_code);
+          const shipmentId = clean(row?.shipment_id);
+          const shipment = shipmentMap.get(shipmentId);
+
+          if (!swineCode || !shipment) continue;
+
+          if (!resultMap.has(swineCode)) {
+            resultMap.set(swineCode, {
+              key: `draft:${swineCode}`,
+              source_type: "draft",
+              swine_id: row?.swine_id || "",
+              swine_code: swineCode,
+              house_no: clean(row?.swine?.house_no),
+              draft_matches: [],
+            });
+          }
+
+          const entry = resultMap.get(swineCode);
+          const exists = entry.draft_matches.some(
+            (x) => clean(x.shipment_id) === shipmentId
+          );
+
+          if (!exists) {
+            entry.draft_matches.push({
+              shipment_id: shipmentId,
+              shipment_no: clean(shipment?.shipment_no),
+              selected_date: clean(shipment?.selected_date),
+              created_at: clean(shipment?.created_at),
+            });
+          }
+        }
+
+        const draftResults = Array.from(resultMap.values())
+          .map((row) => ({
+            ...row,
+            draft_match_count: row.draft_matches.length,
+          }))
+          .sort((a, b) =>
+            String(a.swine_code).localeCompare(String(b.swine_code), "th")
+          );
+
+        if (draftResults.length > 0) {
+          setSwineSearchResults(draftResults);
+          setMsg(`พบเบอร์หมูใน draft จำนวน ${draftResults.length} รายการ`);
+          return;
+        }
+      }
+
+      const { data: swineRows, error: swineError } = await supabase
+        .from("swines")
+        .select("id, swine_code, house_no, farm_code, flock")
+        .eq("farm_code", selectedFarmCode)
+        .eq("flock", selectedFlock)
+        .ilike("swine_code", `%${q}%`)
+        .order("swine_code", { ascending: true })
+        .limit(200);
+
+      if (swineError) throw swineError;
+
+      const candidateRows = swineRows || [];
+      const candidateCodes = candidateRows.map((row) => clean(row?.swine_code)).filter(Boolean);
+
+      if (candidateCodes.length > 0) {
+        const { data: masterRows, error: masterError } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .in("swine_code", candidateCodes);
+
+        if (masterError) throw masterError;
+
+        const availableCodeSet = new Set(
+          (masterRows || []).map((row) => clean(row?.swine_code)).filter(Boolean)
+        );
+
+        const availableResults = candidateRows
+          .filter((row) => availableCodeSet.has(clean(row?.swine_code)))
+          .map((row) => ({
+            key: `available:${clean(row?.id) || clean(row?.swine_code)}`,
+            source_type: "available",
+            swine_id: row?.id || "",
+            swine_code: clean(row?.swine_code),
+            house_no: clean(row?.house_no),
+            draft_matches: [],
+            draft_match_count: 0,
+          }))
+          .sort((a, b) =>
+            String(a.swine_code).localeCompare(String(b.swine_code), "th")
+          );
+
+        if (availableResults.length > 0) {
+          setSwineSearchResults(availableResults);
+          setMsg(
+            `ไม่พบใน draft แต่พบเบอร์หมูที่ยัง available จำนวน ${availableResults.length} รายการ`
+          );
+          return;
+        }
+      }
+
+      setSwineSearchResults([]);
+      setMsg("ไม่พบเบอร์หมูตามเงื่อนไขที่เลือก");
+    } catch (e) {
+      console.error("handleSearchSwine error:", e);
+      setSwineSearchResults([]);
+      setSelectedSwineResultKey("");
+      setMsg(
+        formatActionError(
+          "ค้นหาเบอร์หมูไม่สำเร็จ",
+          e,
+          "ค้นหาเบอร์หมูไม่สำเร็จ"
+        )
+      );
+    } finally {
+      setSwineSearchLoading(false);
+    }
+  }
+
+  function handleSelectSwineResult(row) {
+    setSelectedSwineResultKey(clean(row?.key));
+
+    if (row?.source_type === "draft") {
+      setMsg(`เลือกเบอร์หมู ${clean(row?.swine_code)} แล้ว`);
+      return;
+    }
+
+    if (row?.source_type === "available") {
+      setMsg(
+        `เลือกเบอร์หมู ${clean(
+          row?.swine_code
+        )} แล้ว | ไม่พบใน draft แต่เบอร์นี้ยัง available`
+      );
+      return;
+    }
+
+    setMsg(`เลือกเบอร์หมู ${clean(row?.swine_code)} แล้ว`);
+  }
+
+  function handleGoToStep3() {
+    if (!selectedSwineResult) {
+      setMsg("กรุณาเลือกเบอร์หมูก่อน");
+      return;
+    }
+
+    setStep(3);
     setMsg("");
   }
 
@@ -823,10 +1121,10 @@ export default function EditShipmentPage() {
       >
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 18, fontWeight: 800 }}>
-            Edit Shipment (Step 1)
+            Edit Shipment
           </div>
           <div className="small" style={{ wordBreak: "break-word" }}>
-            เลือกช่วงวันที่ ฟาร์ม และ flock ที่ยัง draft อยู่ เพื่อไปทำขั้นตอนถัดไป
+            Step 1 เลือกช่วงวันที่ ฟาร์ม และ flock | Step 2 ค้นหาและเลือกเบอร์หมู
           </div>
         </div>
 
@@ -1075,24 +1373,249 @@ export default function EditShipmentPage() {
               onClick={handleGoNext}
               disabled={!canContinue || isOffline}
             >
-              ไป Step ถัดไป
+              ไป Step 2
             </button>
-
-            {step > 1 ? (
-              <button
-                className="linkbtn"
-                type="button"
-                onClick={handleBackToStep1}
-              >
-                กลับมา Step 1
-              </button>
-            ) : null}
           </div>
         </div>
 
-        {step > 1 ? (
+        {step >= 2 ? (
           <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-            <div style={{ fontWeight: 800 }}>Step ถัดไป (เตรียมโครงไว้แล้ว)</div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ fontWeight: 800 }}>Step 2: ค้นหาและเลือกเบอร์หมู</div>
+              <div className="small" style={{ color: "#666" }}>
+                เลือกเบอร์หมูก่อนทุกครั้ง แม้จะเจอเพียง 1 รายการ
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                gap: 10,
+              }}
+            >
+              <div>
+                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                  ช่วงวันที่
+                </div>
+                <input
+                  readOnly
+                  value={`${formatDateDisplay(filterDateFrom)} ถึง ${formatDateDisplay(
+                    filterDateTo
+                  )}`}
+                  style={{ ...fullInputStyle, background: "#f8fafc" }}
+                />
+              </div>
+
+              <div>
+                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                  ฟาร์ม
+                </div>
+                <input
+                  readOnly
+                  value={selectedFarm?.label || "-"}
+                  style={{ ...fullInputStyle, background: "#f8fafc" }}
+                />
+              </div>
+
+              <div>
+                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                  Flock
+                </div>
+                <input
+                  readOnly
+                  value={selectedFlockMeta?.label || "-"}
+                  style={{ ...fullInputStyle, background: "#f8fafc" }}
+                />
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(240px, 1fr) auto auto",
+                gap: 10,
+                alignItems: "end",
+              }}
+            >
+              <div>
+                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                  ค้นหาเบอร์หมู
+                </div>
+                <input
+                  value={swineSearchQ}
+                  onChange={(e) => {
+                    setSwineSearchQ(e.target.value);
+                    setSelectedSwineResultKey("");
+                  }}
+                  placeholder="พิมพ์บางส่วนของเบอร์หมู..."
+                  style={fullInputStyle}
+                  disabled={isOffline}
+                />
+              </div>
+
+              <button
+                className="linkbtn"
+                type="button"
+                onClick={handleSearchSwine}
+                disabled={isOffline || swineSearchLoading || !clean(swineSearchQ)}
+              >
+                {swineSearchLoading ? "กำลังค้นหา..." : "ค้นหา"}
+              </button>
+
+              <button
+                className="linkbtn"
+                type="button"
+                onClick={() => {
+                  setSwineSearchQ("");
+                  setSwineSearchResults([]);
+                  setSelectedSwineResultKey("");
+                  setMsg("");
+                }}
+                disabled={isOffline || swineSearchLoading}
+              >
+                ล้าง
+              </button>
+            </div>
+
+            {swineSearchResults.length === 0 ? (
+              <div className="small" style={{ color: "#666" }}>
+                {clean(swineSearchQ)
+                  ? "ยังไม่มีรายการให้เลือก"
+                  : "พิมพ์บางส่วนของเบอร์หมู แล้วกดค้นหา"}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={{ fontWeight: 800 }}>
+                  รายการเบอร์หมูที่พบ ({swineSearchResults.length})
+                </div>
+
+                {swineSearchResults.map((row) => {
+                  const active = clean(selectedSwineResultKey) === clean(row?.key);
+
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      onClick={() => handleSelectSwineResult(row)}
+                      style={{
+                        textAlign: "left",
+                        border: "1px solid #e5e7eb",
+                        borderRadius: 14,
+                        padding: 12,
+                        background: "#fff",
+                        cursor: "pointer",
+                        ...(active ? selectedCardStyle : null),
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 10,
+                          flexWrap: "wrap",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
+                            {row.swine_code}
+                          </div>
+                          <div
+                            className="small"
+                            style={{ marginTop: 6, color: "#666" }}
+                          >
+                            House: <b>{row.house_no || "-"}</b>
+                          </div>
+                        </div>
+
+                        <div
+                          className="small"
+                          style={{
+                            color:
+                              row.source_type === "draft" ? "#166534" : "#92400e",
+                            fontWeight: 700,
+                          }}
+                        >
+                          {row.source_type === "draft"
+                            ? "พบใน draft"
+                            : "available"}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {selectedSwineResult ? (
+              <div
+                style={{
+                  border: "1px solid #dbeafe",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: "#f8fbff",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>เบอร์หมูที่เลือก</div>
+                <div>
+                  <b>{selectedSwineResult.swine_code}</b> | House:{" "}
+                  <b>{selectedSwineResult.house_no || "-"}</b>
+                </div>
+
+                <div className="small" style={{ color: "#555", lineHeight: 1.7 }}>
+                  {selectedSwineResult.source_type === "draft"
+                    ? selectedSwineResult.draft_match_count > 1
+                      ? `เบอร์นี้พบใน draft จำนวน ${selectedSwineResult.draft_match_count} รายการ`
+                      : "เบอร์นี้พบใน draft จำนวน 1 รายการ"
+                    : "ไม่พบใน draft แต่เบอร์นี้ยัง available"}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={handleGoToStep3}
+                  >
+                    ไป Step ถัดไป
+                  </button>
+
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={handleBackToStep1}
+                  >
+                    กลับไป Step 1
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  className="linkbtn"
+                  type="button"
+                  onClick={handleBackToStep1}
+                >
+                  กลับไป Step 1
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {step >= 3 && selectedSwineResult ? (
+          <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
+            <div style={{ fontWeight: 800 }}>Step 3 (เตรียมโครงไว้แล้ว)</div>
 
             <div
               className="small"
@@ -1105,64 +1628,81 @@ export default function EditShipmentPage() {
                 padding: 12,
               }}
             >
-              ตอนนี้หน้าเดิมถูกปรับเป็น Step 1 แล้ว และเก็บค่า
-              <b> fromDate</b>, <b>toDate</b>, <b>fromFarmCode</b> และ{" "}
-              <b>fromFlock</b> ไว้พร้อมใช้ต่อใน Step ถัดไปแล้ว
+              ตอนนี้ระบบมีข้อมูลครบสำหรับทำขั้นถัดไปแล้ว
               <br />
-              รอบถัดไปจะต่อส่วนค้นหาเบอร์หมูภายใน farm + flock + date range
-              จากค่าในหน้านี้ได้เลย
+              เบอร์หมูที่เลือก: <b>{selectedSwineResult.swine_code}</b> | House:{" "}
+              <b>{selectedSwineResult.house_no || "-"}</b>
+              <br />
+              สถานะผลค้นหา:{" "}
+              <b>
+                {selectedSwineResult.source_type === "draft"
+                  ? "พบใน draft"
+                  : "available"}
+              </b>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 10,
-              }}
-            >
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  fromDate พร้อมใช้
+            {selectedSwineResult.source_type === "draft" ? (
+              <div
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: "#fff",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>
+                  Draft ที่เกี่ยวข้อง ({selectedSwineResult.draft_match_count})
                 </div>
-                <input
-                  readOnly
-                  value={filterDateFrom || "-"}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
-              </div>
 
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  toDate พร้อมใช้
-                </div>
-                <input
-                  readOnly
-                  value={filterDateTo || "-"}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
+                {selectedSwineResult.draft_matches.map((m) => (
+                  <div
+                    key={m.shipment_id}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: 10,
+                      padding: 10,
+                    }}
+                  >
+                    <div style={{ fontWeight: 700 }}>
+                      {m.shipment_no || m.shipment_id}
+                    </div>
+                    <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                      วันคัด: {formatDateDisplay(m.selected_date)}
+                    </div>
+                  </div>
+                ))}
               </div>
+            ) : (
+              <div
+                style={{
+                  border: "1px solid #fde68a",
+                  borderRadius: 12,
+                  padding: 12,
+                  background: "#fffbeb",
+                  display: "grid",
+                  gap: 8,
+                }}
+              >
+                <div style={{ fontWeight: 800 }}>
+                  เบอร์นี้ไม่พบใน draft แต่ยัง available
+                </div>
+                <div className="small" style={{ color: "#555", lineHeight: 1.7 }}>
+                  รอบถัดไปจะต่อส่วนเลือกฟาร์มปลายทางจาก master_farms
+                  และสร้าง shipment ใหม่ให้จากเบอร์หมูตัวนี้
+                </div>
+              </div>
+            )}
 
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  fromFarmCode พร้อมใช้
-                </div>
-                <input
-                  readOnly
-                  value={selectedFarmCode || "-"}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
-              </div>
-
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  fromFlock พร้อมใช้
-                </div>
-                <input
-                  readOnly
-                  value={selectedFlock || "-"}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
-              </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                className="linkbtn"
+                type="button"
+                onClick={() => setStep(2)}
+              >
+                กลับไป Step 2
+              </button>
             </div>
           </div>
         ) : null}
