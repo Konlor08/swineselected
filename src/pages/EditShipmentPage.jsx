@@ -2124,9 +2124,10 @@ export default function EditShipmentPage() {
             <div
               className="small"
               style={{
-                color: msg.includes("สำเร็จ") || msg.includes("✅")
-                  ? "#166534"
-                  : "#b91c1c",
+                color:
+                  msg.includes("สำเร็จ") || msg.includes("✅")
+                    ? "#166534"
+                    : "#b91c1c",
                 fontWeight: 700,
                 lineHeight: 1.7,
                 wordBreak: "break-word",
