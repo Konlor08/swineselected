@@ -269,6 +269,10 @@ function buildDraftFarmData(rows) {
   return { farmOptions };
 }
 
+function getDiscardConfirmMessage(actionText = "ดำเนินการต่อ") {
+  return `มีการแก้ไข/กรอกข้อมูลค้างไว้ ต้องการยกเลิกข้อมูลที่ยังไม่บันทึกแล้ว${actionText}ใช่หรือไม่`;
+}
+
 const OFFLINE_BANNER_TEXT =
   "ขณะนี้อุปกรณ์ออฟไลน์ ระบบจะยังไม่สามารถโหลดข้อมูลฟาร์มและ flock จากเซิร์ฟเวอร์ได้";
 
@@ -354,6 +358,7 @@ export default function EditShipmentPage() {
   const [selectedShipmentId, setSelectedShipmentId] = useState("");
   const [shipmentHeader, setShipmentHeader] = useState(null);
   const [selectedDraftItem, setSelectedDraftItem] = useState(null);
+  const [draftOriginalSnapshot, setDraftOriginalSnapshot] = useState(null);
 
   const [editRemark, setEditRemark] = useState("");
   const [editToFarmId, setEditToFarmId] = useState("");
@@ -403,11 +408,6 @@ export default function EditShipmentPage() {
     return !!selectedSwineResult;
   }, [selectedSwineResult]);
 
-  const visibleSwineResults = useMemo(() => {
-    if (!selectedSwineResult) return swineSearchResults;
-    return [selectedSwineResult];
-  }, [swineSearchResults, selectedSwineResult]);
-
   const editIsSameFarm = useMemo(() => {
     return (
       !!clean(shipmentHeader?.from_farm_code) &&
@@ -415,6 +415,55 @@ export default function EditShipmentPage() {
       clean(shipmentHeader?.from_farm_code) === clean(editToFarmMeta?.farm_code)
     );
   }, [shipmentHeader?.from_farm_code, editToFarmMeta?.farm_code]);
+
+  const hasDirtyDraftChanges = useMemo(() => {
+    if (!selectedSwineResult || selectedSwineResult.source_type !== "draft") {
+      return false;
+    }
+    if (!draftOriginalSnapshot) return false;
+
+    return (
+      clean(selectedDraftItem?.teats_left) !==
+        clean(draftOriginalSnapshot?.teats_left) ||
+      clean(selectedDraftItem?.teats_right) !==
+        clean(draftOriginalSnapshot?.teats_right) ||
+      clean(selectedDraftItem?.backfat) !== clean(draftOriginalSnapshot?.backfat) ||
+      clean(selectedDraftItem?.weight) !== clean(draftOriginalSnapshot?.weight) ||
+      clean(editRemark) !== clean(draftOriginalSnapshot?.remark) ||
+      clean(editToFarmId) !== clean(draftOriginalSnapshot?.to_farm_id) ||
+      clean(editDeliveryDate) !== clean(draftOriginalSnapshot?.delivery_date)
+    );
+  }, [
+    selectedSwineResult,
+    draftOriginalSnapshot,
+    selectedDraftItem,
+    editRemark,
+    editToFarmId,
+    editDeliveryDate,
+  ]);
+
+  const hasDirtyCreateChanges = useMemo(() => {
+    if (!selectedSwineResult || selectedSwineResult.source_type !== "available") {
+      return false;
+    }
+
+    return (
+      !!clean(createToFarmId) ||
+      !!clean(createTeatsLeft) ||
+      !!clean(createTeatsRight) ||
+      !!clean(createBackfat) ||
+      !!clean(createWeight)
+    );
+  }, [
+    selectedSwineResult,
+    createToFarmId,
+    createTeatsLeft,
+    createTeatsRight,
+    createBackfat,
+    createWeight,
+  ]);
+
+  const hasUnsavedEditorChanges = hasDirtyDraftChanges || hasDirtyCreateChanges;
 
   useEffect(() => {
     function handleOnline() {
@@ -450,15 +499,38 @@ export default function EditShipmentPage() {
     nav("/", { replace: true });
   }, [nav]);
 
+  const clearQuickCreateForm = useCallback(() => {
+    setCreateToFarmId("");
+    setCreateTeatsLeft("");
+    setCreateTeatsRight("");
+    setCreateBackfat("");
+    setCreateWeight("");
+  }, []);
+
   const clearDraftEditor = useCallback(() => {
     setSelectedShipmentId("");
     setShipmentHeader(null);
     setSelectedDraftItem(null);
+    setDraftOriginalSnapshot(null);
     setEditRemark("");
     setEditToFarmId("");
     setEditToFarmMeta(null);
     setEditDeliveryDate("");
   }, []);
+
+  const clearCurrentSelectionAndEditor = useCallback(() => {
+    setSelectedSwineResultKey("");
+    clearQuickCreateForm();
+    clearDraftEditor();
+  }, [clearQuickCreateForm, clearDraftEditor]);
+
+  const confirmDiscardPendingChanges = useCallback(
+    (actionText = "ดำเนินการต่อ") => {
+      if (!hasUnsavedEditorChanges) return true;
+      return window.confirm(getDiscardConfirmMessage(actionText));
+    },
+    [hasUnsavedEditorChanges]
+  );
 
   useEffect(() => {
     let alive = true;
@@ -841,7 +913,7 @@ export default function EditShipmentPage() {
         setEditToFarmMeta(data.to_farm || null);
         setEditDeliveryDate(clean(data.delivery_date));
 
-        setSelectedDraftItem({
+        const draftItemState = {
           id: item.id,
           swine_id: item.swine_id,
           swine_code: clean(item.swine_code),
@@ -853,6 +925,17 @@ export default function EditShipmentPage() {
           teats_right: item.teats_right ?? "",
           backfat: item.backfat ?? "",
           weight: item.weight ?? "",
+        };
+
+        setSelectedDraftItem(draftItemState);
+        setDraftOriginalSnapshot({
+          teats_left: draftItemState.teats_left,
+          teats_right: draftItemState.teats_right,
+          backfat: draftItemState.backfat,
+          weight: draftItemState.weight,
+          remark: data.remark || "",
+          to_farm_id: clean(data.to_farm_id),
+          delivery_date: clean(data.delivery_date),
         });
       } catch (e) {
         console.error("openDraftShipmentForSwine error:", e);
@@ -1039,7 +1122,12 @@ export default function EditShipmentPage() {
 
           if (draftResults.length > 0) {
             setSwineSearchResults(draftResults);
-            setSelectedSwineResultKey("");
+            setSelectedSwineResultKey((prev) => {
+              const exists = draftResults.some(
+                (row) => clean(row?.key) === clean(prev)
+              );
+              return exists ? prev : "";
+            });
             setSwineSearchMode("draft");
             return;
           }
@@ -1095,7 +1183,12 @@ export default function EditShipmentPage() {
 
           if (availableResults.length > 0) {
             setSwineSearchResults(availableResults);
-            setSelectedSwineResultKey("");
+            setSelectedSwineResultKey((prev) => {
+              const exists = availableResults.some(
+                (row) => clean(row?.key) === clean(prev)
+              );
+              return exists ? prev : "";
+            });
             setSwineSearchMode("available");
             return;
           }
@@ -1187,12 +1280,7 @@ export default function EditShipmentPage() {
     setSwineSearchResults([]);
     setSelectedSwineResultKey("");
     setSwineSearchMode("idle");
-    setCreateToFarmId("");
-    setCreateTeatsLeft("");
-    setCreateTeatsRight("");
-    setCreateBackfat("");
-    setCreateWeight("");
-    clearDraftEditor();
+    clearCurrentSelectionAndEditor();
   }
 
   function handleDateFromChange(value) {
@@ -1224,29 +1312,43 @@ export default function EditShipmentPage() {
     resetAfterFilterChange();
   }
 
-  function handleSelectSwineResult(row) {
-    setSelectedSwineResultKey(clean(row?.key));
-    setCreateToFarmId("");
-    setCreateTeatsLeft("");
-    setCreateTeatsRight("");
-    setCreateBackfat("");
-    setCreateWeight("");
-    clearDraftEditor();
+  function handleSearchInputChange(nextValue) {
+    const next = nextValue;
+    const changed = clean(next) !== clean(swineSearchQ);
+
+    if (changed && !confirmDiscardPendingChanges("ค้นหาใหม่")) {
+      return;
+    }
+
+    if (changed) {
+      clearCurrentSelectionAndEditor();
+      setSwineSearchResults([]);
+      setSwineSearchMode("idle");
+    }
+
+    setSwineSearchQ(next);
     setMsg("");
   }
 
-  function handleBackToAllSearchResults() {
+  function handleSelectSwineResult(row) {
+    const nextKey = clean(row?.key);
+    if (!nextKey) return;
+
+    const isSwitching = nextKey !== clean(selectedSwineResultKey);
+    if (isSwitching && !confirmDiscardPendingChanges("เปิดรายการใหม่")) {
+      return;
+    }
+
     clearDraftEditor();
-    setCreateToFarmId("");
-    setCreateTeatsLeft("");
-    setCreateTeatsRight("");
-    setCreateBackfat("");
-    setCreateWeight("");
-    setSelectedSwineResultKey("");
+    clearQuickCreateForm();
+    setSelectedSwineResultKey(nextKey);
     setMsg("");
   }
 
   async function handleOpenDraftMatch(shipmentId, swineCode) {
+    if (!confirmDiscardPendingChanges("เปิด shipment เดิม")) {
+      return;
+    }
     await openDraftShipmentForSwine(shipmentId, swineCode);
   }
 
@@ -1320,7 +1422,7 @@ export default function EditShipmentPage() {
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
 
       const currentSearch = clean(swineSearchQ);
-      handleBackToAllSearchResults();
+      clearCurrentSelectionAndEditor();
       if (currentSearch) {
         await runSwineSearch(currentSearch);
       }
@@ -1388,7 +1490,7 @@ export default function EditShipmentPage() {
       setMsg("ลบหมูออกจาก shipment สำเร็จ ✅");
 
       const currentSearch = clean(swineSearchQ);
-      handleBackToAllSearchResults();
+      clearCurrentSelectionAndEditor();
       if (currentSearch) {
         await runSwineSearch(currentSearch);
       }
@@ -1500,7 +1602,7 @@ export default function EditShipmentPage() {
       setMsg("บันทึกการคัดสำเร็จ ✅");
 
       const currentSearch = clean(swineSearchQ);
-      handleBackToAllSearchResults();
+      clearCurrentSelectionAndEditor();
       if (currentSearch) {
         await runSwineSearch(currentSearch);
       }
@@ -1826,34 +1928,17 @@ export default function EditShipmentPage() {
               </div>
               <input
                 value={swineSearchQ}
-                onChange={(e) => {
-                  setSwineSearchQ(e.target.value);
-                  setSelectedSwineResultKey("");
-                  clearDraftEditor();
-                  setCreateToFarmId("");
-                  setCreateTeatsLeft("");
-                  setCreateTeatsRight("");
-                  setCreateBackfat("");
-                  setCreateWeight("");
-                  setMsg("");
-                }}
+                onChange={(e) => handleSearchInputChange(e.target.value)}
                 placeholder={
                   !selectedFarmCode || !selectedFlock
                     ? "เลือกฟาร์มและ flock ก่อน"
                     : "พิมพ์บางส่วนของเบอร์หมู..."
                 }
                 style={fullInputStyle}
-                disabled={
-                  isOffline ||
-                  !selectedFarmCode ||
-                  !selectedFlock ||
-                  isEditingSelectedSwine
-                }
+                disabled={isOffline || !selectedFarmCode || !selectedFlock}
               />
               <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                {isEditingSelectedSwine
-                  ? "กำลังแก้ไขเบอร์ที่เลือกอยู่ เบอร์อื่นจะกลับมาให้เห็นอีกครั้งหลังบันทึก"
-                  : "พิมพ์แล้วระบบจะค้นหาให้อัตโนมัติ"}
+                ค้นหาได้ตลอด หากมีข้อมูลค้างอยู่ ระบบจะถามยืนยันก่อนเปลี่ยนผลค้นหา
               </div>
             </div>
 
@@ -1864,11 +1949,11 @@ export default function EditShipmentPage() {
             ) : clean(swineSearchQ) ? (
               swineSearchMode === "draft" ? (
                 <div className="small" style={{ color: "#166534", fontWeight: 700 }}>
-                  พบเบอร์หมูที่คัดแล้ว ({swineSearchResults.length})
+                  พบเบอร์หมูที่คัดแล้ว ({swineSearchResults.length}) — ใช้ shipment เดิมเพื่อแก้ไข/ลบออก
                 </div>
               ) : swineSearchMode === "available" ? (
                 <div className="small" style={{ color: "#92400e", fontWeight: 700 }}>
-                  พบเบอร์หมูที่ยังไม่ได้คัด ({swineSearchResults.length})
+                  พบเบอร์หมูที่ยังไม่ได้คัด ({swineSearchResults.length}) — จะสร้าง shipment ใหม่เมื่อบันทึก
                 </div>
               ) : swineSearchMode === "none" ? (
                 <div className="small" style={{ color: "#666" }}>
@@ -1881,21 +1966,13 @@ export default function EditShipmentPage() {
               </div>
             )}
 
-            {visibleSwineResults.length > 0 ? (
+            {swineSearchResults.length > 0 ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontWeight: 800 }}>
-                  {isEditingSelectedSwine
-                    ? "เบอร์หมูที่กำลังแก้ไข"
-                    : `รายการเบอร์หมูที่พบ (${swineSearchResults.length})`}
+                  รายการเบอร์หมูที่พบ ({swineSearchResults.length})
                 </div>
 
-                {isEditingSelectedSwine ? (
-                  <div className="small" style={{ color: "#666" }}>
-                    เบอร์อื่นถูกซ่อนไว้ชั่วคราว และจะกลับมาให้เห็นอีกครั้งหลังบันทึก
-                  </div>
-                ) : null}
-
-                {visibleSwineResults.map((row) => {
+                {swineSearchResults.map((row) => {
                   const active = clean(selectedSwineResultKey) === clean(row?.key);
                   const houseText = clean(row?.house_no)
                     ? `โรงเรือน ${clean(row.house_no)}`
@@ -1952,29 +2029,10 @@ export default function EditShipmentPage() {
 
         {selectedSwineResult ? (
           <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 10,
-                flexWrap: "wrap",
-                alignItems: "center",
-              }}
-            >
-              <div style={{ fontWeight: 800 }}>
-                {selectedSwineResult.source_type === "draft"
-                  ? "แก้ไขรายการที่คัดแล้ว"
-                  : "สร้าง shipment ใหม่สำหรับหมูที่ยังไม่คัด"}
-              </div>
-              {!savingDraftItem && !deletingDraftItem && !creatingQuickShipment ? (
-                <button
-                  className="linkbtn"
-                  type="button"
-                  onClick={handleBackToAllSearchResults}
-                >
-                  กลับไปรายการทั้งหมด
-                </button>
-              ) : null}
+            <div style={{ fontWeight: 800 }}>
+              {selectedSwineResult.source_type === "draft"
+                ? "แก้ไขรายการที่คัดแล้ว"
+                : "สร้าง shipment ใหม่สำหรับหมูที่ยังไม่คัด"}
             </div>
 
             {selectedSwineResult.source_type === "draft" ? (
