@@ -40,9 +40,7 @@ function sortByLabel(a, b) {
 
 function chunkArray(arr, size = 500) {
   const out = [];
-  for (let i = 0; i < arr.length; i += size) {
-    out.push(arr.slice(i, i + size));
-  }
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
   return out;
 }
 
@@ -83,20 +81,15 @@ function sortShipmentItems(a, b) {
     : 999999999;
 
   if (aNo !== bNo) return aNo - bNo;
-
   return String(a?.swine_code || "").localeCompare(String(b?.swine_code || ""));
 }
 
 function getNextSelectionStart(rows) {
   let maxNo = 0;
-
   for (const row of rows || []) {
     const n = Number(row?.selection_no);
-    if (Number.isFinite(n) && n > maxNo) {
-      maxNo = n;
-    }
+    if (Number.isFinite(n) && n > maxNo) maxNo = n;
   }
-
   return maxNo + 1;
 }
 
@@ -111,10 +104,8 @@ function applySelectedDateRange(query, fromDate, toDate) {
   let q = query;
   const from = clean(fromDate);
   const to = clean(toDate);
-
   if (from) q = q.gte("selected_date", from);
   if (to) q = q.lte("selected_date", to);
-
   return q;
 }
 
@@ -132,12 +123,8 @@ function getRawErrorMessage(error) {
 }
 
 function isLikelyNetworkError(error) {
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    return true;
-  }
-
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
   const raw = getRawErrorMessage(error).toLowerCase();
-
   return (
     raw.includes("failed to fetch") ||
     raw.includes("fetch failed") ||
@@ -163,11 +150,9 @@ function getFriendlyErrorMessage(error, fallback = "เกิดข้อผิ�
   if (isLikelyNetworkError(error)) {
     return "เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่";
   }
-
   if (isLikelyTimeoutError(error)) {
     return "เซิร์ฟเวอร์ตอบกลับช้าเกินไป กรุณาลองใหม่อีกครั้ง";
   }
-
   return getRawErrorMessage(error) || fallback;
 }
 
@@ -179,10 +164,8 @@ function formatActionError(actionLabel, error, fallback = "เกิดข้อ
 function toMillis(selectedDate, createdAt) {
   const tsCreated = createdAt ? Date.parse(createdAt) : NaN;
   if (Number.isFinite(tsCreated)) return tsCreated;
-
   const tsSelected = selectedDate ? Date.parse(selectedDate) : NaN;
   if (Number.isFinite(tsSelected)) return tsSelected;
-
   return 0;
 }
 
@@ -192,7 +175,6 @@ function compareLatestDesc(a, b) {
     toMillis(a?.latest_selected_date, a?.latest_created_at);
 
   if (diff !== 0) return diff;
-
   return String(a?.label || a?.value || "").localeCompare(
     String(b?.label || b?.value || ""),
     "th"
@@ -221,7 +203,6 @@ function readSavedStepSelection() {
         swineSearchQ: "",
       };
     }
-
     const parsed = JSON.parse(raw);
     return {
       fromFarmCode: clean(parsed?.fromFarmCode),
@@ -243,7 +224,6 @@ function readSavedStepSelection() {
 
 function saveStepSelection(selection) {
   if (typeof window === "undefined") return;
-
   try {
     window.sessionStorage.setItem(
       "editShipmentStepSelection",
@@ -257,7 +237,7 @@ function saveStepSelection(selection) {
       })
     );
   } catch {
-    // ignore storage errors
+    // ignore
   }
 }
 
@@ -270,7 +250,6 @@ function buildDraftFarmData(rows) {
     const flock = clean(row?.from_flock);
     const selectedDate = clean(row?.selected_date);
     const createdAt = clean(row?.created_at);
-
     if (!farmCode || !flock) continue;
 
     if (!farmMap.has(farmCode)) {
@@ -376,20 +355,16 @@ export default function EditShipmentPage() {
 
   const initialFarmCode =
     clean(searchParams.get("fromFarmCode")) || clean(savedSelection.fromFarmCode);
-
   const initialFlock =
     clean(searchParams.get("fromFlock")) || clean(savedSelection.fromFlock);
-
   const initialDateFrom =
     clean(searchParams.get("fromDate")) ||
     clean(savedSelection.filterDateFrom) ||
     today;
-
   const initialDateTo =
     clean(searchParams.get("toDate")) ||
     clean(savedSelection.filterDateTo) ||
     today;
-
   const initialSwineSearchQ =
     clean(searchParams.get("swineCode")) || clean(savedSelection.swineSearchQ);
 
@@ -435,8 +410,7 @@ export default function EditShipmentPage() {
   const [availableSwines, setAvailableSwines] = useState([]);
   const [addHouse, setAddHouse] = useState("");
   const [addSwineQ, setAddSwineQ] = useState("");
-  const [selectedCandidateSwineId, setSelectedCandidateSwineId] =
-    useState("");
+  const [selectedCandidateSwineId, setSelectedCandidateSwineId] = useState("");
   const [editSwineSearch, setEditSwineSearch] = useState("");
 
   const [detailLoading, setDetailLoading] = useState(false);
@@ -444,6 +418,10 @@ export default function EditShipmentPage() {
   const [saving, setSaving] = useState(false);
 
   const [createToFarmId, setCreateToFarmId] = useState("");
+  const [createTeatsLeft, setCreateTeatsLeft] = useState("");
+  const [createTeatsRight, setCreateTeatsRight] = useState("");
+  const [createBackfat, setCreateBackfat] = useState("");
+  const [createWeight, setCreateWeight] = useState("");
   const [creatingDraft, setCreatingDraft] = useState(false);
 
   const searchRequestRef = useRef(0);
@@ -531,28 +509,22 @@ export default function EditShipmentPage() {
 
   const houseOptions = useMemo(() => {
     const map = new Map();
-
     for (const s of availableSwines || []) {
       const raw = clean(s.house_no);
       const value = raw || "__BLANK__";
       const label = raw || "(ไม่ระบุ House)";
-      if (!map.has(value)) {
-        map.set(value, { value, label });
-      }
+      if (!map.has(value)) map.set(value, { value, label });
     }
-
     return Array.from(map.values()).sort(sortByLabel);
   }, [availableSwines]);
 
   const addCandidateSwines = useMemo(() => {
     if (!addHouse) return [];
-
     const q = clean(addSwineQ).toLowerCase();
 
     return (availableSwines || [])
       .filter((s) => {
         const houseValue = clean(s.house_no);
-
         if (addHouse === "__BLANK__") {
           if (houseValue) return false;
         } else if (houseValue !== addHouse) {
@@ -564,7 +536,6 @@ export default function EditShipmentPage() {
         if (existingItemCodeSet.has(code)) return false;
         if (newItemCodeSet.has(code)) return false;
         if (q && !code.toLowerCase().includes(q)) return false;
-
         return true;
       })
       .slice(0, 100);
@@ -586,16 +557,13 @@ export default function EditShipmentPage() {
     function handleOnline() {
       setIsOffline(false);
     }
-
     function handleOffline() {
       setIsOffline(true);
     }
-
     if (typeof window !== "undefined") {
       window.addEventListener("online", handleOnline);
       window.addEventListener("offline", handleOffline);
     }
-
     return () => {
       if (typeof window !== "undefined") {
         window.removeEventListener("online", handleOnline);
@@ -613,7 +581,6 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("handleBack error:", e);
     }
-
     nav("/", { replace: true });
   }, [nav]);
 
@@ -659,7 +626,6 @@ export default function EditShipmentPage() {
         if (!alive) return;
 
         const role = String(profile?.role || "user").toLowerCase();
-
         setMyRole(role);
         setUserId(uid);
         setPermissionsLoaded(role === "admin");
@@ -706,26 +672,18 @@ export default function EditShipmentPage() {
       if (error) throw error;
 
       const map = {};
-
       for (const row of data || []) {
         const farmCode = clean(row?.from_farm_code);
         const farmName = clean(row?.from_farm_name);
         const flock = clean(row?.from_flock);
-
         if (!farmCode || !flock) continue;
 
         if (!map[farmCode]) {
-          map[farmCode] = {
-            farm_code: farmCode,
-            farm_name: farmName,
-            flocks: [],
-          };
+          map[farmCode] = { farm_code: farmCode, farm_name: farmName, flocks: [] };
         }
-
         if (!map[farmCode].flocks.includes(flock)) {
           map[farmCode].flocks.push(flock);
         }
-
         if (!map[farmCode].farm_name && farmName) {
           map[farmCode].farm_name = farmName;
         }
@@ -756,7 +714,6 @@ export default function EditShipmentPage() {
       setPermissionsLoaded(true);
       return;
     }
-
     void loadUserFarmPermissions();
   }, [userId, isAdmin, loadUserFarmPermissions, isOffline]);
 
@@ -786,7 +743,6 @@ export default function EditShipmentPage() {
       if (error) throw error;
 
       let rows = data || [];
-
       if (!isAdmin) {
         rows = rows.filter((row) => {
           const farmCode = clean(row?.from_farm_code);
@@ -799,7 +755,6 @@ export default function EditShipmentPage() {
       }
 
       const built = buildDraftFarmData(rows);
-
       const mapForState = new Map();
       for (const farm of built.farmOptions) {
         mapForState.set(clean(farm.farm_code), farm);
@@ -836,7 +791,6 @@ export default function EditShipmentPage() {
     if (!permissionsReady) return;
     if (isOffline) return;
     if (!filterDateFrom || !filterDateTo) return;
-
     void loadDraftFarmOptions();
   }, [
     canUsePage,
@@ -856,7 +810,6 @@ export default function EditShipmentPage() {
     const currentExists = farmOptions.some(
       (x) => clean(x.value) === clean(selectedFarmCode)
     );
-
     if (currentExists) return;
 
     const preferredFromQueryOrSave =
@@ -872,7 +825,6 @@ export default function EditShipmentPage() {
       if (selectedFlock) setSelectedFlock("");
       return;
     }
-
     if (!flockOptions.length) {
       if (selectedFlock) setSelectedFlock("");
       return;
@@ -881,7 +833,6 @@ export default function EditShipmentPage() {
     const currentExists = flockOptions.some(
       (x) => clean(x.value) === clean(selectedFlock)
     );
-
     if (currentExists) return;
 
     const preferredFromQueryOrSave =
@@ -897,35 +848,20 @@ export default function EditShipmentPage() {
       (prev) => {
         const next = new URLSearchParams(prev);
 
-        if (clean(filterDateFrom)) {
-          next.set("fromDate", clean(filterDateFrom));
-        } else {
-          next.delete("fromDate");
-        }
+        if (clean(filterDateFrom)) next.set("fromDate", clean(filterDateFrom));
+        else next.delete("fromDate");
 
-        if (clean(filterDateTo)) {
-          next.set("toDate", clean(filterDateTo));
-        } else {
-          next.delete("toDate");
-        }
+        if (clean(filterDateTo)) next.set("toDate", clean(filterDateTo));
+        else next.delete("toDate");
 
-        if (clean(selectedFarmCode)) {
-          next.set("fromFarmCode", clean(selectedFarmCode));
-        } else {
-          next.delete("fromFarmCode");
-        }
+        if (clean(selectedFarmCode)) next.set("fromFarmCode", clean(selectedFarmCode));
+        else next.delete("fromFarmCode");
 
-        if (clean(selectedFlock)) {
-          next.set("fromFlock", clean(selectedFlock));
-        } else {
-          next.delete("fromFlock");
-        }
+        if (clean(selectedFlock)) next.set("fromFlock", clean(selectedFlock));
+        else next.delete("fromFlock");
 
-        if (clean(swineSearchQ)) {
-          next.set("swineCode", clean(swineSearchQ));
-        } else {
-          next.delete("swineCode");
-        }
+        if (clean(swineSearchQ)) next.set("swineCode", clean(swineSearchQ));
+        else next.delete("swineCode");
 
         return next;
       },
@@ -959,14 +895,12 @@ export default function EditShipmentPage() {
         setAvailableSwines([]);
         return;
       }
-
       if (isOffline) {
         setAvailableSwines([]);
         return;
       }
 
       setAvailableLoading(true);
-
       try {
         const { data: farmSwines, error: e1 } = await supabase
           .from("swines")
@@ -987,7 +921,6 @@ export default function EditShipmentPage() {
         }));
 
         const codes = swines.map((x) => x.swine_code).filter(Boolean);
-
         if (!codes.length) {
           setAvailableSwines([]);
           return;
@@ -1004,7 +937,6 @@ export default function EditShipmentPage() {
             .in("swine_code", chunk);
 
           if (e2) throw e2;
-
           for (const row of availableRows || []) {
             const code = clean(row?.swine_code);
             if (code) availableCodeSet.add(code);
@@ -1034,16 +966,12 @@ export default function EditShipmentPage() {
   const userCanAccessShipment = useCallback(
     (shipment) => {
       if (isAdmin) return true;
-
       const farmCode = clean(shipment?.from_farm_code);
       const flock = clean(shipment?.from_flock);
-
       if (!farmCode || !flock) return false;
-
       const allowedFlocks = Array.isArray(permissionMap[farmCode]?.flocks)
         ? permissionMap[farmCode].flocks
         : [];
-
       return allowedFlocks.includes(flock);
     },
     [isAdmin, permissionMap]
@@ -1052,7 +980,6 @@ export default function EditShipmentPage() {
   const openShipment = useCallback(
     async (shipmentId, opts = {}) => {
       const { silent = false } = opts;
-
       if (!shipmentId) return;
 
       if (isOffline) {
@@ -1120,7 +1047,6 @@ export default function EditShipmentPage() {
 
         if (error) throw error;
         if (!data) throw new Error("ไม่พบ shipment");
-
         if (!userCanAccessShipment(data)) {
           throw new Error("คุณไม่มีสิทธิ์เข้าถึง shipment นี้");
         }
@@ -1148,6 +1074,10 @@ export default function EditShipmentPage() {
         setEditDeliveryDate(clean(data.delivery_date));
         setEditSwineSearch("");
         setCreateToFarmId("");
+        setCreateTeatsLeft("");
+        setCreateTeatsRight("");
+        setCreateBackfat("");
+        setCreateWeight("");
 
         setItemRows(mappedItems);
         setRemovedItemRows([]);
@@ -1212,7 +1142,6 @@ export default function EditShipmentPage() {
 
         if (!alive) return;
         if (error) throw error;
-
         setEditToFarmMeta(data || null);
       } catch (e) {
         console.error("loadEditToFarmMeta error:", e);
@@ -1269,11 +1198,7 @@ export default function EditShipmentPage() {
     };
 
     if (sameGroup) {
-      await runGroupResequenceAppendEnd(
-        newGroup,
-        null,
-        "resequence current group"
-      );
+      await runGroupResequenceAppendEnd(newGroup, null, "resequence current group");
       return;
     }
 
@@ -1282,7 +1207,6 @@ export default function EditShipmentPage() {
       shipmentId,
       "resequence new group append end"
     );
-
     await runGroupResequenceAppendEnd(oldGroup, null, "resequence old group");
   }
 
@@ -1426,10 +1350,7 @@ export default function EditShipmentPage() {
           );
         }
 
-        const newCodes = insertRows
-          .map((x) => clean(x.swine_code))
-          .filter(Boolean);
-
+        const newCodes = insertRows.map((x) => clean(x.swine_code)).filter(Boolean);
         if (newCodes.length) {
           stepLabel = "เปลี่ยนสถานะหมูใหม่เป็น reserved";
           const reserveRes = await withTimeout(
@@ -1460,9 +1381,7 @@ export default function EditShipmentPage() {
 
       if (removedItemRows.length) {
         const removedIds = removedItemRows.map((x) => x.id).filter(Boolean);
-        const removedCodes = removedItemRows
-          .map((x) => clean(x.swine_code))
-          .filter(Boolean);
+        const removedCodes = removedItemRows.map((x) => clean(x.swine_code)).filter(Boolean);
 
         if (removedIds.length) {
           stepLabel = "ลบรายการหมูที่เอาออก";
@@ -1521,16 +1440,13 @@ export default function EditShipmentPage() {
         newGroup: nextGroup,
       });
 
-      if (updatedHeader?.id) {
-        setShipmentHeader(updatedHeader);
-      }
+      if (updatedHeader?.id) setShipmentHeader(updatedHeader);
 
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
       await openShipment(shipmentId, { silent: true });
 
       const currentSearch = clean(swineSearchQ);
       setSelectedSwineResultKey("");
-
       if (currentSearch) {
         await runSwineSearch(currentSearch);
       }
@@ -1607,9 +1523,7 @@ export default function EditShipmentPage() {
         if (requestId !== searchRequestRef.current) return;
 
         const shipmentList = shipmentRows || [];
-        const shipmentMap = new Map(
-          shipmentList.map((row) => [clean(row.id), row])
-        );
+        const shipmentMap = new Map(shipmentList.map((row) => [clean(row.id), row]));
         const shipmentIds = shipmentList.map((row) => row.id).filter(Boolean);
 
         if (shipmentIds.length > 0) {
@@ -1639,7 +1553,6 @@ export default function EditShipmentPage() {
             const swineCode = clean(row?.swine_code);
             const shipmentId = clean(row?.shipment_id);
             const shipment = shipmentMap.get(shipmentId);
-
             if (!swineCode || !shipment) continue;
 
             if (!resultMap.has(swineCode)) {
@@ -1687,7 +1600,7 @@ export default function EditShipmentPage() {
 
         const { data: swineRows, error: swineError } = await supabase
           .from("swines")
-          .select("id, swine_code, house_no, farm_code, flock")
+          .select("id, swine_code, house_no, farm_code, flock, birth_date")
           .eq("farm_code", selectedFarmCode)
           .eq("flock", selectedFlock)
           .ilike("swine_code", `%${q}%`)
@@ -1698,9 +1611,7 @@ export default function EditShipmentPage() {
         if (requestId !== searchRequestRef.current) return;
 
         const candidateRows = swineRows || [];
-        const candidateCodes = candidateRows
-          .map((row) => clean(row?.swine_code))
-          .filter(Boolean);
+        const candidateCodes = candidateRows.map((row) => clean(row?.swine_code)).filter(Boolean);
 
         if (candidateCodes.length > 0) {
           const { data: masterRows, error: masterError } = await supabase
@@ -1713,9 +1624,7 @@ export default function EditShipmentPage() {
           if (requestId !== searchRequestRef.current) return;
 
           const availableCodeSet = new Set(
-            (masterRows || [])
-              .map((row) => clean(row?.swine_code))
-              .filter(Boolean)
+            (masterRows || []).map((row) => clean(row?.swine_code)).filter(Boolean)
           );
 
           const availableResults = candidateRows
@@ -1726,6 +1635,8 @@ export default function EditShipmentPage() {
               swine_id: row?.id || "",
               swine_code: clean(row?.swine_code),
               house_no: clean(row?.house_no),
+              flock: clean(row?.flock),
+              birth_date: row?.birth_date || "",
               draft_matches: [],
               draft_match_count: 0,
             }))
@@ -1818,6 +1729,10 @@ export default function EditShipmentPage() {
     setSelectedSwineResultKey("");
     setSwineSearchMode("idle");
     setCreateToFarmId("");
+    setCreateTeatsLeft("");
+    setCreateTeatsRight("");
+    setCreateBackfat("");
+    setCreateWeight("");
     clearEditor();
   }
 
@@ -1853,6 +1768,10 @@ export default function EditShipmentPage() {
   function handleSelectSwineResult(row) {
     setSelectedSwineResultKey(clean(row?.key));
     setCreateToFarmId("");
+    setCreateTeatsLeft("");
+    setCreateTeatsRight("");
+    setCreateBackfat("");
+    setCreateWeight("");
     clearEditor();
     setMsg("");
   }
@@ -1860,6 +1779,10 @@ export default function EditShipmentPage() {
   function handleBackToAllSearchResults() {
     clearEditor();
     setCreateToFarmId("");
+    setCreateTeatsLeft("");
+    setCreateTeatsRight("");
+    setCreateBackfat("");
+    setCreateWeight("");
     setSelectedSwineResultKey("");
     setMsg("");
   }
@@ -1909,11 +1832,7 @@ export default function EditShipmentPage() {
       };
 
       const headerRes = await withTimeout(
-        supabase
-          .from("swine_shipments")
-          .insert(insertHeader)
-          .select("id")
-          .single(),
+        supabase.from("swine_shipments").insert(insertHeader).select("id").single(),
         15000,
         "create swine_shipments"
       );
@@ -1930,6 +1849,11 @@ export default function EditShipmentPage() {
             swine_id: selectedSwineResult.swine_id || null,
             swine_code: clean(selectedSwineResult.swine_code),
             selection_no: 1,
+            teats_left: toIntOrNull(createTeatsLeft),
+            teats_right: toIntOrNull(createTeatsRight),
+            backfat: toNumOrNull(createBackfat),
+            weight: toNumOrNull(createWeight),
+            updated_at: nowIso,
           })
           .select("id")
           .single(),
@@ -2012,7 +1936,6 @@ export default function EditShipmentPage() {
 
     const alreadyInExisting = itemRows.some((x) => x.swine_id === swine.id);
     const alreadyInNew = newItemRows.some((x) => x.swine_id === swine.id);
-
     if (alreadyInExisting || alreadyInNew) return;
 
     setNewItemRows((prev) =>
@@ -2073,17 +1996,11 @@ export default function EditShipmentPage() {
           <div style={{ fontSize: 18, fontWeight: 800, color: "#b91c1c" }}>
             {bootError}
           </div>
-
           <div className="small" style={{ color: "#666", lineHeight: 1.7 }}>
             เมื่อเชื่อมต่ออินเทอร์เน็ตได้แล้ว ให้ลองโหลดหน้าใหม่อีกครั้ง
           </div>
-
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              className="linkbtn"
-              type="button"
-              onClick={() => window.location.reload()}
-            >
+            <button className="linkbtn" type="button" onClick={() => window.location.reload()}>
               ลองใหม่
             </button>
             <button className="linkbtn" type="button" onClick={handleBack}>
@@ -2376,6 +2293,10 @@ export default function EditShipmentPage() {
                   setSelectedSwineResultKey("");
                   clearEditor();
                   setCreateToFarmId("");
+                  setCreateTeatsLeft("");
+                  setCreateTeatsRight("");
+                  setCreateBackfat("");
+                  setCreateWeight("");
                   setMsg("");
                 }}
                 placeholder={
@@ -2533,7 +2454,6 @@ export default function EditShipmentPage() {
                     : "โรงเรือนไม่ระบุ"}
                 </b>
               </div>
-
               <div className="small" style={{ color: "#555", lineHeight: 1.7 }}>
                 {selectedSwineResult.source_type === "draft"
                   ? "สถานะ: คัดแล้ว แต่ยังไม่ submit"
@@ -2608,7 +2528,7 @@ export default function EditShipmentPage() {
                     เบอร์นี้ยังไม่ได้คัด สามารถสร้าง draft ใหม่ได้
                   </div>
                   <div className="small" style={{ color: "#555", lineHeight: 1.7 }}>
-                    เลือกฟาร์มปลายทางจาก master_farms แล้วสร้าง shipment ใหม่ได้ทันที
+                    เลือกฟาร์มปลายทาง แล้วกรอกรายละเอียดการคัดได้ทันที
                   </div>
                 </div>
 
@@ -2625,15 +2545,72 @@ export default function EditShipmentPage() {
                   />
                 </div>
 
-                <div>
-                  <button
-                    className="linkbtn"
-                    type="button"
-                    onClick={handleCreateDraftFromSelectedSwine}
-                    disabled={!clean(createToFarmId) || creatingDraft || isOffline}
+                <div
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 14,
+                    padding: 12,
+                    background: "#fff",
+                    display: "grid",
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ fontWeight: 800 }}>
+                    {selectedSwineResult.swine_code}
+                  </div>
+                  <div className="small" style={{ color: "#666" }}>
+                    House: {clean(selectedSwineResult.house_no) || "-"} | Flock:{" "}
+                    {clean(selectedSwineResult.flock) || clean(selectedFlock) || "-"} |
+                    วันเกิด: {formatDateDisplay(selectedSwineResult.birth_date)}
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+                      gap: 8,
+                    }}
                   >
-                    {creatingDraft ? "กำลังสร้าง..." : "สร้าง draft ใหม่"}
-                  </button>
+                    <input
+                      value={createTeatsLeft}
+                      onChange={(e) => setCreateTeatsLeft(e.target.value)}
+                      placeholder="เต้าซ้าย"
+                      inputMode="numeric"
+                      style={smallInputStyle}
+                    />
+                    <input
+                      value={createTeatsRight}
+                      onChange={(e) => setCreateTeatsRight(e.target.value)}
+                      placeholder="เต้าขวา"
+                      inputMode="numeric"
+                      style={smallInputStyle}
+                    />
+                    <input
+                      value={createBackfat}
+                      onChange={(e) => setCreateBackfat(e.target.value)}
+                      placeholder="Backfat"
+                      inputMode="decimal"
+                      style={smallInputStyle}
+                    />
+                    <input
+                      value={createWeight}
+                      onChange={(e) => setCreateWeight(e.target.value)}
+                      placeholder="น้ำหนัก"
+                      inputMode="decimal"
+                      style={smallInputStyle}
+                    />
+                  </div>
+
+                  <div>
+                    <button
+                      className="linkbtn"
+                      type="button"
+                      onClick={handleCreateDraftFromSelectedSwine}
+                      disabled={!clean(createToFarmId) || creatingDraft || isOffline}
+                    >
+                      {creatingDraft ? "กำลังสร้าง..." : "สร้าง draft และเปิดแก้ไข"}
+                    </button>
+                  </div>
                 </div>
               </>
             )}
