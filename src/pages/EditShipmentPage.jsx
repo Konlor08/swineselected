@@ -1,6 +1,12 @@
 // src/pages/EditShipmentPage.jsx
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
@@ -110,7 +116,7 @@ function applySelectedDateRange(query, fromDate, toDate) {
   return q;
 }
 
-function readSavedStep1Selection() {
+function readSavedStepSelection() {
   if (typeof window === "undefined") {
     return {
       fromFarmCode: "",
@@ -122,7 +128,7 @@ function readSavedStep1Selection() {
   }
 
   try {
-    const raw = window.sessionStorage.getItem("editShipmentStep1Selection");
+    const raw = window.sessionStorage.getItem("editShipmentStepSelection");
     if (!raw) {
       return {
         fromFarmCode: "",
@@ -157,7 +163,7 @@ function saveStepSelection(selection) {
 
   try {
     window.sessionStorage.setItem(
-      "editShipmentStep1Selection",
+      "editShipmentStepSelection",
       JSON.stringify({
         fromFarmCode: clean(selection?.fromFarmCode),
         fromFlock: clean(selection?.fromFlock),
@@ -273,7 +279,7 @@ export default function EditShipmentPage() {
   const nav = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const savedSelection = useMemo(() => readSavedStep1Selection(), []);
+  const savedSelection = useMemo(() => readSavedStepSelection(), []);
   const today = todayYmdLocal();
 
   const initialStepRaw = Number(searchParams.get("step") || 1);
@@ -330,6 +336,9 @@ export default function EditShipmentPage() {
   const [swineSearchLoading, setSwineSearchLoading] = useState(false);
   const [swineSearchResults, setSwineSearchResults] = useState([]);
   const [selectedSwineResultKey, setSelectedSwineResultKey] = useState("");
+  const [swineSearchMode, setSwineSearchMode] = useState("idle");
+
+  const searchRequestRef = useRef(0);
 
   const canUsePage = myRole === "admin" || myRole === "user";
   const isAdmin = myRole === "admin";
@@ -737,14 +746,243 @@ export default function EditShipmentPage() {
     });
   }, [filterDateFrom, filterDateTo, selectedFarmCode, selectedFlock, swineSearchQ]);
 
-  function resetStep2State({ keepSearchText = false } = {}) {
-    setSwineSearchResults([]);
+  const runSwineSearch = useCallback(
+    async (queryText) => {
+      const q = clean(queryText);
+
+      if (
+        !q ||
+        isOffline ||
+        !selectedFarmCode ||
+        !selectedFlock ||
+        !filterDateFrom ||
+        !filterDateTo ||
+        dateRangeInvalid
+      ) {
+        setSwineSearchLoading(false);
+        setSwineSearchResults([]);
+        setSelectedSwineResultKey("");
+        setSwineSearchMode(q ? "idle" : "idle");
+        return;
+      }
+
+      const requestId = ++searchRequestRef.current;
+      setSwineSearchLoading(true);
+
+      try {
+        let shipmentQuery = supabase
+          .from("swine_shipments")
+          .select(
+            "id, shipment_no, selected_date, created_at, from_farm_code, from_farm_name, from_flock, status"
+          )
+          .eq("status", "draft")
+          .eq("from_farm_code", selectedFarmCode)
+          .eq("from_flock", selectedFlock)
+          .order("selected_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .limit(5000);
+
+        shipmentQuery = applySelectedDateRange(
+          shipmentQuery,
+          filterDateFrom,
+          filterDateTo
+        );
+
+        const { data: shipmentRows, error: shipmentError } = await shipmentQuery;
+        if (shipmentError) throw shipmentError;
+        if (requestId !== searchRequestRef.current) return;
+
+        const shipmentList = shipmentRows || [];
+        const shipmentMap = new Map(
+          shipmentList.map((row) => [clean(row.id), row])
+        );
+        const shipmentIds = shipmentList.map((row) => row.id).filter(Boolean);
+
+        if (shipmentIds.length > 0) {
+          const { data: itemRows, error: itemError } = await supabase
+            .from("swine_shipment_items")
+            .select(`
+              id,
+              swine_id,
+              swine_code,
+              shipment_id,
+              swine:swines!swine_shipment_items_swine_id_fkey (
+                id,
+                house_no
+              )
+            `)
+            .in("shipment_id", shipmentIds)
+            .ilike("swine_code", `%${q}%`)
+            .order("swine_code", { ascending: true })
+            .limit(200);
+
+          if (itemError) throw itemError;
+          if (requestId !== searchRequestRef.current) return;
+
+          const resultMap = new Map();
+
+          for (const row of itemRows || []) {
+            const swineCode = clean(row?.swine_code);
+            const shipmentId = clean(row?.shipment_id);
+            const shipment = shipmentMap.get(shipmentId);
+
+            if (!swineCode || !shipment) continue;
+
+            if (!resultMap.has(swineCode)) {
+              resultMap.set(swineCode, {
+                key: `draft:${swineCode}`,
+                source_type: "draft",
+                swine_id: row?.swine_id || "",
+                swine_code: swineCode,
+                house_no: clean(row?.swine?.house_no),
+                draft_matches: [],
+              });
+            }
+
+            const entry = resultMap.get(swineCode);
+            const exists = entry.draft_matches.some(
+              (x) => clean(x.shipment_id) === shipmentId
+            );
+
+            if (!exists) {
+              entry.draft_matches.push({
+                shipment_id: shipmentId,
+                shipment_no: clean(shipment?.shipment_no),
+                selected_date: clean(shipment?.selected_date),
+                created_at: clean(shipment?.created_at),
+              });
+            }
+          }
+
+          const draftResults = Array.from(resultMap.values())
+            .map((row) => ({
+              ...row,
+              draft_match_count: row.draft_matches.length,
+            }))
+            .sort((a, b) =>
+              String(a.swine_code).localeCompare(String(b.swine_code), "th")
+            );
+
+          if (draftResults.length > 0) {
+            setSwineSearchResults(draftResults);
+            setSelectedSwineResultKey("");
+            setSwineSearchMode("draft");
+            return;
+          }
+        }
+
+        const { data: swineRows, error: swineError } = await supabase
+          .from("swines")
+          .select("id, swine_code, house_no, farm_code, flock")
+          .eq("farm_code", selectedFarmCode)
+          .eq("flock", selectedFlock)
+          .ilike("swine_code", `%${q}%`)
+          .order("swine_code", { ascending: true })
+          .limit(200);
+
+        if (swineError) throw swineError;
+        if (requestId !== searchRequestRef.current) return;
+
+        const candidateRows = swineRows || [];
+        const candidateCodes = candidateRows
+          .map((row) => clean(row?.swine_code))
+          .filter(Boolean);
+
+        if (candidateCodes.length > 0) {
+          const { data: masterRows, error: masterError } = await supabase
+            .from("swine_master")
+            .select("swine_code")
+            .eq("delivery_state", "available")
+            .in("swine_code", candidateCodes);
+
+          if (masterError) throw masterError;
+          if (requestId !== searchRequestRef.current) return;
+
+          const availableCodeSet = new Set(
+            (masterRows || [])
+              .map((row) => clean(row?.swine_code))
+              .filter(Boolean)
+          );
+
+          const availableResults = candidateRows
+            .filter((row) => availableCodeSet.has(clean(row?.swine_code)))
+            .map((row) => ({
+              key: `available:${clean(row?.id) || clean(row?.swine_code)}`,
+              source_type: "available",
+              swine_id: row?.id || "",
+              swine_code: clean(row?.swine_code),
+              house_no: clean(row?.house_no),
+              draft_matches: [],
+              draft_match_count: 0,
+            }))
+            .sort((a, b) =>
+              String(a.swine_code).localeCompare(String(b.swine_code), "th")
+            );
+
+          if (availableResults.length > 0) {
+            setSwineSearchResults(availableResults);
+            setSelectedSwineResultKey("");
+            setSwineSearchMode("available");
+            return;
+          }
+        }
+
+        setSwineSearchResults([]);
+        setSelectedSwineResultKey("");
+        setSwineSearchMode("none");
+      } catch (e) {
+        if (requestId !== searchRequestRef.current) return;
+        console.error("runSwineSearch error:", e);
+        setSwineSearchResults([]);
+        setSelectedSwineResultKey("");
+        setSwineSearchMode("none");
+        setMsg(
+          formatActionError(
+            "ค้นหาเบอร์หมูไม่สำเร็จ",
+            e,
+            "ค้นหาเบอร์หมูไม่สำเร็จ"
+          )
+        );
+      } finally {
+        if (requestId === searchRequestRef.current) {
+          setSwineSearchLoading(false);
+        }
+      }
+    },
+    [
+      dateRangeInvalid,
+      filterDateFrom,
+      filterDateTo,
+      isOffline,
+      selectedFarmCode,
+      selectedFlock,
+    ]
+  );
+
+  useEffect(() => {
+    if (step < 2) return;
+
+    const q = clean(swineSearchQ);
+
     setSelectedSwineResultKey("");
-    setStep((prev) => (prev > 1 ? 2 : prev));
-    if (!keepSearchText) {
-      setSwineSearchQ("");
+    if (step > 2) {
+      setStep(2);
     }
-  }
+
+    if (!q) {
+      searchRequestRef.current += 1;
+      setSwineSearchLoading(false);
+      setSwineSearchResults([]);
+      setSwineSearchMode("idle");
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      void runSwineSearch(q);
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [swineSearchQ, step, runSwineSearch]);
 
   function handleDateFromChange(value) {
     setFilterDateFrom(value);
@@ -755,6 +993,7 @@ export default function EditShipmentPage() {
     setSwineSearchQ("");
     setSwineSearchResults([]);
     setSelectedSwineResultKey("");
+    setSwineSearchMode("idle");
   }
 
   function handleDateToChange(value) {
@@ -766,6 +1005,7 @@ export default function EditShipmentPage() {
     setSwineSearchQ("");
     setSwineSearchResults([]);
     setSelectedSwineResultKey("");
+    setSwineSearchMode("idle");
   }
 
   function handleFarmChange(value) {
@@ -776,6 +1016,7 @@ export default function EditShipmentPage() {
     setSwineSearchQ("");
     setSwineSearchResults([]);
     setSelectedSwineResultKey("");
+    setSwineSearchMode("idle");
   }
 
   function handleFlockChange(value) {
@@ -785,6 +1026,7 @@ export default function EditShipmentPage() {
     setSwineSearchQ("");
     setSwineSearchResults([]);
     setSelectedSwineResultKey("");
+    setSwineSearchMode("idle");
   }
 
   function handleGoNext() {
@@ -817,227 +1059,9 @@ export default function EditShipmentPage() {
     setMsg("");
   }
 
-  async function handleSearchSwine() {
-    if (isOffline) {
-      setMsg(
-        "ค้นหาเบอร์หมูไม่ได้: เชื่อมต่อ server ไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่"
-      );
-      return;
-    }
-
-    if (!filterDateFrom || !filterDateTo) {
-      setMsg("กรุณาเลือกช่วงวันที่ก่อน");
-      return;
-    }
-
-    if (dateRangeInvalid) {
-      setMsg("วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด");
-      return;
-    }
-
-    if (!selectedFarmCode || !selectedFlock) {
-      setMsg("กรุณาเลือกฟาร์มและ flock ก่อน");
-      return;
-    }
-
-    const q = clean(swineSearchQ);
-    if (!q) {
-      setMsg("กรุณาพิมพ์เบอร์หมูที่ต้องการค้นหา");
-      return;
-    }
-
-    setSwineSearchLoading(true);
-    setMsg("");
-    setSwineSearchResults([]);
-    setSelectedSwineResultKey("");
-
-    try {
-      let shipmentQuery = supabase
-        .from("swine_shipments")
-        .select(
-          "id, shipment_no, selected_date, created_at, from_farm_code, from_farm_name, from_flock, status"
-        )
-        .eq("status", "draft")
-        .eq("from_farm_code", selectedFarmCode)
-        .eq("from_flock", selectedFlock)
-        .order("selected_date", { ascending: false })
-        .order("created_at", { ascending: false })
-        .limit(5000);
-
-      shipmentQuery = applySelectedDateRange(
-        shipmentQuery,
-        filterDateFrom,
-        filterDateTo
-      );
-
-      const { data: shipmentRows, error: shipmentError } = await shipmentQuery;
-      if (shipmentError) throw shipmentError;
-
-      const shipmentList = shipmentRows || [];
-      const shipmentMap = new Map(
-        shipmentList.map((row) => [clean(row.id), row])
-      );
-
-      const shipmentIds = shipmentList.map((row) => row.id).filter(Boolean);
-
-      if (shipmentIds.length > 0) {
-        const { data: itemRows, error: itemError } = await supabase
-          .from("swine_shipment_items")
-          .select(`
-            id,
-            swine_id,
-            swine_code,
-            shipment_id,
-            swine:swines!swine_shipment_items_swine_id_fkey (
-              id,
-              house_no
-            )
-          `)
-          .in("shipment_id", shipmentIds)
-          .ilike("swine_code", `%${q}%`)
-          .order("swine_code", { ascending: true })
-          .limit(200);
-
-        if (itemError) throw itemError;
-
-        const resultMap = new Map();
-
-        for (const row of itemRows || []) {
-          const swineCode = clean(row?.swine_code);
-          const shipmentId = clean(row?.shipment_id);
-          const shipment = shipmentMap.get(shipmentId);
-
-          if (!swineCode || !shipment) continue;
-
-          if (!resultMap.has(swineCode)) {
-            resultMap.set(swineCode, {
-              key: `draft:${swineCode}`,
-              source_type: "draft",
-              swine_id: row?.swine_id || "",
-              swine_code: swineCode,
-              house_no: clean(row?.swine?.house_no),
-              draft_matches: [],
-            });
-          }
-
-          const entry = resultMap.get(swineCode);
-          const exists = entry.draft_matches.some(
-            (x) => clean(x.shipment_id) === shipmentId
-          );
-
-          if (!exists) {
-            entry.draft_matches.push({
-              shipment_id: shipmentId,
-              shipment_no: clean(shipment?.shipment_no),
-              selected_date: clean(shipment?.selected_date),
-              created_at: clean(shipment?.created_at),
-            });
-          }
-        }
-
-        const draftResults = Array.from(resultMap.values())
-          .map((row) => ({
-            ...row,
-            draft_match_count: row.draft_matches.length,
-          }))
-          .sort((a, b) =>
-            String(a.swine_code).localeCompare(String(b.swine_code), "th")
-          );
-
-        if (draftResults.length > 0) {
-          setSwineSearchResults(draftResults);
-          setMsg(`พบเบอร์หมูใน draft จำนวน ${draftResults.length} รายการ`);
-          return;
-        }
-      }
-
-      const { data: swineRows, error: swineError } = await supabase
-        .from("swines")
-        .select("id, swine_code, house_no, farm_code, flock")
-        .eq("farm_code", selectedFarmCode)
-        .eq("flock", selectedFlock)
-        .ilike("swine_code", `%${q}%`)
-        .order("swine_code", { ascending: true })
-        .limit(200);
-
-      if (swineError) throw swineError;
-
-      const candidateRows = swineRows || [];
-      const candidateCodes = candidateRows.map((row) => clean(row?.swine_code)).filter(Boolean);
-
-      if (candidateCodes.length > 0) {
-        const { data: masterRows, error: masterError } = await supabase
-          .from("swine_master")
-          .select("swine_code")
-          .eq("delivery_state", "available")
-          .in("swine_code", candidateCodes);
-
-        if (masterError) throw masterError;
-
-        const availableCodeSet = new Set(
-          (masterRows || []).map((row) => clean(row?.swine_code)).filter(Boolean)
-        );
-
-        const availableResults = candidateRows
-          .filter((row) => availableCodeSet.has(clean(row?.swine_code)))
-          .map((row) => ({
-            key: `available:${clean(row?.id) || clean(row?.swine_code)}`,
-            source_type: "available",
-            swine_id: row?.id || "",
-            swine_code: clean(row?.swine_code),
-            house_no: clean(row?.house_no),
-            draft_matches: [],
-            draft_match_count: 0,
-          }))
-          .sort((a, b) =>
-            String(a.swine_code).localeCompare(String(b.swine_code), "th")
-          );
-
-        if (availableResults.length > 0) {
-          setSwineSearchResults(availableResults);
-          setMsg(
-            `ไม่พบใน draft แต่พบเบอร์หมูที่ยัง available จำนวน ${availableResults.length} รายการ`
-          );
-          return;
-        }
-      }
-
-      setSwineSearchResults([]);
-      setMsg("ไม่พบเบอร์หมูตามเงื่อนไขที่เลือก");
-    } catch (e) {
-      console.error("handleSearchSwine error:", e);
-      setSwineSearchResults([]);
-      setSelectedSwineResultKey("");
-      setMsg(
-        formatActionError(
-          "ค้นหาเบอร์หมูไม่สำเร็จ",
-          e,
-          "ค้นหาเบอร์หมูไม่สำเร็จ"
-        )
-      );
-    } finally {
-      setSwineSearchLoading(false);
-    }
-  }
-
   function handleSelectSwineResult(row) {
     setSelectedSwineResultKey(clean(row?.key));
-
-    if (row?.source_type === "draft") {
-      setMsg(`เลือกเบอร์หมู ${clean(row?.swine_code)} แล้ว`);
-      return;
-    }
-
-    if (row?.source_type === "available") {
-      setMsg(
-        `เลือกเบอร์หมู ${clean(
-          row?.swine_code
-        )} แล้ว | ไม่พบใน draft แต่เบอร์นี้ยัง available`
-      );
-      return;
-    }
-
-    setMsg(`เลือกเบอร์หมู ${clean(row?.swine_code)} แล้ว`);
+    setMsg("");
   }
 
   function handleGoToStep3() {
@@ -1120,9 +1144,7 @@ export default function EditShipmentPage() {
         }}
       >
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 18, fontWeight: 800 }}>
-            Edit Shipment
-          </div>
+          <div style={{ fontSize: 18, fontWeight: 800 }}>Edit Shipment</div>
           <div className="small" style={{ wordBreak: "break-word" }}>
             Step 1 เลือกช่วงวันที่ ฟาร์ม และ flock | Step 2 ค้นหาและเลือกเบอร์หมู
           </div>
@@ -1168,7 +1190,7 @@ export default function EditShipmentPage() {
             <div
               className="small"
               style={{
-                color: msg.includes("✅") ? "#166534" : "#b91c1c",
+                color: "#b91c1c",
                 fontWeight: 700,
                 lineHeight: 1.7,
                 wordBreak: "break-word",
@@ -1395,104 +1417,51 @@ export default function EditShipmentPage() {
               </div>
             </div>
 
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                gap: 10,
-              }}
-            >
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  ช่วงวันที่
-                </div>
-                <input
-                  readOnly
-                  value={`${formatDateDisplay(filterDateFrom)} ถึง ${formatDateDisplay(
-                    filterDateTo
-                  )}`}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                ค้นหาเบอร์หมู
               </div>
-
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  ฟาร์ม
-                </div>
-                <input
-                  readOnly
-                  value={selectedFarm?.label || "-"}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
-              </div>
-
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  Flock
-                </div>
-                <input
-                  readOnly
-                  value={selectedFlockMeta?.label || "-"}
-                  style={{ ...fullInputStyle, background: "#f8fafc" }}
-                />
-              </div>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(240px, 1fr) auto auto",
-                gap: 10,
-                alignItems: "end",
-              }}
-            >
-              <div>
-                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                  ค้นหาเบอร์หมู
-                </div>
-                <input
-                  value={swineSearchQ}
-                  onChange={(e) => {
-                    setSwineSearchQ(e.target.value);
-                    setSelectedSwineResultKey("");
-                  }}
-                  placeholder="พิมพ์บางส่วนของเบอร์หมู..."
-                  style={fullInputStyle}
-                  disabled={isOffline}
-                />
-              </div>
-
-              <button
-                className="linkbtn"
-                type="button"
-                onClick={handleSearchSwine}
-                disabled={isOffline || swineSearchLoading || !clean(swineSearchQ)}
-              >
-                {swineSearchLoading ? "กำลังค้นหา..." : "ค้นหา"}
-              </button>
-
-              <button
-                className="linkbtn"
-                type="button"
-                onClick={() => {
-                  setSwineSearchQ("");
-                  setSwineSearchResults([]);
+              <input
+                value={swineSearchQ}
+                onChange={(e) => {
+                  setSwineSearchQ(e.target.value);
                   setSelectedSwineResultKey("");
                   setMsg("");
                 }}
-                disabled={isOffline || swineSearchLoading}
-              >
-                ล้าง
-              </button>
+                placeholder="พิมพ์บางส่วนของเบอร์หมู..."
+                style={fullInputStyle}
+                disabled={isOffline}
+              />
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                พิมพ์แล้วระบบจะค้นหาให้อัตโนมัติ
+              </div>
             </div>
 
-            {swineSearchResults.length === 0 ? (
+            {swineSearchLoading ? (
               <div className="small" style={{ color: "#666" }}>
-                {clean(swineSearchQ)
-                  ? "ยังไม่มีรายการให้เลือก"
-                  : "พิมพ์บางส่วนของเบอร์หมู แล้วกดค้นหา"}
+                กำลังค้นหา...
               </div>
+            ) : clean(swineSearchQ) ? (
+              swineSearchMode === "draft" ? (
+                <div className="small" style={{ color: "#166534", fontWeight: 700 }}>
+                  พบรายการใน draft ({swineSearchResults.length})
+                </div>
+              ) : swineSearchMode === "available" ? (
+                <div className="small" style={{ color: "#92400e", fontWeight: 700 }}>
+                  ไม่พบใน draft แต่พบเบอร์หมูที่ยัง available ({swineSearchResults.length})
+                </div>
+              ) : swineSearchMode === "none" ? (
+                <div className="small" style={{ color: "#666" }}>
+                  ไม่พบเบอร์หมูตามเงื่อนไขที่เลือก
+                </div>
+              ) : null
             ) : (
+              <div className="small" style={{ color: "#666" }}>
+                พิมพ์บางส่วนของเบอร์หมูเพื่อให้รายการแสดงอัตโนมัติ
+              </div>
+            )}
+
+            {swineSearchResults.length > 0 ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontWeight: 800 }}>
                   รายการเบอร์หมูที่พบ ({swineSearchResults.length})
@@ -1500,6 +1469,9 @@ export default function EditShipmentPage() {
 
                 {swineSearchResults.map((row) => {
                   const active = clean(selectedSwineResultKey) === clean(row?.key);
+                  const houseText = clean(row?.house_no)
+                    ? `โรงเรือน ${clean(row.house_no)}`
+                    : "โรงเรือนไม่ระบุ";
 
                   return (
                     <button
@@ -1527,13 +1499,7 @@ export default function EditShipmentPage() {
                       >
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 800, wordBreak: "break-word" }}>
-                            {row.swine_code}
-                          </div>
-                          <div
-                            className="small"
-                            style={{ marginTop: 6, color: "#666" }}
-                          >
-                            House: <b>{row.house_no || "-"}</b>
+                            {row.swine_code} {houseText}
                           </div>
                         </div>
 
@@ -1554,7 +1520,7 @@ export default function EditShipmentPage() {
                   );
                 })}
               </div>
-            )}
+            ) : null}
 
             {selectedSwineResult ? (
               <div
@@ -1569,8 +1535,12 @@ export default function EditShipmentPage() {
               >
                 <div style={{ fontWeight: 800 }}>เบอร์หมูที่เลือก</div>
                 <div>
-                  <b>{selectedSwineResult.swine_code}</b> | House:{" "}
-                  <b>{selectedSwineResult.house_no || "-"}</b>
+                  <b>
+                    {selectedSwineResult.swine_code}{" "}
+                    {clean(selectedSwineResult.house_no)
+                      ? `โรงเรือน ${clean(selectedSwineResult.house_no)}`
+                      : "โรงเรือนไม่ระบุ"}
+                  </b>
                 </div>
 
                 <div className="small" style={{ color: "#555", lineHeight: 1.7 }}>
@@ -1628,10 +1598,13 @@ export default function EditShipmentPage() {
                 padding: 12,
               }}
             >
-              ตอนนี้ระบบมีข้อมูลครบสำหรับทำขั้นถัดไปแล้ว
-              <br />
-              เบอร์หมูที่เลือก: <b>{selectedSwineResult.swine_code}</b> | House:{" "}
-              <b>{selectedSwineResult.house_no || "-"}</b>
+              เบอร์หมูที่เลือก:{" "}
+              <b>
+                {selectedSwineResult.swine_code}{" "}
+                {clean(selectedSwineResult.house_no)
+                  ? `โรงเรือน ${clean(selectedSwineResult.house_no)}`
+                  : "โรงเรือนไม่ระบุ"}
+              </b>
               <br />
               สถานะผลค้นหา:{" "}
               <b>
