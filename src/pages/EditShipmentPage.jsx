@@ -19,6 +19,15 @@ function todayYmdLocal() {
   return `${y}-${m}-${day}`;
 }
 
+function withTimeout(promise, ms = 20000, label = "request") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms)
+    ),
+  ]);
+}
+
 function toIntOrNull(v) {
   const s = clean(v);
   if (!s) return null;
@@ -33,13 +42,18 @@ function toNumOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function withTimeout(promise, ms = 20000, label = "request") {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) =>
-      setTimeout(() => reject(new Error(`TIMEOUT: ${label}`)), ms)
-    ),
-  ]);
+function countAffectedRows(data) {
+  if (Array.isArray(data)) return data.length;
+  if (data) return 1;
+  return 0;
+}
+
+function ensureAffectedRows(data, label, expectedMin = 1) {
+  const affected = countAffectedRows(data);
+  if (affected < expectedMin) {
+    throw new Error(`NO_ROWS_AFFECTED: ${label}`);
+  }
+  return affected;
 }
 
 function getRawErrorMessage(error) {
@@ -58,6 +72,7 @@ function getRawErrorMessage(error) {
 function isLikelyNetworkError(error) {
   if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
   const raw = getRawErrorMessage(error).toLowerCase();
+
   return (
     raw.includes("failed to fetch") ||
     raw.includes("fetch failed") ||
@@ -65,7 +80,11 @@ function isLikelyNetworkError(error) {
     raw.includes("network request failed") ||
     raw.includes("load failed") ||
     raw.includes("err_network") ||
+    raw.includes("err_internet_disconnected") ||
     raw.includes("internet disconnected") ||
+    raw.includes("connection refused") ||
+    raw.includes("connection reset") ||
+    raw.includes("dns") ||
     raw.includes("offline")
   );
 }
@@ -111,7 +130,9 @@ function compareLatestDesc(a, b) {
   const diff =
     toMillis(b?.latest_selected_date, b?.latest_created_at) -
     toMillis(a?.latest_selected_date, a?.latest_created_at);
+
   if (diff !== 0) return diff;
+
   return String(a?.label || a?.value || "").localeCompare(
     String(b?.label || b?.value || ""),
     "th"
@@ -140,6 +161,7 @@ function readSavedStepSelection() {
         swineSearchQ: "",
       };
     }
+
     const parsed = JSON.parse(raw);
     return {
       fromFarmCode: clean(parsed?.fromFarmCode),
@@ -203,6 +225,7 @@ function buildDraftFarmData(rows) {
     }
 
     const farm = farmMap.get(farmCode);
+
     if (!farm.farm_name && farmName) {
       farm.farm_name = farmName;
       farm.label = `${farmCode} - ${farmName}`;
@@ -226,6 +249,7 @@ function buildDraftFarmData(rows) {
     }
 
     const flockEntry = farm.flock_map.get(flock);
+
     if (
       toMillis(selectedDate, createdAt) >
       toMillis(flockEntry.latest_selected_date, flockEntry.latest_created_at)
@@ -399,10 +423,12 @@ export default function EditShipmentPage() {
     function handleOffline() {
       setIsOffline(true);
     }
+
     if (typeof window !== "undefined") {
       window.addEventListener("online", handleOnline);
       window.addEventListener("offline", handleOffline);
     }
+
     return () => {
       if (typeof window !== "undefined") {
         window.removeEventListener("online", handleOnline);
@@ -420,6 +446,7 @@ export default function EditShipmentPage() {
     } catch (e) {
       console.error("handleBack error:", e);
     }
+
     nav("/", { replace: true });
   }, [nav]);
 
@@ -511,11 +538,17 @@ export default function EditShipmentPage() {
         if (!farmCode || !flock) continue;
 
         if (!map[farmCode]) {
-          map[farmCode] = { farm_code: farmCode, farm_name: farmName, flocks: [] };
+          map[farmCode] = {
+            farm_code: farmCode,
+            farm_name: farmName,
+            flocks: [],
+          };
         }
+
         if (!map[farmCode].flocks.includes(flock)) {
           map[farmCode].flocks.push(flock);
         }
+
         if (!map[farmCode].farm_name && farmName) {
           map[farmCode].farm_name = farmName;
         }
@@ -541,10 +574,12 @@ export default function EditShipmentPage() {
   useEffect(() => {
     if (!userId) return;
     if (isOffline) return;
+
     if (isAdmin) {
       setPermissionsLoaded(true);
       return;
     }
+
     void loadUserFarmPermissions();
   }, [userId, isAdmin, loadUserFarmPermissions, isOffline]);
 
@@ -556,6 +591,7 @@ export default function EditShipmentPage() {
     }
 
     setLoadingDraftOptions(true);
+
     try {
       let query = supabase
         .from("swine_shipments")
@@ -573,6 +609,7 @@ export default function EditShipmentPage() {
       if (error) throw error;
 
       let rows = data || [];
+
       if (!isAdmin) {
         rows = rows.filter((row) => {
           const farmCode = clean(row?.from_farm_code);
@@ -842,6 +879,7 @@ export default function EditShipmentPage() {
         setEditToFarmMeta(null);
         return;
       }
+
       if (isOffline) {
         if (
           clean(shipmentHeader?.to_farm_id) === clean(editToFarmId) &&
@@ -930,7 +968,9 @@ export default function EditShipmentPage() {
         if (requestId !== searchRequestRef.current) return;
 
         const shipmentList = shipmentRows || [];
-        const shipmentMap = new Map(shipmentList.map((row) => [clean(row.id), row]));
+        const shipmentMap = new Map(
+          shipmentList.map((row) => [clean(row.id), row])
+        );
         const shipmentIds = shipmentList.map((row) => row.id).filter(Boolean);
 
         if (shipmentIds.length > 0) {
@@ -1018,7 +1058,9 @@ export default function EditShipmentPage() {
         if (requestId !== searchRequestRef.current) return;
 
         const candidateRows = swineRows || [];
-        const candidateCodes = candidateRows.map((row) => clean(row?.swine_code)).filter(Boolean);
+        const candidateCodes = candidateRows
+          .map((row) => clean(row?.swine_code))
+          .filter(Boolean);
 
         if (candidateCodes.length > 0) {
           const { data: masterRows, error: masterError } = await supabase
@@ -1202,6 +1244,10 @@ export default function EditShipmentPage() {
     setCreateWeight("");
     setSelectedSwineResultKey("");
     setMsg("");
+  }
+
+  async function handleOpenDraftMatch(shipmentId, swineCode) {
+    await openDraftShipmentForSwine(shipmentId, swineCode);
   }
 
   async function handleSaveDraftSelectedSwine() {
@@ -1501,7 +1547,11 @@ export default function EditShipmentPage() {
             เมื่อเชื่อมต่ออินเทอร์เน็ตได้แล้ว ให้ลองโหลดหน้าใหม่อีกครั้ง
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button className="linkbtn" type="button" onClick={() => window.location.reload()}>
+            <button
+              className="linkbtn"
+              type="button"
+              onClick={() => window.location.reload()}
+            >
               ลองใหม่
             </button>
             <button className="linkbtn" type="button" onClick={handleBack}>
@@ -1914,7 +1964,7 @@ export default function EditShipmentPage() {
               <div style={{ fontWeight: 800 }}>
                 {selectedSwineResult.source_type === "draft"
                   ? "แก้ไขรายการที่คัดแล้ว"
-                  : "เพิ่มการคัดแบบรวดเร็ว"}
+                  : "สร้าง shipment ใหม่สำหรับหมูที่ยังไม่คัด"}
               </div>
               {!savingDraftItem && !deletingDraftItem && !creatingQuickShipment ? (
                 <button
@@ -1931,7 +1981,7 @@ export default function EditShipmentPage() {
               selectedSwineResult.draft_match_count > 1 && !selectedDraftItem ? (
                 <>
                   <div className="small" style={{ color: "#666" }}>
-                    เบอร์นี้อยู่ในหลาย draft กรุณาเลือก shipment ที่ต้องการแก้ไขก่อน
+                    เบอร์นี้อยู่ในหลาย shipment กรุณาเลือก shipment เดิมที่ต้องการแก้ไขก่อน
                   </div>
 
                   <div style={{ display: "grid", gap: 10 }}>
@@ -1953,12 +2003,16 @@ export default function EditShipmentPage() {
                         <div className="small" style={{ color: "#666" }}>
                           วันคัด: {formatDateDisplay(m.selected_date)}
                         </div>
+
                         <div>
                           <button
                             className="linkbtn"
                             type="button"
                             onClick={() =>
-                              handleOpenDraftMatch(m.shipment_id, selectedSwineResult.swine_code)
+                              handleOpenDraftMatch(
+                                m.shipment_id,
+                                selectedSwineResult.swine_code
+                              )
                             }
                           >
                             เปิดแก้ไข
@@ -1983,6 +2037,7 @@ export default function EditShipmentPage() {
                     <div style={{ fontWeight: 800 }}>
                       #{selectedDraftItem.selection_no || "-"} — {selectedDraftItem.swine_code}
                     </div>
+
                     <div className="small" style={{ color: "#666" }}>
                       House: {selectedDraftItem.house_no || "-"} | Flock:{" "}
                       {selectedDraftItem.flock || "-"} | วันเกิด:{" "}
@@ -2003,7 +2058,7 @@ export default function EditShipmentPage() {
                             prev ? { ...prev, teats_left: e.target.value } : prev
                           )
                         }
-                        placeholder="เต้าซ้าย"
+                        placeholder="เต้านมซ้าย"
                         inputMode="numeric"
                         style={smallInputStyle}
                       />
@@ -2014,7 +2069,7 @@ export default function EditShipmentPage() {
                             prev ? { ...prev, teats_right: e.target.value } : prev
                           )
                         }
-                        placeholder="เต้าขวา"
+                        placeholder="เต้านมขวา"
                         inputMode="numeric"
                         style={smallInputStyle}
                       />
@@ -2074,7 +2129,7 @@ export default function EditShipmentPage() {
                         gap: 10,
                       }}
                     >
-                      <div style={{ fontWeight: 800 }}>ข้อมูล Shipment</div>
+                      <div style={{ fontWeight: 800 }}>ข้อมูล Shipment เดิม</div>
 
                       <div
                         style={{
@@ -2216,9 +2271,11 @@ export default function EditShipmentPage() {
                 }}
               >
                 <div style={{ fontWeight: 800 }}>หัวข้อการคัด</div>
+
                 <div style={{ fontWeight: 800 }}>
                   {selectedSwineResult.swine_code}
                 </div>
+
                 <div className="small" style={{ color: "#666" }}>
                   House: {clean(selectedSwineResult.house_no) || "-"} | Flock:{" "}
                   {clean(selectedSwineResult.flock) || clean(selectedFlock) || "-"} |
@@ -2270,14 +2327,14 @@ export default function EditShipmentPage() {
                   <input
                     value={createTeatsLeft}
                     onChange={(e) => setCreateTeatsLeft(e.target.value)}
-                    placeholder="เต้าซ้าย"
+                    placeholder="เต้านมซ้าย"
                     inputMode="numeric"
                     style={smallInputStyle}
                   />
                   <input
                     value={createTeatsRight}
                     onChange={(e) => setCreateTeatsRight(e.target.value)}
-                    placeholder="เต้าขวา"
+                    placeholder="เต้านมขวา"
                     inputMode="numeric"
                     style={smallInputStyle}
                   />
