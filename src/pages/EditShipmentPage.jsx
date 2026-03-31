@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
-import { formatDateDisplay, formatDateTimeDisplay } from "../lib/dateFormat";
+import { formatDateDisplay } from "../lib/dateFormat";
 
 function clean(s) {
   return String(s ?? "").trim();
@@ -99,22 +99,52 @@ function compareLatestDesc(a, b) {
   );
 }
 
+function applySelectedDateRange(query, fromDate, toDate) {
+  let q = query;
+  const from = clean(fromDate);
+  const to = clean(toDate);
+
+  if (from) q = q.gte("selected_date", from);
+  if (to) q = q.lte("selected_date", to);
+
+  return q;
+}
+
 function readSavedStep1Selection() {
   if (typeof window === "undefined") {
-    return { fromFarmCode: "", fromFlock: "" };
+    return {
+      fromFarmCode: "",
+      fromFlock: "",
+      filterDateFrom: "",
+      filterDateTo: "",
+    };
   }
 
   try {
     const raw = window.sessionStorage.getItem("editShipmentStep1Selection");
-    if (!raw) return { fromFarmCode: "", fromFlock: "" };
+    if (!raw) {
+      return {
+        fromFarmCode: "",
+        fromFlock: "",
+        filterDateFrom: "",
+        filterDateTo: "",
+      };
+    }
 
     const parsed = JSON.parse(raw);
     return {
       fromFarmCode: clean(parsed?.fromFarmCode),
       fromFlock: clean(parsed?.fromFlock),
+      filterDateFrom: clean(parsed?.filterDateFrom),
+      filterDateTo: clean(parsed?.filterDateTo),
     };
   } catch {
-    return { fromFarmCode: "", fromFlock: "" };
+    return {
+      fromFarmCode: "",
+      fromFlock: "",
+      filterDateFrom: "",
+      filterDateTo: "",
+    };
   }
 }
 
@@ -127,6 +157,8 @@ function saveStep1Selection(selection) {
       JSON.stringify({
         fromFarmCode: clean(selection?.fromFarmCode),
         fromFlock: clean(selection?.fromFlock),
+        filterDateFrom: clean(selection?.filterDateFrom),
+        filterDateTo: clean(selection?.filterDateTo),
         savedAt: new Date().toISOString(),
       })
     );
@@ -232,6 +264,7 @@ export default function EditShipmentPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const savedSelection = useMemo(() => readSavedStep1Selection(), []);
+  const today = todayYmdLocal();
 
   const initialStepRaw = Number(searchParams.get("step") || 1);
   const initialStep =
@@ -242,6 +275,16 @@ export default function EditShipmentPage() {
 
   const initialFlock =
     clean(searchParams.get("fromFlock")) || clean(savedSelection.fromFlock);
+
+  const initialDateFrom =
+    clean(searchParams.get("fromDate")) ||
+    clean(savedSelection.filterDateFrom) ||
+    today;
+
+  const initialDateTo =
+    clean(searchParams.get("toDate")) ||
+    clean(savedSelection.filterDateTo) ||
+    today;
 
   const [pageLoading, setPageLoading] = useState(true);
   const [myRole, setMyRole] = useState("");
@@ -260,6 +303,8 @@ export default function EditShipmentPage() {
   const [farmOptions, setFarmOptions] = useState([]);
   const [draftFarmMap, setDraftFarmMap] = useState(new Map());
 
+  const [filterDateFrom, setFilterDateFrom] = useState(initialDateFrom);
+  const [filterDateTo, setFilterDateTo] = useState(initialDateTo);
   const [selectedFarmCode, setSelectedFarmCode] = useState(initialFarmCode);
   const [selectedFlock, setSelectedFlock] = useState(initialFlock);
   const [step, setStep] = useState(initialStep);
@@ -267,7 +312,9 @@ export default function EditShipmentPage() {
   const canUsePage = myRole === "admin" || myRole === "user";
   const isAdmin = myRole === "admin";
   const permissionsReady = isAdmin || permissionsLoaded;
-  const today = todayYmdLocal();
+
+  const dateRangeInvalid =
+    !!filterDateFrom && !!filterDateTo && filterDateFrom > filterDateTo;
 
   const selectedFarm = useMemo(() => {
     return (
@@ -287,7 +334,8 @@ export default function EditShipmentPage() {
     );
   }, [flockOptions, selectedFlock]);
 
-  const canContinue = !!selectedFarmCode && !!selectedFlock;
+  const canContinue =
+    !!selectedFarmCode && !!selectedFlock && !!filterDateFrom && !!filterDateTo && !dateRangeInvalid;
 
   useEffect(() => {
     function handleOnline() {
@@ -312,6 +360,15 @@ export default function EditShipmentPage() {
   }, []);
 
   const handleBack = useCallback(() => {
+    try {
+      if (typeof window !== "undefined" && window.history.length > 1) {
+        nav(-1);
+        return;
+      }
+    } catch (e) {
+      console.error("handleBack error:", e);
+    }
+
     nav("/", { replace: true });
   }, [nav]);
 
@@ -442,7 +499,7 @@ export default function EditShipmentPage() {
   }, [userId, isAdmin, loadUserFarmPermissions, isOffline]);
 
   const loadDraftFarmOptions = useCallback(async () => {
-    if (!permissionsReady || isOffline) {
+    if (!permissionsReady || isOffline || dateRangeInvalid) {
       setFarmOptions([]);
       setDraftFarmMap(new Map());
       return;
@@ -451,7 +508,7 @@ export default function EditShipmentPage() {
     setLoadingDraftOptions(true);
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("swine_shipments")
         .select(
           "from_farm_code, from_farm_name, from_flock, selected_date, created_at, status"
@@ -461,6 +518,9 @@ export default function EditShipmentPage() {
         .order("created_at", { ascending: false })
         .limit(5000);
 
+      query = applySelectedDateRange(query, filterDateFrom, filterDateTo);
+
+      const { data, error } = await query;
       if (error) throw error;
 
       let rows = data || [];
@@ -499,15 +559,31 @@ export default function EditShipmentPage() {
     } finally {
       setLoadingDraftOptions(false);
     }
-  }, [permissionsReady, isOffline, isAdmin, permissionMap]);
+  }, [
+    permissionsReady,
+    isOffline,
+    isAdmin,
+    permissionMap,
+    filterDateFrom,
+    filterDateTo,
+    dateRangeInvalid,
+  ]);
 
   useEffect(() => {
     if (!canUsePage) return;
     if (!permissionsReady) return;
     if (isOffline) return;
+    if (!filterDateFrom || !filterDateTo) return;
 
     void loadDraftFarmOptions();
-  }, [canUsePage, permissionsReady, isOffline, loadDraftFarmOptions]);
+  }, [
+    canUsePage,
+    permissionsReady,
+    isOffline,
+    filterDateFrom,
+    filterDateTo,
+    loadDraftFarmOptions,
+  ]);
 
   useEffect(() => {
     if (!farmOptions.length) {
@@ -567,6 +643,18 @@ export default function EditShipmentPage() {
 
         next.set("step", String(step));
 
+        if (clean(filterDateFrom)) {
+          next.set("fromDate", clean(filterDateFrom));
+        } else {
+          next.delete("fromDate");
+        }
+
+        if (clean(filterDateTo)) {
+          next.set("toDate", clean(filterDateTo));
+        } else {
+          next.delete("toDate");
+        }
+
         if (clean(selectedFarmCode)) {
           next.set("fromFarmCode", clean(selectedFarmCode));
         } else {
@@ -583,16 +671,43 @@ export default function EditShipmentPage() {
       },
       { replace: true }
     );
-  }, [selectedFarmCode, selectedFlock, step, setSearchParams]);
+  }, [
+    filterDateFrom,
+    filterDateTo,
+    selectedFarmCode,
+    selectedFlock,
+    step,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
-    if (!selectedFarmCode || !selectedFlock) return;
+    if (!filterDateFrom || !filterDateTo || !selectedFarmCode || !selectedFlock) {
+      return;
+    }
 
     saveStep1Selection({
       fromFarmCode: selectedFarmCode,
       fromFlock: selectedFlock,
+      filterDateFrom,
+      filterDateTo,
     });
-  }, [selectedFarmCode, selectedFlock]);
+  }, [filterDateFrom, filterDateTo, selectedFarmCode, selectedFlock]);
+
+  function handleDateFromChange(value) {
+    setFilterDateFrom(value);
+    setSelectedFarmCode("");
+    setSelectedFlock("");
+    setStep(1);
+    setMsg("");
+  }
+
+  function handleDateToChange(value) {
+    setFilterDateTo(value);
+    setSelectedFarmCode("");
+    setSelectedFlock("");
+    setStep(1);
+    setMsg("");
+  }
 
   function handleFarmChange(value) {
     setSelectedFarmCode(clean(value));
@@ -608,6 +723,16 @@ export default function EditShipmentPage() {
   }
 
   function handleGoNext() {
+    if (!filterDateFrom || !filterDateTo) {
+      setMsg("กรุณาเลือกช่วงวันที่");
+      return;
+    }
+
+    if (dateRangeInvalid) {
+      setMsg("วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด");
+      return;
+    }
+
     if (!selectedFarmCode) {
       setMsg("กรุณาเลือกฟาร์ม");
       return;
@@ -701,7 +826,7 @@ export default function EditShipmentPage() {
             Edit Shipment (Step 1)
           </div>
           <div className="small" style={{ wordBreak: "break-word" }}>
-            เลือกฟาร์มและ flock ที่ยัง draft อยู่ เพื่อไปทำขั้นตอนถัดไป
+            เลือกช่วงวันที่ ฟาร์ม และ flock ที่ยัง draft อยู่ เพื่อไปทำขั้นตอนถัดไป
           </div>
         </div>
 
@@ -804,13 +929,49 @@ export default function EditShipmentPage() {
           >
             <div>
               <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                วันที่เริ่มต้น
+              </div>
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => handleDateFromChange(e.target.value)}
+                style={fullInputStyle}
+                disabled={isOffline}
+              />
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                แสดงผล: {formatDateDisplay(filterDateFrom)}
+              </div>
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                วันที่สิ้นสุด
+              </div>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => handleDateToChange(e.target.value)}
+                style={fullInputStyle}
+                disabled={isOffline}
+              />
+              <div className="small" style={{ marginTop: 6, color: "#666" }}>
+                แสดงผล: {formatDateDisplay(filterDateTo)}
+              </div>
+            </div>
+
+            <div>
+              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
                 ฟาร์มต้นทาง
               </div>
               <select
                 value={selectedFarmCode}
                 onChange={(e) => handleFarmChange(e.target.value)}
                 disabled={
-                  isOffline || loadingDraftOptions || !permissionsReady || !farmOptions.length
+                  isOffline ||
+                  loadingDraftOptions ||
+                  !permissionsReady ||
+                  !farmOptions.length ||
+                  dateRangeInvalid
                 }
                 style={fullInputStyle}
               >
@@ -821,6 +982,8 @@ export default function EditShipmentPage() {
                     ? "กำลังโหลด..."
                     : isOffline
                     ? "ออฟไลน์อยู่"
+                    : dateRangeInvalid
+                    ? "ช่วงวันที่ไม่ถูกต้อง"
                     : farmOptions.length === 0
                     ? "ไม่พบฟาร์มที่ยัง draft"
                     : "เลือกฟาร์มต้นทาง"}
@@ -832,7 +995,7 @@ export default function EditShipmentPage() {
                 ))}
               </select>
               <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                ระบบจะ default เป็นฟาร์มล่าสุดที่ยังมี draft
+                ระบบจะ default เป็นฟาร์มล่าสุดที่ยังมี draft ในช่วงวันที่ที่เลือก
               </div>
             </div>
 
@@ -861,7 +1024,8 @@ export default function EditShipmentPage() {
                       isOffline ||
                       loadingDraftOptions ||
                       !selectedFarmCode ||
-                      !flockOptions.length
+                      !flockOptions.length ||
+                      dateRangeInvalid
                     }
                     style={fullInputStyle}
                   >
@@ -888,9 +1052,19 @@ export default function EditShipmentPage() {
             </div>
           </div>
 
-          {!loadingDraftOptions && farmOptions.length === 0 ? (
+          {dateRangeInvalid ? (
             <div className="small" style={{ color: "#b91c1c", fontWeight: 700 }}>
-              ไม่พบฟาร์มที่ยังมี draft ค้างอยู่
+              วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด
+            </div>
+          ) : null}
+
+          {!loadingDraftOptions &&
+          !dateRangeInvalid &&
+          filterDateFrom &&
+          filterDateTo &&
+          farmOptions.length === 0 ? (
+            <div className="small" style={{ color: "#b91c1c", fontWeight: 700 }}>
+              ไม่พบฟาร์มที่ยังมี draft ค้างอยู่ในช่วงวันที่ที่เลือก
             </div>
           ) : null}
 
@@ -916,95 +1090,6 @@ export default function EditShipmentPage() {
           </div>
         </div>
 
-        <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-          <div style={{ fontWeight: 800 }}>สรุปค่าที่เลือก</div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 10,
-            }}
-          >
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                ฟาร์ม
-              </div>
-              <input
-                readOnly
-                value={selectedFarm?.label || "-"}
-                style={{ ...fullInputStyle, background: "#f8fafc" }}
-              />
-            </div>
-
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                Flock
-              </div>
-              <input
-                readOnly
-                value={selectedFlockMeta?.label || "-"}
-                style={{ ...fullInputStyle, background: "#f8fafc" }}
-              />
-            </div>
-
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                วันคัดล่าสุดของฟาร์ม
-              </div>
-              <input
-                readOnly
-                value={formatDateDisplay(selectedFarm?.latest_selected_date)}
-                style={{ ...fullInputStyle, background: "#f8fafc" }}
-              />
-            </div>
-
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                วันคัดล่าสุดของ flock
-              </div>
-              <input
-                readOnly
-                value={formatDateDisplay(selectedFlockMeta?.latest_selected_date)}
-                style={{ ...fullInputStyle, background: "#f8fafc" }}
-              />
-            </div>
-
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                จำนวน draft ของฟาร์ม
-              </div>
-              <input
-                readOnly
-                value={selectedFarm?.shipment_count ?? 0}
-                style={{ ...fullInputStyle, background: "#f8fafc" }}
-              />
-            </div>
-
-            <div>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
-                จำนวน draft ของ flock
-              </div>
-              <input
-                readOnly
-                value={selectedFlockMeta?.shipment_count ?? 0}
-                style={{ ...fullInputStyle, background: "#f8fafc" }}
-              />
-            </div>
-          </div>
-
-          <div className="small" style={{ color: "#666", lineHeight: 1.7 }}>
-            วันนี้: <b>{formatDateDisplay(today)}</b>
-            {selectedFarm?.latest_created_at ? (
-              <>
-                {" "}
-                | draft ล่าสุดของฟาร์มสร้างเมื่อ{" "}
-                <b>{formatDateTimeDisplay(selectedFarm.latest_created_at)}</b>
-              </>
-            ) : null}
-          </div>
-        </div>
-
         {step > 1 ? (
           <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
             <div style={{ fontWeight: 800 }}>Step ถัดไป (เตรียมโครงไว้แล้ว)</div>
@@ -1021,8 +1106,8 @@ export default function EditShipmentPage() {
               }}
             >
               ตอนนี้หน้าเดิมถูกปรับเป็น Step 1 แล้ว และเก็บค่า
-              <b> fromFarmCode</b> กับ <b>fromFlock</b> ไว้พร้อมใช้ต่อใน Step ถัดไป
-              แล้ว
+              <b> fromDate</b>, <b>toDate</b>, <b>fromFarmCode</b> และ{" "}
+              <b>fromFlock</b> ไว้พร้อมใช้ต่อใน Step ถัดไปแล้ว
               <br />
               รอบถัดไปจะต่อส่วนค้นหาเบอร์หมูภายใน farm + flock + date range
               จากค่าในหน้านี้ได้เลย
@@ -1035,6 +1120,28 @@ export default function EditShipmentPage() {
                 gap: 10,
               }}
             >
+              <div>
+                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                  fromDate พร้อมใช้
+                </div>
+                <input
+                  readOnly
+                  value={filterDateFrom || "-"}
+                  style={{ ...fullInputStyle, background: "#f8fafc" }}
+                />
+              </div>
+
+              <div>
+                <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
+                  toDate พร้อมใช้
+                </div>
+                <input
+                  readOnly
+                  value={filterDateTo || "-"}
+                  style={{ ...fullInputStyle, background: "#f8fafc" }}
+                />
+              </div>
+
               <div>
                 <div className="small" style={{ marginBottom: 6, fontWeight: 700 }}>
                   fromFarmCode พร้อมใช้
