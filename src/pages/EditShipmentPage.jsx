@@ -10,10 +10,7 @@ import React, {
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
-import {
-  formatDateDisplay,
-  formatDateTimeDisplay,
-} from "../lib/dateFormat";
+import { formatDateDisplay } from "../lib/dateFormat";
 import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
 
 function clean(s) {
@@ -483,6 +480,15 @@ export default function EditShipmentPage() {
       ) || null
     );
   }, [swineSearchResults, selectedSwineResultKey]);
+
+  const isEditingSelectedSwine = useMemo(() => {
+    return !!selectedSwineResult;
+  }, [selectedSwineResult]);
+
+  const visibleSwineResults = useMemo(() => {
+    if (!selectedSwineResult) return swineSearchResults;
+    return [selectedSwineResult];
+  }, [swineSearchResults, selectedSwineResult]);
 
   const existingItemCodeSet = useMemo(() => {
     return new Set(itemRows.map((x) => clean(x.swine_code)).filter(Boolean));
@@ -1521,6 +1527,13 @@ export default function EditShipmentPage() {
 
       setMsg("บันทึกข้อมูลสำเร็จ ✅");
       await openShipment(shipmentId, { silent: true });
+
+      const currentSearch = clean(swineSearchQ);
+      setSelectedSwineResultKey("");
+
+      if (currentSearch) {
+        await runSwineSearch(currentSearch);
+      }
     } catch (e) {
       console.error("handleSaveAll error:", {
         stepLabel,
@@ -1779,6 +1792,26 @@ export default function EditShipmentPage() {
     return () => clearTimeout(timer);
   }, [swineSearchQ, runSwineSearch, selectedFarmCode, selectedFlock, dateRangeInvalid]);
 
+  useEffect(() => {
+    async function autoOpenSingleDraft() {
+      if (!selectedSwineResult) return;
+      if (selectedSwineResult.source_type !== "draft") return;
+      if ((selectedSwineResult.draft_match_count || 0) !== 1) return;
+
+      const match = selectedSwineResult.draft_matches?.[0];
+      if (!match?.shipment_id) return;
+      if (clean(selectedShipmentId) === clean(match.shipment_id)) return;
+
+      try {
+        await openShipment(match.shipment_id, { silent: true });
+      } catch {
+        // handled in openShipment
+      }
+    }
+
+    void autoOpenSingleDraft();
+  }, [selectedSwineResult, selectedShipmentId, openShipment]);
+
   function resetAfterFilterChange() {
     setSwineSearchQ("");
     setSwineSearchResults([]);
@@ -1821,6 +1854,13 @@ export default function EditShipmentPage() {
     setSelectedSwineResultKey(clean(row?.key));
     setCreateToFarmId("");
     clearEditor();
+    setMsg("");
+  }
+
+  function handleBackToAllSearchResults() {
+    clearEditor();
+    setCreateToFarmId("");
+    setSelectedSwineResultKey("");
     setMsg("");
   }
 
@@ -2180,7 +2220,7 @@ export default function EditShipmentPage() {
                 value={filterDateFrom}
                 onChange={(e) => handleDateFromChange(e.target.value)}
                 style={fullInputStyle}
-                disabled={isOffline}
+                disabled={isOffline || isEditingSelectedSwine}
               />
               <div className="small" style={{ marginTop: 6, color: "#666" }}>
                 แสดงผล: {formatDateDisplay(filterDateFrom)}
@@ -2196,7 +2236,7 @@ export default function EditShipmentPage() {
                 value={filterDateTo}
                 onChange={(e) => handleDateToChange(e.target.value)}
                 style={fullInputStyle}
-                disabled={isOffline}
+                disabled={isOffline || isEditingSelectedSwine}
               />
               <div className="small" style={{ marginTop: 6, color: "#666" }}>
                 แสดงผล: {formatDateDisplay(filterDateTo)}
@@ -2215,7 +2255,8 @@ export default function EditShipmentPage() {
                   loadingDraftOptions ||
                   !permissionsReady ||
                   !farmOptions.length ||
-                  dateRangeInvalid
+                  dateRangeInvalid ||
+                  isEditingSelectedSwine
                 }
                 style={fullInputStyle}
               >
@@ -2269,7 +2310,8 @@ export default function EditShipmentPage() {
                       loadingDraftOptions ||
                       !selectedFarmCode ||
                       !flockOptions.length ||
-                      dateRangeInvalid
+                      dateRangeInvalid ||
+                      isEditingSelectedSwine
                     }
                     style={fullInputStyle}
                   >
@@ -2342,10 +2384,17 @@ export default function EditShipmentPage() {
                     : "พิมพ์บางส่วนของเบอร์หมู..."
                 }
                 style={fullInputStyle}
-                disabled={isOffline || !selectedFarmCode || !selectedFlock}
+                disabled={
+                  isOffline ||
+                  !selectedFarmCode ||
+                  !selectedFlock ||
+                  isEditingSelectedSwine
+                }
               />
               <div className="small" style={{ marginTop: 6, color: "#666" }}>
-                พิมพ์แล้วระบบจะค้นหาให้อัตโนมัติ
+                {isEditingSelectedSwine
+                  ? "กำลังแก้ไขเบอร์ที่เลือกอยู่ เบอร์อื่นจะกลับมาให้เห็นอีกครั้งหลังบันทึก"
+                  : "พิมพ์แล้วระบบจะค้นหาให้อัตโนมัติ"}
               </div>
             </div>
 
@@ -2373,13 +2422,21 @@ export default function EditShipmentPage() {
               </div>
             )}
 
-            {swineSearchResults.length > 0 ? (
+            {visibleSwineResults.length > 0 ? (
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={{ fontWeight: 800 }}>
-                  รายการเบอร์หมูที่พบ ({swineSearchResults.length})
+                  {isEditingSelectedSwine
+                    ? "เบอร์หมูที่กำลังแก้ไข"
+                    : `รายการเบอร์หมูที่พบ (${swineSearchResults.length})`}
                 </div>
 
-                {swineSearchResults.map((row) => {
+                {isEditingSelectedSwine ? (
+                  <div className="small" style={{ color: "#666" }}>
+                    เบอร์อื่นถูกซ่อนไว้ชั่วคราว และจะกลับมาให้เห็นอีกครั้งหลังบันทึก
+                  </div>
+                ) : null}
+
+                {visibleSwineResults.map((row) => {
                   const active = clean(selectedSwineResultKey) === clean(row?.key);
                   const houseText = clean(row?.house_no)
                     ? `โรงเรือน ${clean(row.house_no)}`
@@ -2436,7 +2493,26 @@ export default function EditShipmentPage() {
 
         {selectedSwineResult ? (
           <div className="card" style={{ display: "grid", gap: 12, ...cardStyle }}>
-            <div style={{ fontWeight: 800 }}>Step 3: ดำเนินการกับเบอร์หมูที่เลือก</div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 10,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <div style={{ fontWeight: 800 }}>Step 3: ดำเนินการกับเบอร์หมูที่เลือก</div>
+              {!saving ? (
+                <button
+                  className="linkbtn"
+                  type="button"
+                  onClick={handleBackToAllSearchResults}
+                >
+                  กลับไปรายการทั้งหมด
+                </button>
+              ) : null}
+            </div>
 
             <div
               style={{
@@ -2467,46 +2543,54 @@ export default function EditShipmentPage() {
 
             {selectedSwineResult.source_type === "draft" ? (
               <>
-                <div style={{ fontWeight: 800 }}>
-                  Draft ที่เกี่ยวข้อง ({selectedSwineResult.draft_match_count})
-                </div>
-
-                <div style={{ display: "grid", gap: 10 }}>
-                  {selectedSwineResult.draft_matches.map((m) => (
-                    <div
-                      key={m.shipment_id}
-                      style={{
-                        border: "1px solid #e5e7eb",
-                        borderRadius: 12,
-                        padding: 12,
-                        background: "#fff",
-                        display: "grid",
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ fontWeight: 700 }}>
-                        {m.shipment_no || m.shipment_id}
-                      </div>
-                      <div className="small" style={{ color: "#666" }}>
-                        วันคัด: {formatDateDisplay(m.selected_date)}
-                      </div>
-
-                      <div>
-                        <button
-                          className="linkbtn"
-                          type="button"
-                          onClick={() => handleOpenDraftMatch(m.shipment_id)}
-                          disabled={detailLoading}
-                        >
-                          {detailLoading &&
-                          clean(selectedShipmentId) === clean(m.shipment_id)
-                            ? "กำลังเปิด..."
-                            : "เปิดแก้ไข"}
-                        </button>
-                      </div>
+                {selectedSwineResult.draft_match_count > 1 ? (
+                  <>
+                    <div style={{ fontWeight: 800 }}>
+                      Draft ที่เกี่ยวข้อง ({selectedSwineResult.draft_match_count})
                     </div>
-                  ))}
-                </div>
+
+                    <div style={{ display: "grid", gap: 10 }}>
+                      {selectedSwineResult.draft_matches.map((m) => (
+                        <div
+                          key={m.shipment_id}
+                          style={{
+                            border: "1px solid #e5e7eb",
+                            borderRadius: 12,
+                            padding: 12,
+                            background: "#fff",
+                            display: "grid",
+                            gap: 8,
+                          }}
+                        >
+                          <div style={{ fontWeight: 700 }}>
+                            {m.shipment_no || m.shipment_id}
+                          </div>
+                          <div className="small" style={{ color: "#666" }}>
+                            วันคัด: {formatDateDisplay(m.selected_date)}
+                          </div>
+
+                          <div>
+                            <button
+                              className="linkbtn"
+                              type="button"
+                              onClick={() => handleOpenDraftMatch(m.shipment_id)}
+                              disabled={detailLoading}
+                            >
+                              {detailLoading &&
+                              clean(selectedShipmentId) === clean(m.shipment_id)
+                                ? "กำลังเปิด..."
+                                : "เปิดแก้ไข"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : detailLoading && !shipmentHeader ? (
+                  <div className="small" style={{ color: "#666" }}>
+                    กำลังเปิดข้อมูลที่ต้องแก้ไข...
+                  </div>
+                ) : null}
               </>
             ) : (
               <>
