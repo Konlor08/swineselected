@@ -2173,7 +2173,7 @@ export default function ExportCsvPage() {
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   ประเภทรายงาน:{" "}
-                  <b>{reportType === "not_selected" ? "เบอร์หมูที่ไม่ถูกคัด" : "Raw Data"}</b>
+                  <b>{reportType === "not_selected" ? "เบอร์หมูที่ไม่ถูกคัด" : "เบอร์หมูที่ถูกคัด"}</b>
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   ช่วงวันที่: <b>{dateSummaryText}</b>
@@ -2296,7 +2296,7 @@ export default function ExportCsvPage() {
                 }}
                 style={inputStyle}
               >
-                <option value="raw">Raw Data</option>
+                <option value="raw">เบอร์หมูที่ถูกคัด</option>
                 <option value="not_selected">เบอร์หมูที่ไม่ถูกคัด</option>
               </select>
             </label>
