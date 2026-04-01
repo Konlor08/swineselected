@@ -1,26 +1,41 @@
 import { SARABUN_BOLD_BASE64 } from "./sarabun-bold-base64";
 
-const REGISTRY_KEY = "__sarabun_bold_registered__";
+function resolveFontTarget(target) {
+  if (
+    target &&
+    typeof target.addFileToVFS === "function" &&
+    typeof target.addFont === "function"
+  ) {
+    return target;
+  }
 
-function getFontApi(target) {
-  return (
+  const api =
     target?.API ||
     target?.constructor?.API ||
     target?.__proto__?.constructor?.API ||
-    null
-  );
+    null;
+
+  if (
+    api &&
+    typeof api.addFileToVFS === "function" &&
+    typeof api.addFont === "function"
+  ) {
+    return api;
+  }
+
+  return null;
 }
 
 export function registerSarabunBold(target) {
-  const api = getFontApi(target);
+  const fontTarget = resolveFontTarget(target);
 
-  if (!api?.addFileToVFS || !api?.addFont) {
+  if (!fontTarget) {
     throw new Error("jsPDF font API is not available");
   }
 
-  if (globalThis[REGISTRY_KEY]) return;
-
-  const fontData = String(SARABUN_BOLD_BASE64 || "").trim();
+  const fontData = String(SARABUN_BOLD_BASE64 || "")
+    .replace(/\s+/g, "")
+    .trim();
 
   if (!fontData || fontData === "__PUT_SARABUN_BOLD_BASE64_HERE__") {
     throw new Error(
@@ -28,8 +43,16 @@ export function registerSarabunBold(target) {
     );
   }
 
-  api.addFileToVFS("Sarabun-Bold.ttf", fontData);
-  api.addFont("Sarabun-Bold.ttf", "Sarabun", "bold");
+  const fontList =
+    typeof target?.getFontList === "function" ? target.getFontList() : {};
 
-  globalThis[REGISTRY_KEY] = true;
+  const alreadyRegistered =
+    fontList?.Sarabun &&
+    Array.isArray(fontList.Sarabun) &&
+    fontList.Sarabun.includes("bold");
+
+  if (alreadyRegistered) return;
+
+  fontTarget.addFileToVFS("Sarabun-Bold.ttf", fontData);
+  fontTarget.addFont("Sarabun-Bold.ttf", "Sarabun", "bold");
 }
