@@ -2296,7 +2296,7 @@ export default function ExportCsvPage() {
                 }}
                 style={inputStyle}
               >
-                <option value="raw">Raw Data</option>
+                <option value="raw">เบอร์หมูที่ถูกคัด</option>
                 <option value="not_selected">เบอร์หมูที่ไม่ถูกคัด</option>
               </select>
             </label>
