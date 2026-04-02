@@ -254,12 +254,14 @@ export default function UserHomePage() {
               color: "#64748b",
               marginTop: 4,
               lineHeight: 1.7,
-              maxWidth: 720,
+              maxWidth: 760,
             }}
           >
             <b>Create</b> = ใช้คัดหมูเริ่มต้น
             <br />
             <b>Edit</b> = ใช้แก้ draft และเพิ่มหมูได้ถ้าคัดไม่พอ
+            <br />
+            <b>Summary / Remaining / History</b> = ใช้ดูภาพรวม รายการคงเหลือ และประวัติการคัด
           </div>
         </div>
 
@@ -302,6 +304,39 @@ export default function UserHomePage() {
             className="linkbtn"
             type="button"
             onClick={() => {
+              dlog("navigate:/summary");
+              nav("/summary");
+            }}
+          >
+            Summary
+          </button>
+
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => {
+              dlog("navigate:/remaining-swines");
+              nav("/remaining-swines");
+            }}
+          >
+            Remaining
+          </button>
+
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => {
+              dlog("navigate:/selection-history");
+              nav("/selection-history");
+            }}
+          >
+            History
+          </button>
+
+          <button
+            className="linkbtn"
+            type="button"
+            onClick={() => {
               dlog("navigate:/export-csv");
               nav("/export-csv");
             }}
@@ -323,7 +358,7 @@ export default function UserHomePage() {
       <div
         style={{
           width: "100%",
-          maxWidth: 1100,
+          maxWidth: 1200,
           margin: "14px auto 0",
           display: "grid",
           gap: 14,
@@ -371,7 +406,7 @@ export default function UserHomePage() {
             style={{
               color: "#475569",
               lineHeight: 1.8,
-              maxWidth: 760,
+              maxWidth: 860,
             }}
           >
             1) กด <b>Create</b> เพื่อเริ่มคัดหมู
@@ -381,6 +416,12 @@ export default function UserHomePage() {
             3) เลือก House และรายการหมู แล้วกด Save Draft
             <br />
             4) ถ้าต้องการกลับมาแก้ draft หรือเพิ่มหมูภายหลัง ให้เข้า <b>Edit Draft</b>
+            <br />
+            5) ถ้าต้องการดูภาพรวม ให้เข้า <b>Summary</b>
+            <br />
+            6) ถ้าต้องการดูหมูที่ยังไม่คัด ให้เข้า <b>Remaining</b>
+            <br />
+            7) ถ้าต้องการตรวจย้อนหลังรายตัว ให้เข้า <b>History</b>
           </div>
         </div>
 
@@ -410,6 +451,39 @@ export default function UserHomePage() {
             onClick={() => {
               dlog("card navigate:/edit-shipment");
               nav("/edit-shipment");
+            }}
+            disabled={loading}
+          />
+
+          <ActionCard
+            title="Summary"
+            desc="ดูภาพรวมการคัดระดับฟาร์มและเล้า จำนวนเริ่มต้น จำนวนที่คัดในช่วงวันที่เลือก และคงเหลือ"
+            buttonText="ไปหน้า Summary"
+            onClick={() => {
+              dlog("card navigate:/summary");
+              nav("/summary");
+            }}
+            disabled={loading}
+          />
+
+          <ActionCard
+            title="Remaining"
+            desc="ดูรายการหมูที่ยังไม่คัด พร้อมอายุ จำนวน heat และ heat ล่าสุด แยกตามฟาร์มและเล้า"
+            buttonText="ไปหน้า Remaining"
+            onClick={() => {
+              dlog("card navigate:/remaining-swines");
+              nav("/remaining-swines");
+            }}
+            disabled={loading}
+          />
+
+          <ActionCard
+            title="History"
+            desc="ดูประวัติหมูที่คัดแล้ว ตรวจย้อนหลังรายตัว พร้อมอายุ น้ำหนัก backfat และข้อมูล heat"
+            buttonText="ไปหน้า History"
+            onClick={() => {
+              dlog("card navigate:/selection-history");
+              nav("/selection-history");
             }}
             disabled={loading}
           />
