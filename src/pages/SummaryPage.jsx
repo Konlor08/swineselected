@@ -177,6 +177,18 @@ export default function SummaryPage() {
     };
   }, [summaryRows, selectedSummaryRow]);
 
+  const handleBack = useCallback(() => {
+    try {
+      if (window.history.length > 1) {
+        nav(-1);
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    nav("/user-home", { replace: true });
+  }, [nav]);
+
   useEffect(() => {
     let alive = true;
 
@@ -519,7 +531,6 @@ export default function SummaryPage() {
         const shipmentIds = (shipmentRangeData || []).map((x) => x.id).filter(Boolean);
 
         let filteredItems = [];
-        let heatMap = new Map();
 
         if (shipmentIds.length > 0) {
           const { data: itemRangeData, error: itemRangeError } = await supabase
@@ -549,6 +560,7 @@ export default function SummaryPage() {
             new Set(filteredItems.map((item) => clean(item?.swine_code)).filter(Boolean))
           );
 
+          let heatMap = new Map();
           if (swineCodes.length > 0) {
             const { data: heatData, error: heatError } = await supabase
               .from("swine_heat_report")
@@ -783,6 +795,32 @@ export default function SummaryPage() {
   return (
     <div className="page" style={{ overflowX: "hidden" }}>
       <div
+        className="topbar"
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          flexWrap: "wrap",
+          gap: 12,
+          position: "relative",
+          zIndex: 20,
+        }}
+      >
+        <div style={{ minWidth: 0, flex: "1 1 320px" }}>
+          <div style={{ fontSize: 20, fontWeight: 900 }}>Monitoring</div>
+          <div className="small" style={{ color: "#64748b", marginTop: 4, lineHeight: 1.7 }}>
+            สรุประดับฟาร์ม + เล้า | จำนวนเริ่มต้น | คัดในช่วงวันที่เลือก | คงเหลือ ณ วันสิ้นสุด
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button className="linkbtn" type="button" onClick={handleBack}>
+            Back
+          </button>
+        </div>
+      </div>
+
+      <div
         style={{
           width: "100%",
           maxWidth: 1200,
@@ -793,13 +831,6 @@ export default function SummaryPage() {
           boxSizing: "border-box",
         }}
       >
-        <div style={cardStyle}>
-          <div style={{ fontSize: 20, fontWeight: 800 }}>Monitoring</div>
-          <div className="small" style={{ color: "#666", marginTop: 6 }}>
-            สรุประดับฟาร์ม + เล้า | จำนวนเริ่มต้น | คัดในช่วงวันที่เลือก | คงเหลือ ณ วันสิ้นสุด
-          </div>
-        </div>
-
         <div style={cardStyle}>
           <div style={{ fontWeight: 800, marginBottom: 10 }}>Filter</div>
 
