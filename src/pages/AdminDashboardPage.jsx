@@ -16,9 +16,15 @@ export default function AdminDashboardPage() {
     }
 
     try {
-      for (const k of Object.keys(localStorage)) if (k.startsWith("sb-")) localStorage.removeItem(k);
-      for (const k of Object.keys(sessionStorage)) if (k.startsWith("sb-")) sessionStorage.removeItem(k);
-    } catch {}
+      for (const k of Object.keys(localStorage)) {
+        if (k.startsWith("sb-")) localStorage.removeItem(k);
+      }
+      for (const k of Object.keys(sessionStorage)) {
+        if (k.startsWith("sb-")) sessionStorage.removeItem(k);
+      }
+    } catch {
+      // ignore
+    }
 
     window.location.href = `${window.location.origin}/login`;
   }, []);
@@ -46,6 +52,21 @@ export default function AdminDashboardPage() {
         desc: "จัดการผู้ใช้: role, team, branch, เปิด/ปิดการใช้งาน",
       },
       {
+        path: "/summary",
+        title: "Summary",
+        desc: "ดูภาพรวมการคัดระดับฟาร์มและเล้า จำนวนเริ่มต้น จำนวนที่คัด และคงเหลือ",
+      },
+      {
+        path: "/remaining-swines",
+        title: "Remaining",
+        desc: "ดูรายการหมูที่ยังไม่คัด พร้อมอายุ จำนวน heat และ heat ล่าสุด",
+      },
+      {
+        path: "/selection-history",
+        title: "Selection History",
+        desc: "ดูประวัติหมูที่คัดแล้ว ตรวจย้อนหลังรายตัว พร้อมน้ำหนัก backfat และข้อมูล heat",
+      },
+      {
         path: "/export-csv",
         title: "Export CSV",
         desc: "เลือกวันที่คัด ฟาร์มที่คัด และฟาร์มปลายทาง เพื่อ export รายการหมู",
@@ -55,24 +76,44 @@ export default function AdminDashboardPage() {
         title: "Edit Shipment",
         desc: "ค้นหาและแก้ไขรายการ shipment สถานะ draft",
       },
+      {
+        path: "/user-home",
+        title: "User Home",
+        desc: "เปิดหน้าจอการใช้งานของผู้ใช้ เพื่อเข้า Create / Edit / Summary / Remaining / History",
+      },
     ],
     []
   );
 
   return (
-    <div className="page">
+    <div className="page" style={{ overflowX: "hidden" }}>
       <div className="topbar" style={{ flexWrap: "wrap", gap: 10 }}>
-        <div>
+        <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>Admin Dashboard</div>
-          <div className="small">จัดการข้อมูล / นำเข้า Excel</div>
+          <div className="small" style={{ lineHeight: 1.7 }}>
+            จัดการข้อมูล / นำเข้า Excel / เปิดหน้าทำงานจริง
+          </div>
         </div>
 
-        <button className="linkbtn" type="button" onClick={logout} style={{ position: "relative", zIndex: 9999 }}>
+        <button
+          className="linkbtn"
+          type="button"
+          onClick={logout}
+          style={{ position: "relative", zIndex: 9999 }}
+        >
           Logout
         </button>
       </div>
 
-      <div className="grid">
+      <div
+        className="grid"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gap: 16,
+          marginTop: 16,
+        }}
+      >
         {tiles.map(({ path, title, desc }) => (
           <div
             key={path}
@@ -80,10 +121,21 @@ export default function AdminDashboardPage() {
             role="button"
             tabIndex={0}
             onClick={() => nav(path)}
-            onKeyDown={(e) => e.key === "Enter" && nav(path)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                nav(path);
+              }
+            }}
+            style={{
+              minWidth: 0,
+              boxSizing: "border-box",
+            }}
           >
             <div className="tileTitle">{title}</div>
-            <div className="small">{desc}</div>
+            <div className="small" style={{ lineHeight: 1.7 }}>
+              {desc}
+            </div>
           </div>
         ))}
       </div>
