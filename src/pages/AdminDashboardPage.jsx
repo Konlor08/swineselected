@@ -53,18 +53,8 @@ export default function AdminDashboardPage() {
       },
       {
         path: "/summary",
-        title: "Summary",
-        desc: "ดูภาพรวมการคัดระดับฟาร์มและเล้า จำนวนเริ่มต้น จำนวนที่คัด และคงเหลือ",
-      },
-      {
-        path: "/remaining-swines",
-        title: "Remaining",
-        desc: "ดูรายการหมูที่ยังไม่คัด พร้อมอายุ จำนวน heat และ heat ล่าสุด",
-      },
-      {
-        path: "/selection-history",
-        title: "Selection History",
-        desc: "ดูประวัติหมูที่คัดแล้ว ตรวจย้อนหลังรายตัว พร้อมน้ำหนัก backfat และข้อมูล heat",
+        title: "Monitoring",
+        desc: "ติดตามการคัดแบบต่อเนื่องในหน้าเดียว: ภาพรวม / รายการที่คัด / รายการคงเหลือ",
       },
       {
         path: "/export-csv",
@@ -79,7 +69,7 @@ export default function AdminDashboardPage() {
       {
         path: "/user-home",
         title: "User Home",
-        desc: "เปิดหน้าจอการใช้งานของผู้ใช้ เพื่อเข้า Create / Edit / Summary / Remaining / History",
+        desc: "เปิดหน้าจอการใช้งานของผู้ใช้ เพื่อเข้า Create / Edit / Monitoring / Export",
       },
     ],
     []
