@@ -1,6 +1,7 @@
 // src/pages/SummaryPage.jsx
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchMyProfile } from "../lib/profile";
 import { formatDateDisplay } from "../lib/dateFormat";
@@ -46,6 +47,20 @@ function calcAgeDays(selectedDate, birthDate) {
   const a = new Date(`${s}T00:00:00`);
   const c = new Date(`${b}T00:00:00`);
   const diff = Math.floor((a - c) / (1000 * 60 * 60 * 24));
+  return Number.isFinite(diff) ? diff : "";
+}
+
+function calcAgeDaysFromToday(birthDate) {
+  const b = clean(birthDate);
+  if (!b) return "";
+  const now = new Date();
+  const today = new Date(
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(
+      now.getDate()
+    ).padStart(2, "0")}T00:00:00`
+  );
+  const c = new Date(`${b}T00:00:00`);
+  const diff = Math.floor((today - c) / (1000 * 60 * 60 * 24));
   return Number.isFinite(diff) ? diff : "";
 }
 
@@ -105,12 +120,15 @@ const tdStyleNumber = {
 };
 
 export default function SummaryPage() {
+  const nav = useNavigate();
+
   const today = todayYmdLocal();
   const defaultFrom = addDaysYmd(today, -6);
 
   const [pageLoading, setPageLoading] = useState(true);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [remainingLoading, setRemainingLoading] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [myRole, setMyRole] = useState("");
@@ -124,6 +142,7 @@ export default function SummaryPage() {
   const [selectedRowKey, setSelectedRowKey] = useState("");
   const [detailRows, setDetailRows] = useState([]);
   const [daySummaryRows, setDaySummaryRows] = useState([]);
+  const [remainingRows, setRemainingRows] = useState([]);
 
   const dateRangeInvalid =
     !!clean(dateFrom) && !!clean(dateTo) && clean(dateFrom) > clean(dateTo);
@@ -231,6 +250,7 @@ export default function SummaryPage() {
     setSelectedRowKey("");
     setDetailRows([]);
     setDaySummaryRows([]);
+    setRemainingRows([]);
 
     try {
       const isAdmin = myRole === "admin";
@@ -459,18 +479,20 @@ export default function SummaryPage() {
 
   const loadDetailsForRow = useCallback(
     async (row) => {
-      if (!row) return;
-      if (!userId || !myRole) return;
+      if (!row || !userId || !myRole) return;
 
       setDetailLoading(true);
+      setRemainingLoading(true);
       setMsg("");
 
       try {
         const farmCode = clean(row.farm_code);
         const houseNo = clean(row.house_no);
+
         if (!farmCode || !houseNo) {
           setDetailRows([]);
           setDaySummaryRows([]);
+          setRemainingRows([]);
           return;
         }
 
@@ -496,133 +518,225 @@ export default function SummaryPage() {
 
         const shipmentIds = (shipmentRangeData || []).map((x) => x.id).filter(Boolean);
 
-        if (!shipmentIds.length) {
+        let filteredItems = [];
+        let heatMap = new Map();
+
+        if (shipmentIds.length > 0) {
+          const { data: itemRangeData, error: itemRangeError } = await supabase
+            .from("swine_shipment_items")
+            .select(`
+              shipment_id,
+              swine_code,
+              teats_left,
+              teats_right,
+              weight,
+              backfat,
+              swine:swines!swine_shipment_items_swine_id_fkey (
+                birth_date,
+                house_no
+              )
+            `)
+            .in("shipment_id", shipmentIds)
+            .limit(50000);
+
+          if (itemRangeError) throw itemRangeError;
+
+          filteredItems = (itemRangeData || []).filter(
+            (item) => clean(item?.swine?.house_no) === houseNo
+          );
+
+          const swineCodes = Array.from(
+            new Set(filteredItems.map((item) => clean(item?.swine_code)).filter(Boolean))
+          );
+
+          if (swineCodes.length > 0) {
+            const { data: heatData, error: heatError } = await supabase
+              .from("swine_heat_report")
+              .select(
+                "swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count"
+              )
+              .in("swine_code", swineCodes)
+              .limit(50000);
+
+            if (heatError) throw heatError;
+
+            heatMap = new Map(
+              (heatData || []).map((r) => [clean(r?.swine_code), r])
+            );
+          }
+
+          const shipmentMap = new Map(
+            (shipmentRangeData || []).map((r) => [String(r.id), r])
+          );
+
+          const details = filteredItems
+            .map((item) => {
+              const shipment = shipmentMap.get(String(item.shipment_id));
+              const heat = heatMap.get(clean(item?.swine_code));
+
+              const selectedDate = clean(shipment?.selected_date);
+              const birthDate = clean(item?.swine?.birth_date);
+
+              return {
+                selected_date: selectedDate,
+                swine_code: clean(item?.swine_code),
+                age_days: calcAgeDays(selectedDate, birthDate),
+                teats_left: item?.teats_left ?? "",
+                teats_right: item?.teats_right ?? "",
+                weight: item?.weight ?? "",
+                backfat: item?.backfat ?? "",
+                total_heat_count: Number(heat?.total_heat_count || 0),
+                latest_heat_date: getLatestHeatDate(heat),
+              };
+            })
+            .sort((a, b) => {
+              const d = String(a.selected_date).localeCompare(String(b.selected_date));
+              if (d !== 0) return d;
+              return String(a.swine_code).localeCompare(String(b.swine_code), "th");
+            });
+
+          setDetailRows(details);
+
+          const dayMap = new Map();
+
+          for (const item of itemRangeData || []) {
+            const shipment = shipmentMap.get(String(item.shipment_id));
+            if (!shipment) continue;
+
+            const day = clean(shipment?.selected_date);
+            const itemHouse = clean(item?.swine?.house_no);
+            const shipmentFarmCode = clean(shipment?.from_farm_code);
+
+            if (!day || !itemHouse || !shipmentFarmCode) continue;
+            if (shipmentFarmCode !== farmCode) continue;
+
+            if (!dayMap.has(day)) {
+              dayMap.set(day, {
+                selected_date: day,
+                houseSet: new Set(),
+                total_selected_count: 0,
+              });
+            }
+
+            const current = dayMap.get(day);
+            current.houseSet.add(itemHouse);
+            current.total_selected_count += 1;
+          }
+
+          const daySummary = Array.from(dayMap.values())
+            .filter((r) => r.houseSet.size > 1)
+            .map((r) => ({
+              selected_date: r.selected_date,
+              house_count: r.houseSet.size,
+              total_selected_count: r.total_selected_count,
+            }))
+            .sort((a, b) =>
+              String(a.selected_date).localeCompare(String(b.selected_date), "th")
+            );
+
+          setDaySummaryRows(daySummary);
+        } else {
           setDetailRows([]);
           setDaySummaryRows([]);
+        }
+
+        const { data: masterAvailableData, error: masterAvailableError } = await supabase
+          .from("swine_master")
+          .select("swine_code")
+          .eq("delivery_state", "available")
+          .limit(50000);
+
+        if (masterAvailableError) throw masterAvailableError;
+
+        const availableCodes = (masterAvailableData || [])
+          .map((r) => clean(r?.swine_code))
+          .filter(Boolean);
+
+        if (!availableCodes.length) {
+          setRemainingRows([]);
           return;
         }
 
-        const { data: itemRangeData, error: itemRangeError } = await supabase
-          .from("swine_shipment_items")
-          .select(`
-            shipment_id,
-            swine_code,
-            teats_left,
-            teats_right,
-            weight,
-            backfat,
-            swine:swines!swine_shipment_items_swine_id_fkey (
-              birth_date,
-              house_no
-            )
-          `)
-          .in("shipment_id", shipmentIds)
-          .limit(50000);
+        const chunkSize = 1000;
+        const chunks = [];
+        for (let i = 0; i < availableCodes.length; i += chunkSize) {
+          chunks.push(availableCodes.slice(i, i + chunkSize));
+        }
 
-        if (itemRangeError) throw itemRangeError;
-
-        const filteredItems = (itemRangeData || []).filter(
-          (item) => clean(item?.swine?.house_no) === houseNo
-        );
-
-        const swineCodes = Array.from(
-          new Set(filteredItems.map((item) => clean(item?.swine_code)).filter(Boolean))
-        );
-
-        let heatMap = new Map();
-        if (swineCodes.length > 0) {
-          const { data: heatData, error: heatError } = await supabase
-            .from("swine_heat_report")
-            .select(
-              "swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count"
-            )
-            .in("swine_code", swineCodes)
+        let swineRows = [];
+        for (const chunk of chunks) {
+          let swineQuery = supabase
+            .from("swines")
+            .select("swine_code, farm_code, farm_name, house_no, birth_date")
+            .eq("farm_code", farmCode)
+            .eq("house_no", houseNo)
+            .in("swine_code", chunk)
             .limit(50000);
 
-          if (heatError) throw heatError;
+          if (!isAdmin && farmFilterList.length > 0) {
+            swineQuery = swineQuery.in("farm_code", farmFilterList);
+          }
 
-          heatMap = new Map(
-            (heatData || []).map((row) => [clean(row?.swine_code), row])
+          const { data, error } = await swineQuery;
+          if (error) throw error;
+          swineRows = swineRows.concat(data || []);
+        }
+
+        const remainingCodes = swineRows
+          .map((r) => clean(r?.swine_code))
+          .filter(Boolean);
+
+        let remainingHeatMap = new Map();
+        if (remainingCodes.length > 0) {
+          const heatChunks = [];
+          for (let i = 0; i < remainingCodes.length; i += chunkSize) {
+            heatChunks.push(remainingCodes.slice(i, i + chunkSize));
+          }
+
+          const heatRowsAll = [];
+          for (const chunk of heatChunks) {
+            const { data: heatRows, error: heatError } = await supabase
+              .from("swine_heat_report")
+              .select(
+                "swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count"
+              )
+              .in("swine_code", chunk)
+              .limit(50000);
+
+            if (heatError) throw heatError;
+            heatRowsAll.push(...(heatRows || []));
+          }
+
+          remainingHeatMap = new Map(
+            heatRowsAll.map((r) => [clean(r?.swine_code), r])
           );
         }
 
-        const shipmentMap = new Map(
-          (shipmentRangeData || []).map((row) => [String(row.id), row])
-        );
-
-        const details = filteredItems
-          .map((item) => {
-            const shipment = shipmentMap.get(String(item.shipment_id));
-            const heat = heatMap.get(clean(item?.swine_code));
-
-            const selectedDate = clean(shipment?.selected_date);
-            const birthDate = clean(item?.swine?.birth_date);
-
+        const remaining = (swineRows || [])
+          .map((row) => {
+            const heat = remainingHeatMap.get(clean(row?.swine_code));
             return {
-              selected_date: selectedDate,
-              swine_code: clean(item?.swine_code),
-              age_days: calcAgeDays(selectedDate, birthDate),
-              teats_left: item?.teats_left ?? "",
-              teats_right: item?.teats_right ?? "",
-              weight: item?.weight ?? "",
-              backfat: item?.backfat ?? "",
+              swine_code: clean(row?.swine_code),
+              birth_date: clean(row?.birth_date),
+              age_days: calcAgeDaysFromToday(row?.birth_date),
               total_heat_count: Number(heat?.total_heat_count || 0),
               latest_heat_date: getLatestHeatDate(heat),
             };
           })
-          .sort((a, b) => {
-            const d = String(a.selected_date).localeCompare(String(b.selected_date));
-            if (d !== 0) return d;
-            return String(a.swine_code).localeCompare(String(b.swine_code), "th");
-          });
-
-        setDetailRows(details);
-
-        const dayMap = new Map();
-
-        for (const item of itemRangeData || []) {
-          const shipment = shipmentMap.get(String(item.shipment_id));
-          if (!shipment) continue;
-
-          const day = clean(shipment?.selected_date);
-          const itemHouse = clean(item?.swine?.house_no);
-          const shipmentFarmCode = clean(shipment?.from_farm_code);
-
-          if (!day || !itemHouse || !shipmentFarmCode) continue;
-          if (shipmentFarmCode !== farmCode) continue;
-
-          if (!dayMap.has(day)) {
-            dayMap.set(day, {
-              selected_date: day,
-              houseSet: new Set(),
-              total_selected_count: 0,
-            });
-          }
-
-          const current = dayMap.get(day);
-          current.houseSet.add(itemHouse);
-          current.total_selected_count += 1;
-        }
-
-        const daySummary = Array.from(dayMap.values())
-          .filter((row) => row.houseSet.size > 1)
-          .map((row) => ({
-            selected_date: row.selected_date,
-            house_count: row.houseSet.size,
-            total_selected_count: row.total_selected_count,
-          }))
           .sort((a, b) =>
-            String(a.selected_date).localeCompare(String(b.selected_date), "th")
+            String(a.swine_code).localeCompare(String(b.swine_code), "th")
           );
 
-        setDaySummaryRows(daySummary);
+        setRemainingRows(remaining);
       } catch (error) {
         console.error("loadDetailsForRow error:", error);
         setDetailRows([]);
         setDaySummaryRows([]);
+        setRemainingRows([]);
         setMsg(getRawErrorMessage(error) || "โหลดรายละเอียดไม่สำเร็จ");
       } finally {
         setDetailLoading(false);
+        setRemainingLoading(false);
       }
     },
     [userId, myRole, allowedFarmCodes, dateFrom, dateTo]
@@ -639,6 +753,22 @@ export default function SummaryPage() {
     if (!selectedSummaryRow) return;
     void loadDetailsForRow(selectedSummaryRow);
   }, [selectedSummaryRow, loadDetailsForRow]);
+
+  function goCreateForRow(row) {
+    if (!row) return;
+    const params = new URLSearchParams();
+    params.set("fromFarmCode", clean(row.farm_code));
+    params.set("houseNo", clean(row.house_no));
+    nav(`/shipment-create?${params.toString()}`);
+  }
+
+  function goEditForRow(row) {
+    if (!row) return;
+    const params = new URLSearchParams();
+    params.set("fromFarmCode", clean(row.farm_code));
+    params.set("houseNo", clean(row.house_no));
+    nav(`/edit-shipment?${params.toString()}`);
+  }
 
   if (pageLoading) {
     return (
@@ -664,7 +794,7 @@ export default function SummaryPage() {
         }}
       >
         <div style={cardStyle}>
-          <div style={{ fontSize: 20, fontWeight: 800 }}>Summary การคัด</div>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>Monitoring</div>
           <div className="small" style={{ color: "#666", marginTop: 6 }}>
             สรุประดับฟาร์ม + เล้า | จำนวนเริ่มต้น | คัดในช่วงวันที่เลือก | คงเหลือ ณ วันสิ้นสุด
           </div>
@@ -710,7 +840,7 @@ export default function SummaryPage() {
               </div>
             </div>
 
-            <div style={{ display: "flex", alignItems: "end", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "end", gap: 10, flexWrap: "wrap" }}>
               <button
                 className="linkbtn"
                 type="button"
@@ -728,6 +858,7 @@ export default function SummaryPage() {
                     setSelectedRowKey("");
                     setDetailRows([]);
                     setDaySummaryRows([]);
+                    setRemainingRows([]);
                   }}
                 >
                   กลับไปดูทั้งหมด
@@ -766,9 +897,7 @@ export default function SummaryPage() {
 
           <div style={cardStyle}>
             <div className="small" style={{ color: "#666" }}>คัดในช่วงวันที่เลือก</div>
-            <div style={{ fontSize: 28, fontWeight: 800 }}>
-              {kpi.totalSelectedRange}
-            </div>
+            <div style={{ fontSize: 28, fontWeight: 800 }}>{kpi.totalSelectedRange}</div>
           </div>
 
           <div style={cardStyle}>
@@ -788,8 +917,37 @@ export default function SummaryPage() {
         </div>
 
         <div style={cardStyle}>
-          <div style={{ fontWeight: 800, marginBottom: 10 }}>
-            ตารางสรุปตามฟาร์ม / เล้า
+          <div
+            style={{
+              fontWeight: 800,
+              marginBottom: 10,
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 10,
+              flexWrap: "wrap",
+              alignItems: "center",
+            }}
+          >
+            <div>ตารางสรุปตามฟาร์ม / เล้า</div>
+
+            {selectedSummaryRow ? (
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  className="linkbtn"
+                  type="button"
+                  onClick={() => goCreateForRow(selectedSummaryRow)}
+                >
+                  ไปหน้า Create
+                </button>
+                <button
+                  className="linkbtn"
+                  type="button"
+                  onClick={() => goEditForRow(selectedSummaryRow)}
+                >
+                  ไปหน้า Edit
+                </button>
+              </div>
+            ) : null}
           </div>
 
           <div style={{ overflowX: "auto" }}>
@@ -888,9 +1046,38 @@ export default function SummaryPage() {
             ) : null}
 
             <div style={cardStyle}>
-              <div style={{ fontWeight: 800, marginBottom: 10 }}>
-                เบอร์ที่คัดของฟาร์ม {selectedSummaryRow.farm_code} เล้า{" "}
-                {selectedSummaryRow.house_no}
+              <div
+                style={{
+                  fontWeight: 800,
+                  marginBottom: 10,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  เบอร์ที่คัดของฟาร์ม {selectedSummaryRow.farm_code} เล้า{" "}
+                  {selectedSummaryRow.house_no}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={() => goCreateForRow(selectedSummaryRow)}
+                  >
+                    ไปหน้า Create
+                  </button>
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={() => goEditForRow(selectedSummaryRow)}
+                  >
+                    ไปหน้า Edit
+                  </button>
+                </div>
               </div>
 
               <div className="small" style={{ color: "#666", marginBottom: 10 }}>
@@ -942,6 +1129,98 @@ export default function SummaryPage() {
                           <td style={tdStyleNumber}>{row.teats_right}</td>
                           <td style={tdStyleNumber}>{row.weight}</td>
                           <td style={tdStyleNumber}>{row.backfat}</td>
+                          <td style={tdStyleNumber}>{row.total_heat_count}</td>
+                          <td style={tdStyle}>
+                            {row.latest_heat_date
+                              ? formatDateDisplay(row.latest_heat_date)
+                              : "-"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div style={cardStyle}>
+              <div
+                style={{
+                  fontWeight: 800,
+                  marginBottom: 10,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  เบอร์ที่ยังไม่คัดของฟาร์ม {selectedSummaryRow.farm_code} เล้า{" "}
+                  {selectedSummaryRow.house_no}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={() => goCreateForRow(selectedSummaryRow)}
+                  >
+                    ไปหน้า Create
+                  </button>
+                  <button
+                    className="linkbtn"
+                    type="button"
+                    onClick={() => goEditForRow(selectedSummaryRow)}
+                  >
+                    ไปหน้า Edit
+                  </button>
+                </div>
+              </div>
+
+              <div className="small" style={{ color: "#666", marginBottom: 10 }}>
+                แสดงรายการหมูคงเหลือของฟาร์มและเล้าที่เลือกในหน้าเดียว
+              </div>
+
+              <div style={{ overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    minWidth: 900,
+                    borderCollapse: "collapse",
+                  }}
+                >
+                  <thead>
+                    <tr>
+                      <th style={thStyle}>เบอร์หมู</th>
+                      <th style={thStyle}>วันเกิด</th>
+                      <th style={thStyle}>อายุหมู(วัน)</th>
+                      <th style={thStyle}>จำนวน heat</th>
+                      <th style={thStyle}>heat ล่าสุด</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {remainingLoading ? (
+                      <tr>
+                        <td style={tdStyle} colSpan={5}>
+                          กำลังโหลดรายการคงเหลือ...
+                        </td>
+                      </tr>
+                    ) : remainingRows.length === 0 ? (
+                      <tr>
+                        <td style={tdStyle} colSpan={5}>
+                          ไม่พบรายการหมูที่ยังไม่คัด
+                        </td>
+                      </tr>
+                    ) : (
+                      remainingRows.map((row, idx) => (
+                        <tr key={`${row.swine_code}__${idx}`}>
+                          <td style={tdStyle}>{row.swine_code}</td>
+                          <td style={tdStyle}>
+                            {row.birth_date ? formatDateDisplay(row.birth_date) : "-"}
+                          </td>
+                          <td style={tdStyleNumber}>{row.age_days}</td>
                           <td style={tdStyleNumber}>{row.total_heat_count}</td>
                           <td style={tdStyle}>
                             {row.latest_heat_date
