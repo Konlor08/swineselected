@@ -1,5 +1,3 @@
-// src/App.jsx
-
 import React, { useEffect, useMemo, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
@@ -18,6 +16,7 @@ import NoProfilePage from "./pages/NoProfilePage.jsx";
 import ExportCsvPage from "./pages/ExportCsvPage.jsx";
 import ShipmentCreatePage from "./pages/ShipmentCreatePage.jsx";
 import EditShipmentPage from "./pages/EditShipmentPage.jsx";
+import SummaryPage from "./pages/SummaryPage.jsx";
 
 const ROLE_ADMIN = ["admin"];
 const ROLE_USER_OR_ADMIN = ["user", "admin"];
@@ -286,7 +285,6 @@ export default function App() {
           }
         />
 
-        {/* เพิ่ม alias path เก่า เผื่อมีโค้ดเดิมเรียกอยู่ */}
         <Route
           path="/shipment"
           element={
@@ -305,7 +303,6 @@ export default function App() {
           }
         />
 
-        {/* เพิ่ม alias path เก่า เผื่อมีโค้ดเดิมเรียกอยู่ */}
         <Route
           path="/shipment-edit"
           element={
@@ -320,6 +317,15 @@ export default function App() {
           element={
             <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
               <ExportCsvPage />
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="/summary"
+          element={
+            <RequireRole roleAllow={ROLE_USER_OR_ADMIN}>
+              <SummaryPage />
             </RequireRole>
           }
         />
