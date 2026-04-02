@@ -1,5 +1,3 @@
-// src/pages/UserHomePage.jsx
-
 import React, { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -261,7 +259,7 @@ export default function UserHomePage() {
             <br />
             <b>Edit</b> = ใช้แก้ draft และเพิ่มหมูได้ถ้าคัดไม่พอ
             <br />
-            <b>Summary / Remaining / History</b> = ใช้ดูภาพรวม รายการคงเหลือ และประวัติการคัด
+            <b>Monitoring</b> = ใช้ดูภาพรวม รายการที่คัด และรายการคงเหลือแบบต่อเนื่องในหน้าเดียว
           </div>
         </div>
 
@@ -308,29 +306,7 @@ export default function UserHomePage() {
               nav("/summary");
             }}
           >
-            Summary
-          </button>
-
-          <button
-            className="linkbtn"
-            type="button"
-            onClick={() => {
-              dlog("navigate:/remaining-swines");
-              nav("/remaining-swines");
-            }}
-          >
-            Remaining
-          </button>
-
-          <button
-            className="linkbtn"
-            type="button"
-            onClick={() => {
-              dlog("navigate:/selection-history");
-              nav("/selection-history");
-            }}
-          >
-            History
+            Monitoring
           </button>
 
           <button
@@ -417,11 +393,9 @@ export default function UserHomePage() {
             <br />
             4) ถ้าต้องการกลับมาแก้ draft หรือเพิ่มหมูภายหลัง ให้เข้า <b>Edit Draft</b>
             <br />
-            5) ถ้าต้องการดูภาพรวม ให้เข้า <b>Summary</b>
+            5) ถ้าต้องการติดตามงานต่อเนื่อง ให้เข้า <b>Monitoring</b>
             <br />
-            6) ถ้าต้องการดูหมูที่ยังไม่คัด ให้เข้า <b>Remaining</b>
-            <br />
-            7) ถ้าต้องการตรวจย้อนหลังรายตัว ให้เข้า <b>History</b>
+            6) ถ้าต้องการส่งออกข้อมูล ให้เข้า <b>Export CSV</b>
           </div>
         </div>
 
@@ -456,34 +430,12 @@ export default function UserHomePage() {
           />
 
           <ActionCard
-            title="Summary"
-            desc="ดูภาพรวมการคัดระดับฟาร์มและเล้า จำนวนเริ่มต้น จำนวนที่คัดในช่วงวันที่เลือก และคงเหลือ"
-            buttonText="ไปหน้า Summary"
+            title="Monitoring"
+            desc="ดูข้อมูลต่อเนื่องในหน้าเดียว: ภาพรวมการคัด รายการที่คัดแล้ว และรายการหมูที่ยังไม่คัด"
+            buttonText="ไปหน้า Monitoring"
             onClick={() => {
               dlog("card navigate:/summary");
               nav("/summary");
-            }}
-            disabled={loading}
-          />
-
-          <ActionCard
-            title="Remaining"
-            desc="ดูรายการหมูที่ยังไม่คัด พร้อมอายุ จำนวน heat และ heat ล่าสุด แยกตามฟาร์มและเล้า"
-            buttonText="ไปหน้า Remaining"
-            onClick={() => {
-              dlog("card navigate:/remaining-swines");
-              nav("/remaining-swines");
-            }}
-            disabled={loading}
-          />
-
-          <ActionCard
-            title="History"
-            desc="ดูประวัติหมูที่คัดแล้ว ตรวจย้อนหลังรายตัว พร้อมอายุ น้ำหนัก backfat และข้อมูล heat"
-            buttonText="ไปหน้า History"
-            onClick={() => {
-              dlog("card navigate:/selection-history");
-              nav("/selection-history");
             }}
             disabled={loading}
           />
