@@ -790,14 +790,20 @@ export default function ShipmentCreatePage() {
         })
         .eq("id", shipmentId);
 
-      if (headerError) throw headerError;
+      if (headerError) {
+        throw new Error(`header update failed: ${headerError.message || headerError.details || "unknown error"}`);
+      }
 
       const { error: deleteOldItemsError } = await supabase
         .from("swine_shipment_items")
         .delete()
         .eq("shipment_id", shipmentId);
 
-      if (deleteOldItemsError) throw deleteOldItemsError;
+      if (deleteOldItemsError) {
+        throw new Error(
+          `delete old items failed: ${deleteOldItemsError.message || deleteOldItemsError.details || "unknown error"}`
+        );
+      }
 
       const itemPayload = pickedRows.map((row, idx) => ({
         shipment_id: shipmentId,
@@ -810,17 +816,13 @@ export default function ShipmentCreatePage() {
         backfat: toNumOrNull(row.backfat),
       }));
 
-      const itemRes = await supabase
+      const { error: insertItemsError } = await supabase
         .from("swine_shipment_items")
-        .insert(itemPayload)
-        .select("id, swine_code");
+        .insert(itemPayload);
 
-      if (itemRes.error) throw itemRes.error;
-      if (!Array.isArray(itemRes.data) || itemRes.data.length !== itemPayload.length) {
+      if (insertItemsError) {
         throw new Error(
-          `INSERT_MISMATCH: swine_shipment_items inserted ${
-            Array.isArray(itemRes.data) ? itemRes.data.length : 0
-          }/${itemPayload.length}`
+          `insert items failed: ${insertItemsError.message || insertItemsError.details || "unknown error"}`
         );
       }
 
@@ -829,23 +831,39 @@ export default function ShipmentCreatePage() {
         p_reserved_by: currentUserId,
       });
 
-      if (consumeError) throw consumeError;
+      if (consumeError) {
+        throw new Error(
+          `consume reservation failed: ${consumeError.message || consumeError.details || "unknown error"}`
+        );
+      }
 
       const { error: statusError } = await supabase
         .from("swine_shipments")
         .update({ reservation_status: "consumed" })
         .eq("id", shipmentId);
 
-      if (statusError) throw statusError;
+      if (statusError) {
+        throw new Error(
+          `update reservation_status failed: ${statusError.message || statusError.details || "unknown error"}`
+        );
+      }
 
-      const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
+      const { error: resequenceError } = await supabase.rpc("resequence_shipment_group_append_end", {
         p_selected_date: selectedDate,
         p_from_farm_code: clean(fromFarm?.farm_code) || null,
         p_to_farm_id: clean(toFarmId) || null,
         p_priority_shipment_id: shipmentId,
       });
 
-      if (resequenceRes.error) throw resequenceRes.error;
+      if (resequenceError) {
+        console.error("resequence warning:", {
+          message: resequenceError?.message,
+          code: resequenceError?.code,
+          details: resequenceError?.details,
+          hint: resequenceError?.hint,
+          raw: resequenceError,
+        });
+      }
 
       leavingRef.current = true;
       nav("/user-home", {
