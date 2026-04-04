@@ -45,6 +45,26 @@ async function getCurrentUserId() {
   return user?.id || null;
 }
 
+function extractErrorMessage(error, fallback = "เกิดข้อผิดพลาด") {
+  return (
+    error?.message ||
+    error?.details ||
+    error?.hint ||
+    error?.error_description ||
+    error?.error ||
+    fallback
+  );
+}
+
+function isConflictError(error) {
+  return (
+    error?.status === 409 ||
+    error?.code === "409" ||
+    error?.code === 409 ||
+    /409|conflict/i.test(String(error?.message || ""))
+  );
+}
+
 function qrImageUrl(text) {
   const s = clean(text);
   if (!s) return "";
@@ -448,6 +468,73 @@ export default function ShipmentCreatePage() {
     [draftShipmentId, currentUserId, resetCandidateForm, updateDraftReservationStatus]
   );
 
+  const findReusableDraftHeader = useCallback(async () => {
+    if (!clean(currentUserId)) return null;
+    if (!clean(fromFarm?.farm_code)) return null;
+    if (!clean(toFarmId)) return null;
+    if (!clean(selectedHouse)) return null;
+
+    const query = supabase
+      .from("swine_shipments")
+      .select("id")
+      .eq("created_by", currentUserId)
+      .eq("status", "draft")
+      .eq("selected_date", selectedDate)
+      .eq("from_farm_code", clean(fromFarm?.farm_code))
+      .eq("to_farm_id", clean(toFarmId))
+      .eq("source_house_no", clean(selectedHouse))
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const { data, error } = await query.maybeSingle();
+    if (error) throw error;
+    return data?.id || null;
+  }, [currentUserId, selectedDate, fromFarm?.farm_code, toFarmId, selectedHouse]);
+
+  const deleteEmptyDraftHeader = useCallback(async (shipmentId) => {
+    const id = clean(shipmentId);
+    if (!id) return;
+
+    try {
+      const { count, error: countError } = await supabase
+        .from("swine_shipment_items")
+        .select("id", { count: "exact", head: true })
+        .eq("shipment_id", id);
+
+      if (countError) throw countError;
+      if ((count || 0) > 0) return;
+
+      const { error } = await supabase
+        .from("swine_shipments")
+        .delete()
+        .eq("id", id)
+        .eq("status", "draft");
+
+      if (error) throw error;
+    } catch (cleanupError) {
+      console.warn("deleteEmptyDraftHeader warning:", cleanupError);
+    }
+  }, []);
+
+  const findMyActiveReservation = useCallback(async (swineId, swineCode) => {
+    if (!clean(currentUserId)) return null;
+
+    const q = supabase
+      .from("swine_reservations")
+      .select("id, shipment_id, swine_id, swine_code, status, created_at")
+      .eq("reserved_by", currentUserId)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const { data, error } = await q.or(
+      `swine_id.eq.${swineId},swine_code.eq.${clean(swineCode)}`
+    );
+
+    if (error) throw error;
+    return data?.[0] || null;
+  }, [currentUserId]);
+
   const ensureDraftHeader = useCallback(async () => {
     if (clean(draftShipmentId)) return draftShipmentId;
     if (draftCreating) throw new Error("กำลังสร้าง draft header");
@@ -458,6 +545,12 @@ export default function ShipmentCreatePage() {
 
     setDraftCreating(true);
     try {
+      const reusableId = await findReusableDraftHeader();
+      if (clean(reusableId)) {
+        setDraftShipmentId(reusableId);
+        return reusableId;
+      }
+
       const payload = {
         selected_date: selectedDate,
         from_farm_code: clean(fromFarm?.farm_code) || null,
@@ -495,6 +588,7 @@ export default function ShipmentCreatePage() {
     currentUserId,
     selectedDate,
     remark,
+    findReusableDraftHeader,
   ]);
 
   const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode) => {
@@ -653,6 +747,9 @@ export default function ShipmentCreatePage() {
       return;
     }
 
+    let shipmentId = "";
+    let createdNewHeader = false;
+
     try {
       setMsg("");
 
@@ -667,7 +764,8 @@ export default function ShipmentCreatePage() {
         throw new Error("เบอร์หมูนี้อยู่ในรายการที่เลือกแล้ว");
       }
 
-      const shipmentId = await ensureDraftHeader();
+      createdNewHeader = !clean(draftShipmentId);
+      shipmentId = await ensureDraftHeader();
 
       const { error } = await supabase.rpc("reserve_swine_for_shipment", {
         p_swine_code: swineCode,
@@ -678,7 +776,56 @@ export default function ShipmentCreatePage() {
         p_minutes: 30,
       });
 
-      if (error) throw error;
+      if (error) {
+        if (isConflictError(error)) {
+          const myActiveReservation = await findMyActiveReservation(swineId, swineCode);
+
+          if (
+            myActiveReservation?.shipment_id &&
+            clean(myActiveReservation.shipment_id) === clean(shipmentId)
+          ) {
+            setPickedRows((prev) => {
+              if (prev.some((x) => clean(x.swine_code) === swineCode)) return prev;
+              return [
+                ...prev,
+                {
+                  temp_id: `picked-${swineId}-${Date.now()}`,
+                  swine_id: swineId,
+                  swine_code: swineCode,
+                  house_no: clean(selectedCandidateSwine?.house_no),
+                  teats_left: clean(teatsLeft),
+                  teats_right: clean(teatsRight),
+                  weight: clean(weight),
+                  backfat: clean(backfat),
+                },
+              ];
+            });
+
+            setDraftShipmentId(shipmentId);
+            resetCandidateForm();
+            await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
+            setMsg(`เบอร์ ${swineCode} ถูกจองอยู่แล้วใน draft นี้ จึงดึงกลับเข้า list ให้แล้ว`);
+            return;
+          }
+
+          if (myActiveReservation?.shipment_id) {
+            if (createdNewHeader && clean(shipmentId)) {
+              await deleteEmptyDraftHeader(shipmentId);
+            }
+            setDraftShipmentId(clean(myActiveReservation.shipment_id));
+            throw new Error(
+              `เบอร์ ${swineCode} ถูกจองอยู่ใน draft เดิมของคุณแล้ว กรุณากลับไปเปิด draft เดิม`
+            );
+          }
+
+          if (createdNewHeader && clean(shipmentId)) {
+            await deleteEmptyDraftHeader(shipmentId);
+          }
+          throw new Error(`เบอร์ ${swineCode} ถูกจองโดยรายการอื่นแล้ว กรุณาเลือกตัวอื่น`);
+        }
+
+        throw error;
+      }
 
       setPickedRows((prev) => [
         ...prev,
@@ -697,14 +844,22 @@ export default function ShipmentCreatePage() {
       resetCandidateForm();
       await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
     } catch (e) {
-      console.error("addToPickedList error:", e);
-      setMsg(e?.message || "บันทึกเข้า list ไม่สำเร็จ");
+      console.error("addToPickedList error:", {
+        message: e?.message,
+        code: e?.code,
+        details: e?.details,
+        hint: e?.hint,
+        status: e?.status,
+        raw: e,
+      });
+      setMsg(extractErrorMessage(e, "บันทึกเข้า list ไม่สำเร็จ"));
       void loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
     }
   }, [
     canAddToList,
     selectedCandidateSwine,
     pickedCodeSet,
+    draftShipmentId,
     ensureDraftHeader,
     currentUserId,
     teatsLeft,
@@ -714,6 +869,8 @@ export default function ShipmentCreatePage() {
     resetCandidateForm,
     loadAvailableSwinesOfFarm,
     fromFarm?.farm_code,
+    findMyActiveReservation,
+    deleteEmptyDraftHeader,
   ]);
 
   const removePickedRow = useCallback(
@@ -790,20 +947,14 @@ export default function ShipmentCreatePage() {
         })
         .eq("id", shipmentId);
 
-      if (headerError) {
-        throw new Error(`header update failed: ${headerError.message || headerError.details || "unknown error"}`);
-      }
+      if (headerError) throw headerError;
 
       const { error: deleteOldItemsError } = await supabase
         .from("swine_shipment_items")
         .delete()
         .eq("shipment_id", shipmentId);
 
-      if (deleteOldItemsError) {
-        throw new Error(
-          `delete old items failed: ${deleteOldItemsError.message || deleteOldItemsError.details || "unknown error"}`
-        );
-      }
+      if (deleteOldItemsError) throw deleteOldItemsError;
 
       const itemPayload = pickedRows.map((row, idx) => ({
         shipment_id: shipmentId,
@@ -816,13 +967,17 @@ export default function ShipmentCreatePage() {
         backfat: toNumOrNull(row.backfat),
       }));
 
-      const { error: insertItemsError } = await supabase
+      const itemRes = await supabase
         .from("swine_shipment_items")
-        .insert(itemPayload);
+        .insert(itemPayload)
+        .select("id, swine_code");
 
-      if (insertItemsError) {
+      if (itemRes.error) throw itemRes.error;
+      if (!Array.isArray(itemRes.data) || itemRes.data.length !== itemPayload.length) {
         throw new Error(
-          `insert items failed: ${insertItemsError.message || insertItemsError.details || "unknown error"}`
+          `INSERT_MISMATCH: swine_shipment_items inserted ${
+            Array.isArray(itemRes.data) ? itemRes.data.length : 0
+          }/${itemPayload.length}`
         );
       }
 
@@ -831,39 +986,23 @@ export default function ShipmentCreatePage() {
         p_reserved_by: currentUserId,
       });
 
-      if (consumeError) {
-        throw new Error(
-          `consume reservation failed: ${consumeError.message || consumeError.details || "unknown error"}`
-        );
-      }
+      if (consumeError) throw consumeError;
 
       const { error: statusError } = await supabase
         .from("swine_shipments")
         .update({ reservation_status: "consumed" })
         .eq("id", shipmentId);
 
-      if (statusError) {
-        throw new Error(
-          `update reservation_status failed: ${statusError.message || statusError.details || "unknown error"}`
-        );
-      }
+      if (statusError) throw statusError;
 
-      const { error: resequenceError } = await supabase.rpc("resequence_shipment_group_append_end", {
+      const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
         p_selected_date: selectedDate,
         p_from_farm_code: clean(fromFarm?.farm_code) || null,
         p_to_farm_id: clean(toFarmId) || null,
         p_priority_shipment_id: shipmentId,
       });
 
-      if (resequenceError) {
-        console.error("resequence warning:", {
-          message: resequenceError?.message,
-          code: resequenceError?.code,
-          details: resequenceError?.details,
-          hint: resequenceError?.hint,
-          raw: resequenceError,
-        });
-      }
+      if (resequenceRes.error) throw resequenceRes.error;
 
       leavingRef.current = true;
       nav("/user-home", {
