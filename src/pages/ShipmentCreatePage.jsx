@@ -57,11 +57,21 @@ function extractErrorMessage(error, fallback = "เกิดข้อผิด�
 }
 
 function isConflictError(error) {
+  const message = String(error?.message || "");
+  const details = String(error?.details || "");
+  const hint = String(error?.hint || "");
+  const raw = `${message} ${details} ${hint}`.toLowerCase();
+
   return (
     error?.status === 409 ||
     error?.code === "409" ||
     error?.code === 409 ||
-    /409|conflict/i.test(String(error?.message || ""))
+    error?.code === "23505" ||
+    error?.code === 23505 ||
+    /409|conflict/.test(raw) ||
+    /duplicate key value/.test(raw) ||
+    /unique constraint/.test(raw) ||
+    /ux_swine_reservations_active_code/.test(raw)
   );
 }
 
