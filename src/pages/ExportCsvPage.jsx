@@ -26,8 +26,32 @@ function makeScopeKey(farmCode, flock) {
   return `${clean(farmCode)}||${clean(flock)}`;
 }
 
+function parseScopeKey(scopeKey) {
+  const [farm_code = "", flock = ""] = String(scopeKey || "").split("||");
+  return {
+    farm_code: clean(farm_code),
+    flock: clean(flock),
+  };
+}
+
 function emptyShipmentStatusCounts() {
   return { draft: 0, submitted: 0, issued: 0 };
+}
+
+function createEmptyPreviewMeta() {
+  return {
+    hasPreviewed: false,
+    reportType: "raw",
+    scopeKey: "",
+    fromFarmCode: "",
+    fromFlock: "",
+    toFarmId: "",
+    dateFrom: "",
+    dateTo: "",
+    baseSwinesCount: 0,
+    selectedUniqueCount: 0,
+    remainingCount: 0,
+  };
 }
 
 function summarizeShipmentStatuses(shipments) {
@@ -130,10 +154,18 @@ function countHeatRows(rows) {
   return (rows || []).filter((row) => String(row?.is_heat || "").toUpperCase() === "Y").length;
 }
 
-function buildOverallSummaryRows(flatRows) {
+function buildOverallSummaryRows(flatRows, summaryMeta = {}) {
+  const selectedUniqueCount =
+    Number(summaryMeta?.selectedUniqueCount ?? uniqueCountFromRows(flatRows, "swine_code")) || 0;
+  const baseSwinesCount = Number(summaryMeta?.baseSwinesCount || 0) || 0;
+  const remainingCount =
+    Number(summaryMeta?.remainingCount ?? Math.max(baseSwinesCount - selectedUniqueCount, 0)) || 0;
+
   return [
     { รายการ: "จำนวน shipment", ค่า: uniqueCountFromRows(flatRows, "shipment_id") },
-    { รายการ: "จำนวนตัวทั้งหมด", ค่า: (flatRows || []).length },
+    { รายการ: "จำนวนหมูทั้งหมดใน swines", ค่า: baseSwinesCount },
+    { รายการ: "จำนวนหมูที่ถูกคัด", ค่า: selectedUniqueCount },
+    { รายการ: "จำนวนหมูคงเหลือ", ค่า: remainingCount },
     { รายการ: "น้ำหนักรวมทั้งหมด", ค่า: sumFromRows(flatRows, "weight") },
     { รายการ: "น้ำหนักเฉลี่ยทั้งหมด", ค่า: avgFromRows(flatRows, "weight") },
     { รายการ: "จำนวนฟาร์มที่คัด", ค่า: uniqueCountFromRows(flatRows, "from_farm_code") },
@@ -277,7 +309,9 @@ function buildBirthLotSummaryRows(flatRows) {
     .sort((a, b) =>
       [a["วันที่จัดส่ง"], a["ฟาร์มที่คัด"], a["ฟาร์มปลายทาง"], a.birth_lot]
         .join("|")
-        .localeCompare([b["วันที่จัดส่ง"], b["ฟาร์มที่คัด"], b["ฟาร์มปลายทาง"], b.birth_lot].join("|"))
+        .localeCompare(
+          [b["วันที่จัดส่ง"], b["ฟาร์มที่คัด"], b["ฟาร์มปลายทาง"], b.birth_lot].join("|")
+        )
     )
     .map((row) => {
       const totalRows = totalMap.get(row.__totalKey) || [];
@@ -286,7 +320,7 @@ function buildBirthLotSummaryRows(flatRows) {
         ฟาร์มที่คัด: row["ฟาร์มที่คัด"],
         ฟาร์มปลายทาง: row["ฟาร์มปลายทาง"],
         birth_lot: row.birth_lot,
-        "จำนวนตัว": row.__rows.length,
+        จำนวนตัว: row.__rows.length,
         "น้ำหนักรวมตาม birthlot": sumFromRows(row.__rows, "weight"),
         "น้ำหนักเฉลี่ยตาม birthlot": avgFromRows(row.__rows, "weight"),
         "น้ำหนักรวมทั้งหมด": sumFromRows(totalRows, "weight"),
@@ -327,11 +361,12 @@ function exportExcelReport({
   filename,
   title = "Swine Report",
   showDeliveryDate = false,
+  summaryMeta = {},
 }) {
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet([[title], []]);
 
-  const overallRows = buildOverallSummaryRows(flatRows);
+  const overallRows = buildOverallSummaryRows(flatRows, summaryMeta);
   const dailyRows = buildDailySummaryRows(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
   const detailRows = buildExcelDetailRows(flatRows, { showDeliveryDate });
@@ -369,7 +404,14 @@ function exportExcelReport({
     skipHeader: false,
   });
 
-  const titleRows = [[title], [], ["สรุปยอดรวมทั้งชุด"], ["ยอดรวมรายวัน"], ["สรุปตาม birth_lot"], ["รายละเอียดรายตัว"]];
+  const titleRows = [
+    [title],
+    [],
+    ["สรุปยอดรวมทั้งชุด"],
+    ["ยอดรวมรายวัน"],
+    ["สรุปตาม birth_lot"],
+    ["รายละเอียดรายตัว"],
+  ];
   ws["!cols"] = makeSheetColsFromRows(
     titleRows,
     overallRows,
@@ -388,13 +430,15 @@ function exportPdfReport({
   title = "Swine Report",
   dateText = "",
   fromFarmText = "",
+  fromFlockText = "",
   toFarmText = "",
   showDeliveryDate = false,
+  summaryMeta = {},
 }) {
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
   const pdfFont = ensurePdfThaiFont(doc);
 
-  const overallRows = buildOverallSummaryRows(flatRows);
+  const overallRows = buildOverallSummaryRows(flatRows, summaryMeta);
   const dailyRows = buildDailySummaryRows(flatRows);
   const birthLotRows = buildBirthLotSummaryRows(flatRows);
 
@@ -405,11 +449,12 @@ function exportPdfReport({
   doc.setFont(pdfFont, "normal");
   doc.setFontSize(9);
   doc.text(`ช่วงวันที่: ${dateText || "-"}`, 14, 18);
-  doc.text(`ฟาร์มที่คัด: ${fromFarmText || "all"}`, 14, 23);
-  doc.text(`ฟาร์มปลายทาง: ${toFarmText || "all"}`, 14, 28);
+  doc.text(`ฟาร์มที่คัด: ${fromFarmText || "-"}`, 14, 23);
+  doc.text(`Flock: ${fromFlockText || "-"}`, 14, 28);
+  doc.text(`ฟาร์มปลายทาง: ${toFarmText || "all"}`, 14, 33);
 
   autoTable(doc, {
-    startY: 34,
+    startY: 39,
     head: [["รายการ", "ค่า"]],
     body: overallRows.map((r) => [r["รายการ"], r["ค่า"]]),
     styles: { font: pdfFont, fontSize: 8.5, cellPadding: 1.8, overflow: "linebreak" },
@@ -420,7 +465,7 @@ function exportPdfReport({
   });
 
   autoTable(doc, {
-    startY: (doc.lastAutoTable?.finalY || 34) + 6,
+    startY: (doc.lastAutoTable?.finalY || 39) + 6,
     head: [["วันที่จัดส่ง", "จำนวนตัวรวมรายวัน", "น้ำหนักรวมรายวัน", "น้ำหนักเฉลี่ยรายวัน"]],
     body: dailyRows.map((r) => [
       r["วันที่จัดส่ง"],
@@ -435,7 +480,7 @@ function exportPdfReport({
   });
 
   autoTable(doc, {
-    startY: (doc.lastAutoTable?.finalY || 34) + 6,
+    startY: (doc.lastAutoTable?.finalY || 39) + 6,
     head: [[
       "วันที่จัดส่ง",
       "ฟาร์มที่คัด",
@@ -541,31 +586,6 @@ function exportPdfReport({
   doc.save(filename);
 }
 
-async function exportRawReportFiles({ flatRows, effectiveDateFrom, effectiveDateTo, fromFarmCode, fromFarmOptions, toFarmId, toFarmOptions, showDeliveryDate }) {
-  const fromFarmText = fromFarmOptions.find((x) => x.value === fromFarmCode)?.code || clean(fromFarmCode) || "all";
-  const toFarmText = toFarmOptions.find((x) => x.value === toFarmId)?.farm_code || clean(toFarmId) || "all";
-  const dateText = makeExportDateText(effectiveDateFrom, effectiveDateTo);
-  const baseName = `swine_report_${dateText}_${fromFarmText}_${toFarmText}`;
-  exportPdfReport({
-    flatRows,
-    filename: `${baseName}.pdf`,
-    title: "Swine Report",
-    dateText,
-    fromFarmText,
-    toFarmText,
-    showDeliveryDate,
-  });
-  exportExcelReport({
-    flatRows,
-    filename: `${baseName}.xlsx`,
-    title: "Swine Report",
-    showDeliveryDate,
-  });
-  const csvRows = buildRawCsvRows(flatRows, { showDeliveryDate });
-  downloadCsv(`${baseName}.csv`, csvRows);
-  return { pdf: `${baseName}.pdf`, xlsx: `${baseName}.xlsx`, csv: `${baseName}.csv` };
-}
-
 function parseYmdToUtcDate(ymd) {
   if (!ymd || typeof ymd !== "string") return null;
   const [y, m, d] = ymd.split("-").map(Number);
@@ -573,8 +593,8 @@ function parseYmdToUtcDate(ymd) {
   return new Date(Date.UTC(y, m - 1, d));
 }
 
-function calcAgeDays(selectedDate, birthDate) {
-  const s = parseYmdToUtcDate(selectedDate);
+function calcAgeDays(referenceDate, birthDate) {
+  const s = parseYmdToUtcDate(referenceDate);
   const b = parseYmdToUtcDate(birthDate);
   if (!s || !b) return "";
   const diffMs = s.getTime() - b.getTime();
@@ -794,7 +814,7 @@ export default function ExportCsvPage() {
   const [dateFrom, setDateFrom] = useState(todayYmdLocal());
   const [dateTo, setDateTo] = useState(todayYmdLocal());
 
-  const [fromFarmCode, setFromFarmCode] = useState("");
+  const [selectedScopeKey, setSelectedScopeKey] = useState("");
   const [toFarmId, setToFarmId] = useState("");
   const [fromFarmQ, setFromFarmQ] = useState("");
   const [toFarmQ, setToFarmQ] = useState("");
@@ -803,6 +823,7 @@ export default function ExportCsvPage() {
   const [toFarmOptions, setToFarmOptions] = useState([]);
   const [previewRows, setPreviewRows] = useState([]);
   const [previewShipments, setPreviewShipments] = useState([]);
+  const [previewMeta, setPreviewMeta] = useState(createEmptyPreviewMeta());
   const [deliveryDateDrafts, setDeliveryDateDrafts] = useState({});
   const [savingDeliveryDateMap, setSavingDeliveryDateMap] = useState({});
 
@@ -825,9 +846,13 @@ export default function ExportCsvPage() {
     );
   }, [myScope]);
 
-  const myFarmCodeSet = useMemo(() => {
-    return new Set((myScope || []).map((x) => clean(x.farm_code)).filter(Boolean));
-  }, [myScope]);
+  const selectedScope = useMemo(() => parseScopeKey(selectedScopeKey), [selectedScopeKey]);
+  const selectedFromFarmCode = selectedScope.farm_code;
+  const selectedFromFlock = selectedScope.flock;
+
+  const selectedScopeOption = useMemo(() => {
+    return fromFarmOptions.find((x) => x.value === selectedScopeKey) || null;
+  }, [fromFarmOptions, selectedScopeKey]);
 
   const dateRangeValid = useMemo(() => {
     return Boolean(
@@ -839,45 +864,28 @@ export default function ExportCsvPage() {
 
   const canPreviewExport = useMemo(() => {
     if (!dateRangeValid) return false;
+    if (!selectedScopeKey) return false;
+    if (!isAdmin && !myScopeKeySet.has(selectedScopeKey)) return false;
 
-    if (reportType === "not_selected") {
-      return Boolean(effectiveDateFrom && effectiveDateTo && fromFarmCode);
-    }
-
-    return isAdmin
-      ? Boolean(effectiveDateFrom && effectiveDateTo)
-      : Boolean(
-          effectiveDateFrom &&
-            effectiveDateTo &&
-            fromFarmCode &&
-            myFarmCodeSet.has(clean(fromFarmCode))
-        );
+    return Boolean(effectiveDateFrom && effectiveDateTo);
   }, [
     dateRangeValid,
-    reportType,
     effectiveDateFrom,
     effectiveDateTo,
-    fromFarmCode,
+    selectedScopeKey,
     isAdmin,
-    myFarmCodeSet,
+    myScopeKeySet,
   ]);
 
   const canSubmitRows =
     reportType === "raw" &&
-    (isAdmin
-      ? Boolean(
-          dateRangeValid &&
-            effectiveDateFrom === effectiveDateTo &&
-            fromFarmCode &&
-            toFarmId
-        )
-      : Boolean(
-          dateRangeValid &&
-            effectiveDateFrom === effectiveDateTo &&
-            fromFarmCode &&
-            toFarmId &&
-            myFarmCodeSet.has(clean(fromFarmCode))
-        ));
+    Boolean(
+      dateRangeValid &&
+        effectiveDateFrom === effectiveDateTo &&
+        selectedScopeKey &&
+        toFarmId &&
+        (isAdmin || myScopeKeySet.has(selectedScopeKey))
+    );
 
   const showDeliveryDate = reportType === "raw" && Boolean(toFarmId);
 
@@ -902,6 +910,16 @@ export default function ExportCsvPage() {
     return deliveryDateShipments.filter((shipment) => !clean(shipment?.delivery_date)).length;
   }, [deliveryDateShipments]);
 
+  const previewScopeText = useMemo(() => {
+    const farmCode = clean(previewMeta?.fromFarmCode);
+    const flock = clean(previewMeta?.fromFlock);
+    const farmName = clean(selectedScopeOption?.farm_name);
+    if (!farmCode) return "-";
+    return farmName
+      ? `${farmCode} - ${farmName} | flock: ${flock || "-"}`
+      : `${farmCode} | flock: ${flock || "-"}`;
+  }, [previewMeta, selectedScopeOption]);
+
   const resetRuntimeState = useCallback(({ keepDates = true } = {}) => {
     setMsg("");
     setMyProfile(null);
@@ -913,7 +931,7 @@ export default function ExportCsvPage() {
       setDateFrom(today);
       setDateTo(today);
     }
-    setFromFarmCode("");
+    setSelectedScopeKey("");
     setToFarmId("");
     setFromFarmQ("");
     setToFarmQ("");
@@ -921,6 +939,7 @@ export default function ExportCsvPage() {
     setToFarmOptions([]);
     setPreviewRows([]);
     setPreviewShipments([]);
+    setPreviewMeta(createEmptyPreviewMeta());
     setDeliveryDateDrafts({});
     setSavingDeliveryDateMap({});
   }, []);
@@ -966,22 +985,12 @@ export default function ExportCsvPage() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  async function getCurrentUserId() {
-    const {
-      data: { user },
-      error,
-    } = await supabase.auth.getUser();
-
-    if (error) throw error;
-    return user?.id || null;
-  }
-
   const loadMyFarmFlockScope = useCallback(async (userId) => {
     if (!userId) return [];
 
     const { data, error } = await supabase
       .from("swine_shipments")
-      .select("from_farm_code, from_flock")
+      .select("from_farm_code, from_farm_name, from_flock")
       .eq("created_by", userId)
       .in("status", ["draft", "submitted", "issued"])
       .order("from_farm_code", { ascending: true });
@@ -992,6 +1001,7 @@ export default function ExportCsvPage() {
 
     for (const row of data || []) {
       const farmCode = clean(row?.from_farm_code);
+      const farmName = clean(row?.from_farm_name);
       const flock = clean(row?.from_flock);
       if (!farmCode || !flock) continue;
 
@@ -999,7 +1009,12 @@ export default function ExportCsvPage() {
       if (!map.has(key)) {
         map.set(key, {
           farm_code: farmCode,
+          farm_name: farmName,
           flock,
+          scope_key: key,
+          label: farmName
+            ? `${farmCode} - ${farmName} | flock: ${flock}`
+            : `${farmCode} | flock: ${flock}`,
         });
       }
     }
@@ -1047,25 +1062,12 @@ export default function ExportCsvPage() {
 
         if (role === "admin") {
           setMyScope([]);
-          console.log("[ExportCsvPage] init profile", {
-            uid,
-            profileUserId: profile?.user_id || null,
-            role,
-            scopeSize: 0,
-          });
           return;
         }
 
         const scope = await loadMyFarmFlockScope(uid);
         if (!alive || authSeqRef.current !== runId) return;
         setMyScope(scope);
-        console.log("[ExportCsvPage] init profile", {
-          uid,
-          profileUserId: profile?.user_id || null,
-          role,
-          scopeSize: scope.length,
-          scope,
-        });
       } catch (e) {
         console.error("init ExportCsvPage error:", e);
         if (alive && authSeqRef.current === runId) {
@@ -1083,11 +1085,7 @@ export default function ExportCsvPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log("[ExportCsvPage] auth changed", {
-        event,
-        uid: session?.user?.id || null,
-      });
+    } = supabase.auth.onAuthStateChange(() => {
       resetRuntimeState();
       setPageLoading(true);
       void initForCurrentSession();
@@ -1111,18 +1109,25 @@ export default function ExportCsvPage() {
     [isAdmin, myScopeKeySet]
   );
 
+  const resetPreviewState = useCallback(() => {
+    previewReqRef.current += 1;
+    setPreviewRows([]);
+    setPreviewShipments([]);
+    setPreviewMeta(createEmptyPreviewMeta());
+    setDeliveryDateDrafts({});
+    setSavingDeliveryDateMap({});
+    setMsg("");
+  }, []);
+
   const resetSelectionsAfterDateChange = useCallback(() => {
     previewReqRef.current += 1;
-    fromFarmReqRef.current += 1;
     toFarmReqRef.current += 1;
-    setFromFarmCode("");
     setToFarmId("");
-    setFromFarmQ("");
     setToFarmQ("");
-    setFromFarmOptions([]);
     setToFarmOptions([]);
     setPreviewRows([]);
     setPreviewShipments([]);
+    setPreviewMeta(createEmptyPreviewMeta());
     setDeliveryDateDrafts({});
     setSavingDeliveryDateMap({});
     setMsg("");
@@ -1131,7 +1136,7 @@ export default function ExportCsvPage() {
   const loadFromFarmOptions = useCallback(async () => {
     const reqId = ++fromFarmReqRef.current;
 
-    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
+    if (!canUsePage) {
       if (reqId === fromFarmReqRef.current) setFromFarmOptions([]);
       return;
     }
@@ -1141,31 +1146,65 @@ export default function ExportCsvPage() {
     try {
       const { data, error } = await supabase
         .from("swine_shipments")
-        .select("from_farm_code, from_farm_name, from_flock, status, selected_date")
-        .gte("selected_date", effectiveDateFrom)
-        .lte("selected_date", effectiveDateTo)
+        .select("from_farm_code, from_farm_name, from_flock")
         .in("status", ["draft", "submitted", "issued"])
-        .order("from_farm_name", { ascending: true });
+        .order("from_farm_code", { ascending: true });
 
       if (error) throw error;
 
-      const scopedRows = filterShipmentsByScope(data || []);
-      const rows = isAdmin ? data || [] : scopedRows;
+      const rows = isAdmin
+        ? data || []
+        : (data || []).filter((row) =>
+            myScopeKeySet.has(makeScopeKey(row?.from_farm_code, row?.from_flock))
+          );
 
       const map = new Map();
 
       for (const row of rows) {
         const code = clean(row?.from_farm_code);
         const name = clean(row?.from_farm_name);
-        if (!code) continue;
+        const flock = clean(row?.from_flock);
+        if (!code || !flock) continue;
 
-        if (!map.has(code)) {
-          map.set(code, {
-            value: code,
-            label: name ? `${code} - ${name}` : code,
-            code,
-            name,
+        const scopeKey = makeScopeKey(code, flock);
+        const existing = map.get(scopeKey);
+        if (!existing) {
+          map.set(scopeKey, {
+            value: scopeKey,
+            scope_key: scopeKey,
+            farm_code: code,
+            farm_name: name,
+            flock,
+            label: name
+              ? `${code} - ${name} | flock: ${flock}`
+              : `${code} | flock: ${flock}`,
           });
+        } else if (!existing.farm_name && name) {
+          existing.farm_name = name;
+          existing.label = `${code} - ${name} | flock: ${flock}`;
+        }
+      }
+
+      if (!isAdmin) {
+        for (const scope of myScope || []) {
+          const code = clean(scope?.farm_code);
+          const name = clean(scope?.farm_name);
+          const flock = clean(scope?.flock);
+          if (!code || !flock) continue;
+
+          const scopeKey = makeScopeKey(code, flock);
+          if (!map.has(scopeKey)) {
+            map.set(scopeKey, {
+              value: scopeKey,
+              scope_key: scopeKey,
+              farm_code: code,
+              farm_name: name,
+              flock,
+              label: name
+                ? `${code} - ${name} | flock: ${flock}`
+                : `${code} | flock: ${flock}`,
+            });
+          }
         }
       }
 
@@ -1175,17 +1214,11 @@ export default function ExportCsvPage() {
       console.error("loadFromFarmOptions error:", e);
       if (reqId !== fromFarmReqRef.current) return;
       setFromFarmOptions([]);
-      setMsg(e?.message || "โหลดรายการฟาร์มที่คัดไม่สำเร็จ");
+      setMsg(e?.message || "โหลดรายการฟาร์ม+flock ไม่สำเร็จ");
     } finally {
       if (reqId === fromFarmReqRef.current) setFromFarmLoading(false);
     }
-  }, [
-    dateRangeValid,
-    effectiveDateFrom,
-    effectiveDateTo,
-    filterShipmentsByScope,
-    isAdmin,
-  ]);
+  }, [canUsePage, isAdmin, myScope, myScopeKeySet]);
 
   const loadToFarmOptions = useCallback(async () => {
     const reqId = ++toFarmReqRef.current;
@@ -1195,7 +1228,8 @@ export default function ExportCsvPage() {
       !dateRangeValid ||
       !effectiveDateFrom ||
       !effectiveDateTo ||
-      !fromFarmCode
+      !selectedFromFarmCode ||
+      !selectedFromFlock
     ) {
       if (reqId === toFarmReqRef.current) setToFarmOptions([]);
       return;
@@ -1218,7 +1252,8 @@ export default function ExportCsvPage() {
         `)
         .gte("selected_date", effectiveDateFrom)
         .lte("selected_date", effectiveDateTo)
-        .eq("from_farm_code", fromFarmCode)
+        .eq("from_farm_code", selectedFromFarmCode)
+        .eq("from_flock", selectedFromFlock)
         .in("status", ["draft", "submitted", "issued"])
         .order("created_at", { ascending: false });
 
@@ -1260,24 +1295,19 @@ export default function ExportCsvPage() {
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
-    fromFarmCode,
+    selectedFromFarmCode,
+    selectedFromFlock,
     filterShipmentsByScope,
     isAdmin,
   ]);
 
   useEffect(() => {
-    if (!canUsePage || !dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
+    if (!canUsePage) {
       setFromFarmOptions([]);
       return;
     }
     void loadFromFarmOptions();
-  }, [
-    canUsePage,
-    dateRangeValid,
-    effectiveDateFrom,
-    effectiveDateTo,
-    loadFromFarmOptions,
-  ]);
+  }, [canUsePage, loadFromFarmOptions]);
 
   useEffect(() => {
     if (
@@ -1286,7 +1316,8 @@ export default function ExportCsvPage() {
       !dateRangeValid ||
       !effectiveDateFrom ||
       !effectiveDateTo ||
-      !fromFarmCode
+      !selectedFromFarmCode ||
+      !selectedFromFlock
     ) {
       setToFarmOptions([]);
       return;
@@ -1298,9 +1329,49 @@ export default function ExportCsvPage() {
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
-    fromFarmCode,
+    selectedFromFarmCode,
+    selectedFromFlock,
     loadToFarmOptions,
   ]);
+
+  const fetchBaseSwinesByScope = useCallback(async (farmCode, flock) => {
+    const cleanFarmCode = clean(farmCode);
+    const cleanFlock = clean(flock);
+
+    if (!cleanFarmCode || !cleanFlock) return [];
+
+    const pageSize = 1000;
+    let from = 0;
+    const allRows = [];
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("swines")
+        .select(
+          "id, swine_code, farm_code, farm_name, house_no, flock, birth_date, birth_lot, dam_code, sire_code"
+        )
+        .eq("farm_code", cleanFarmCode)
+        .eq("flock", cleanFlock)
+        .order("house_no", { ascending: true })
+        .order("swine_code", { ascending: true })
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+
+      const rows = data || [];
+      allRows.push(
+        ...rows.map((row) => ({
+          ...row,
+          birth_lot: getBirthLotValue(row),
+        }))
+      );
+
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return allRows;
+  }, []);
 
   async function loadSwineMapByCodes(swineCodes) {
     const uniqueCodes = Array.from(
@@ -1315,7 +1386,9 @@ export default function ExportCsvPage() {
     for (const chunk of chunks) {
       const { data, error } = await supabase
         .from("swines")
-        .select("swine_code, house_no, flock, birth_date, birth_lot, dam_code, sire_code, farm_code, farm_name")
+        .select(
+          "swine_code, house_no, flock, birth_date, birth_lot, dam_code, sire_code, farm_code, farm_name"
+        )
         .in("swine_code", chunk);
 
       if (error) throw error;
@@ -1371,7 +1444,9 @@ export default function ExportCsvPage() {
   }
 
   async function fetchShipmentItemsMap(shipmentIds) {
-    const uniqueIds = Array.from(new Set((shipmentIds || []).map((x) => clean(x)).filter(Boolean)));
+    const uniqueIds = Array.from(
+      new Set((shipmentIds || []).map((x) => clean(x)).filter(Boolean))
+    );
 
     if (!uniqueIds.length) return {};
 
@@ -1398,8 +1473,14 @@ export default function ExportCsvPage() {
   }
 
   const fetchExportBaseData = useCallback(async () => {
-    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo) {
-      return { shipments: [], swineMap: {}, heatMap: {} };
+    if (
+      !dateRangeValid ||
+      !effectiveDateFrom ||
+      !effectiveDateTo ||
+      !selectedFromFarmCode ||
+      !selectedFromFlock
+    ) {
+      return { shipments: [], swineMap: {}, heatMap: {}, baseSwinesRows: [] };
     }
 
     let query = supabase
@@ -1425,27 +1506,32 @@ export default function ExportCsvPage() {
       `)
       .gte("selected_date", effectiveDateFrom)
       .lte("selected_date", effectiveDateTo)
+      .eq("from_farm_code", selectedFromFarmCode)
+      .eq("from_flock", selectedFromFlock)
       .in("status", ["draft", "submitted", "issued"])
       .order("created_at", { ascending: false });
-
-    if (fromFarmCode) {
-      query = query.eq("from_farm_code", fromFarmCode);
-    }
 
     if (reportType === "raw" && toFarmId) {
       query = query.eq("to_farm_id", toFarmId);
     }
 
-    const { data, error } = await query;
+    const [{ data, error }, baseSwinesRows] = await Promise.all([
+      query,
+      fetchBaseSwinesByScope(selectedFromFarmCode, selectedFromFlock),
+    ]);
+
     if (error) throw error;
 
-    const scopedHeaders = isAdmin ? data || [] : filterShipmentsByScope(data || []);
-    const itemsMap = await fetchShipmentItemsMap(scopedHeaders.map((x) => x.id));
-
-    const shipments = scopedHeaders.map((shipment) => ({
+    const scopedHeaders = filterShipmentsByScope(data || []);
+    const shipments = (isAdmin ? data || [] : scopedHeaders).map((shipment) => ({
       ...shipment,
-      items: itemsMap[clean(shipment?.id)] || [],
+      items: [],
     }));
+
+    const itemsMap = await fetchShipmentItemsMap(shipments.map((x) => x.id));
+    for (const shipment of shipments) {
+      shipment.items = itemsMap[clean(shipment?.id)] || [];
+    }
 
     const allCodes = [];
     for (const shipment of shipments) {
@@ -1459,16 +1545,18 @@ export default function ExportCsvPage() {
       loadHeatMapByCodes(allCodes),
     ]);
 
-    return { shipments, swineMap, heatMap };
+    return { shipments, swineMap, heatMap, baseSwinesRows };
   }, [
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
-    fromFarmCode,
+    selectedFromFarmCode,
+    selectedFromFlock,
     reportType,
     toFarmId,
-    isAdmin,
+    fetchBaseSwinesByScope,
     filterShipmentsByScope,
+    isAdmin,
   ]);
 
   function buildFlatRows(shipments, swineMap, heatMap, options = {}) {
@@ -1530,43 +1618,37 @@ export default function ExportCsvPage() {
   }
 
   const fetchNotSelectedRows = useCallback(async () => {
-    if (!dateRangeValid || !effectiveDateFrom || !effectiveDateTo || !fromFarmCode) {
-      return [];
+    if (
+      !dateRangeValid ||
+      !effectiveDateFrom ||
+      !effectiveDateTo ||
+      !selectedFromFarmCode ||
+      !selectedFromFlock
+    ) {
+      return { rows: [], shipments: [], baseSwinesRows: [], selectedUniqueCount: 0 };
     }
 
-    const allowedScopeRows = isAdmin
-      ? []
-      : (myScope || []).filter((x) => clean(x.farm_code) === clean(fromFarmCode));
-
-    if (!isAdmin && allowedScopeRows.length === 0) {
-      return [];
-    }
-
-    const allowedFlockSet = new Set(
-      allowedScopeRows.map((x) => clean(x.flock)).filter(Boolean)
-    );
+    const baseSwinesRows = await fetchBaseSwinesByScope(selectedFromFarmCode, selectedFromFlock);
 
     const { data: shipmentHeaders, error: shipmentError } = await supabase
       .from("swine_shipments")
       .select("id, from_farm_code, from_flock, status, selected_date")
       .gte("selected_date", effectiveDateFrom)
       .lte("selected_date", effectiveDateTo)
-      .eq("from_farm_code", fromFarmCode)
+      .eq("from_farm_code", selectedFromFarmCode)
+      .eq("from_flock", selectedFromFlock)
       .in("status", ["draft", "submitted", "issued"]);
 
     if (shipmentError) throw shipmentError;
 
-    const scopedHeaders = isAdmin
-      ? shipmentHeaders || []
-      : (shipmentHeaders || []).filter((row) =>
-          allowedFlockSet.has(clean(row?.from_flock))
-        );
+    const scopedHeaders = filterShipmentsByScope(shipmentHeaders || []);
+    const shipments = isAdmin ? shipmentHeaders || [] : scopedHeaders;
 
-    const itemsMap = await fetchShipmentItemsMap(scopedHeaders.map((x) => x.id));
+    const itemsMap = await fetchShipmentItemsMap(shipments.map((x) => x.id));
 
     const selectedCodeSet = new Set();
 
-    for (const shipment of scopedHeaders) {
+    for (const shipment of shipments) {
       const items = itemsMap[clean(shipment?.id)] || [];
       for (const item of items) {
         const code = clean(item?.swine_code);
@@ -1574,21 +1656,7 @@ export default function ExportCsvPage() {
       }
     }
 
-    const { data: allSwines, error: swineError } = await supabase
-      .from("swines")
-      .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date, birth_lot")
-      .eq("farm_code", fromFarmCode)
-      .order("house_no", { ascending: true })
-      .order("swine_code", { ascending: true })
-      .limit(10000);
-
-    if (swineError) throw swineError;
-
-    const scopedSwines = isAdmin
-      ? allSwines || []
-      : (allSwines || []).filter((row) => allowedFlockSet.has(clean(row?.flock)));
-
-    const notSelected = scopedSwines.filter((row) => {
+    const notSelected = baseSwinesRows.filter((row) => {
       const code = clean(row?.swine_code);
       if (!code) return false;
       return !selectedCodeSet.has(code);
@@ -1596,7 +1664,7 @@ export default function ExportCsvPage() {
 
     const heatMap = await loadHeatMapByCodes(notSelected.map((x) => x.swine_code));
 
-    return notSelected.map((row) => {
+    const rows = notSelected.map((row) => {
       const code = clean(row?.swine_code);
       const heat = heatMap[code] || {
         is_heat: "N",
@@ -1623,55 +1691,71 @@ export default function ExportCsvPage() {
         heat_4_date: heat.heat_4_date,
       };
     });
+
+    return {
+      rows,
+      shipments,
+      baseSwinesRows,
+      selectedUniqueCount: selectedCodeSet.size,
+    };
   }, [
     dateRangeValid,
     effectiveDateFrom,
     effectiveDateTo,
-    fromFarmCode,
+    selectedFromFarmCode,
+    selectedFromFlock,
+    fetchBaseSwinesByScope,
+    filterShipmentsByScope,
     isAdmin,
-    myScope,
   ]);
 
   const refreshPreviewRows = useCallback(async () => {
     const reqId = ++previewReqRef.current;
 
     if (reportType === "not_selected") {
-      const rows = await fetchNotSelectedRows();
+      const { rows, shipments, baseSwinesRows, selectedUniqueCount } = await fetchNotSelectedRows();
       if (reqId === previewReqRef.current) {
         setPreviewRows(rows);
-        setPreviewShipments([]);
-        console.log("[ExportCsvPage] preview:not_selected", {
-          uid: myProfile?.user_id || null,
-          myRole,
-          fromFarmCode,
-          toFarmId,
-          rows: rows.length,
-          scopeSize: myScope.length,
+        setPreviewShipments(shipments || []);
+        setPreviewMeta({
+          hasPreviewed: true,
+          reportType,
+          scopeKey: selectedScopeKey,
+          fromFarmCode: selectedFromFarmCode,
+          fromFlock: selectedFromFlock,
+          toFarmId: "",
+          dateFrom: effectiveDateFrom,
+          dateTo: effectiveDateTo,
+          baseSwinesCount: baseSwinesRows.length,
+          selectedUniqueCount,
+          remainingCount: rows.length,
         });
       }
-      return { shipments: [], rows };
+      return { shipments, rows };
     }
 
-    const { shipments, swineMap, heatMap } = await fetchExportBaseData();
+    const { shipments, swineMap, heatMap, baseSwinesRows } = await fetchExportBaseData();
     const rows = buildFlatRows(shipments, swineMap, heatMap, {
       deliveryDateEnabled: Boolean(toFarmId),
     });
+    const selectedUniqueCount = uniqueCountFromRows(rows, "swine_code");
+    const remainingCount = Math.max(baseSwinesRows.length - selectedUniqueCount, 0);
+
     if (reqId === previewReqRef.current) {
       setPreviewRows(rows);
       setPreviewShipments(shipments);
-      console.log("[ExportCsvPage] preview:raw", {
-        uid: myProfile?.user_id || null,
-        myRole,
-        fromFarmCode,
-        toFarmId,
-        scopeSize: myScope.length,
-        shipments: shipments.length,
-        shipmentIds: shipments.map((x) => x.id),
-        rows: rows.length,
-        itemCountFromShipments: shipments.reduce(
-          (sum, shipment) => sum + ((shipment?.items || []).length || 0),
-          0
-        ),
+      setPreviewMeta({
+        hasPreviewed: true,
+        reportType,
+        scopeKey: selectedScopeKey,
+        fromFarmCode: selectedFromFarmCode,
+        fromFlock: selectedFromFlock,
+        toFarmId: clean(toFarmId),
+        dateFrom: effectiveDateFrom,
+        dateTo: effectiveDateTo,
+        baseSwinesCount: baseSwinesRows.length,
+        selectedUniqueCount,
+        remainingCount,
       });
     }
     return { shipments, rows };
@@ -1679,66 +1763,70 @@ export default function ExportCsvPage() {
     reportType,
     fetchNotSelectedRows,
     fetchExportBaseData,
-    myProfile,
-    myRole,
-    fromFarmCode,
+    selectedScopeKey,
+    selectedFromFarmCode,
+    selectedFromFlock,
+    effectiveDateFrom,
+    effectiveDateTo,
     toFarmId,
-    myScope,
   ]);
 
-  const handleSaveDeliveryDate = useCallback(async (shipment) => {
-    const shipmentId = clean(shipment?.id);
-    const shipmentNo = clean(shipment?.shipment_no) || shipmentId;
-    const selectedDate = clean(shipment?.selected_date);
-    const targetToFarmId = clean(shipment?.to_farm_id);
-    const draftValue = clean(deliveryDateDrafts[shipmentId]);
+  const handleSaveDeliveryDate = useCallback(
+    async (shipment) => {
+      const shipmentId = clean(shipment?.id);
+      const shipmentNo = clean(shipment?.shipment_no) || shipmentId;
+      const selectedDate = clean(shipment?.selected_date);
+      const targetToFarmId = clean(shipment?.to_farm_id);
+      const draftValue = clean(deliveryDateDrafts[shipmentId]);
 
-    if (!shipmentId) {
-      setMsg("ไม่พบ shipment ที่ต้องการบันทึกวันที่จัดส่ง");
-      return;
-    }
+      if (!shipmentId) {
+        setMsg("ไม่พบ shipment ที่ต้องการบันทึกวันที่จัดส่ง");
+        return;
+      }
 
-    if (!targetToFarmId) {
-      setMsg("กรุณาเลือกหรือบันทึกฟาร์มปลายทางก่อน แล้วจึงเพิ่มวันที่จัดส่ง");
-      return;
-    }
+      if (!targetToFarmId) {
+        setMsg("กรุณาเลือกหรือบันทึกฟาร์มปลายทางก่อน แล้วจึงเพิ่มวันที่จัดส่ง");
+        return;
+      }
 
-    if (!draftValue) {
-      setMsg("กรุณาเลือกวันที่จัดส่งก่อนบันทึก");
-      return;
-    }
+      if (!draftValue) {
+        setMsg("กรุณาเลือกวันที่จัดส่งก่อนบันทึก");
+        return;
+      }
 
-    if (selectedDate && draftValue < selectedDate) {
-      setMsg(`วันที่จัดส่งของ ${shipmentNo} ต้องไม่น้อยกว่าวันที่คัด (${selectedDate})`);
-      return;
-    }
+      if (selectedDate && draftValue < selectedDate) {
+        setMsg(`วันที่จัดส่งของ ${shipmentNo} ต้องไม่น้อยกว่าวันที่คัด (${selectedDate})`);
+        return;
+      }
 
-    setSavingDeliveryDateMap((prev) => ({
-      ...(prev || {}),
-      [shipmentId]: true,
-    }));
-    setMsg("");
-
-    try {
-      const { error } = await supabase
-        .from("swine_shipments")
-        .update({ delivery_date: draftValue })
-        .eq("id", shipmentId);
-
-      if (error) throw error;
-
-      await refreshPreviewRows();
-      setMsg(`บันทึกวันที่จัดส่งของ ${shipmentNo} เรียบร้อยแล้ว`);
-    } catch (e) {
-      console.error("handleSaveDeliveryDate error:", e);
-      setMsg(e?.message || "บันทึกวันที่จัดส่งไม่สำเร็จ");
-    } finally {
       setSavingDeliveryDateMap((prev) => ({
         ...(prev || {}),
-        [shipmentId]: false,
+        [shipmentId]: true,
       }));
-    }
-  }, [deliveryDateDrafts, refreshPreviewRows]);
+      setMsg("");
+
+      try {
+        const { error } = await supabase
+          .from("swine_shipments")
+          .update({ delivery_date: draftValue })
+          .eq("id", shipmentId);
+
+        if (error) throw error;
+
+        await refreshPreviewRows();
+        setMsg(`บันทึกวันที่จัดส่งของ ${shipmentNo} เรียบร้อยแล้ว`);
+      } catch (e) {
+        console.error("handleSaveDeliveryDate error:", e);
+        setMsg(e?.message || "บันทึกวันที่จัดส่งไม่สำเร็จ");
+      } finally {
+        setSavingDeliveryDateMap((prev) => ({
+          ...(prev || {}),
+          [shipmentId]: false,
+        }));
+      }
+    },
+    [deliveryDateDrafts, refreshPreviewRows]
+  );
 
   const handlePreview = useCallback(async () => {
     if (!canPreviewExport) return;
@@ -1747,6 +1835,7 @@ export default function ExportCsvPage() {
     setMsg("");
     setPreviewRows([]);
     setPreviewShipments([]);
+    setPreviewMeta(createEmptyPreviewMeta());
     setDeliveryDateDrafts({});
     setSavingDeliveryDateMap({});
 
@@ -1764,142 +1853,126 @@ export default function ExportCsvPage() {
       console.error("handlePreview error:", e);
       setPreviewRows([]);
       setPreviewShipments([]);
+      setPreviewMeta(createEmptyPreviewMeta());
       setMsg(e?.message || "โหลดตัวอย่างข้อมูลไม่สำเร็จ");
     } finally {
       setPreviewLoading(false);
     }
   }, [canPreviewExport, reportType, refreshPreviewRows]);
 
-  const exportCurrentRows = useCallback(async (kind) => {
-    if (!canPreviewExport) return;
+  const exportCurrentRows = useCallback(
+    async (kind) => {
+      if (!canPreviewExport) return;
 
-    setExporting(true);
-    setActiveExportKind(kind);
-    setMsg("");
+      setExporting(true);
+      setActiveExportKind(kind);
+      setMsg("");
 
-    try {
-      if (reportType === "not_selected") {
-        const rows = await fetchNotSelectedRows();
+      try {
+        if (!previewMeta.hasPreviewed) {
+          setMsg("กรุณากดแสดงข้อมูลก่อน แล้วจึง Export");
+          return;
+        }
 
-        if (!rows.length) {
+        if (previewMeta.reportType !== reportType) {
+          setMsg("เงื่อนไขเปลี่ยนแล้ว กรุณากดแสดงข้อมูลใหม่ก่อน Export");
+          return;
+        }
+
+        if (!previewRows.length) {
           setMsg("ไม่พบข้อมูลสำหรับ export");
           return;
         }
 
-        if (kind !== "csv") {
-          setMsg("รายงาน Not Selected รองรับเฉพาะ Export CSV");
+        const previewShowDeliveryDate =
+          previewMeta.reportType === "raw" && Boolean(previewMeta.toFarmId);
+
+        const fromFarmText = clean(previewMeta.fromFarmCode) || "all";
+        const fromFlockText = clean(previewMeta.fromFlock) || "allflock";
+        const toFarmText =
+          toFarmOptions.find((x) => x.value === previewMeta.toFarmId)?.farm_code ||
+          clean(previewMeta.toFarmId) ||
+          "all";
+        const dateText = makeExportDateText(previewMeta.dateFrom, previewMeta.dateTo);
+
+        if (reportType === "not_selected") {
+          if (kind !== "csv") {
+            setMsg("รายงาน Not Selected รองรับเฉพาะ Export CSV");
+            return;
+          }
+
+          const exportRows = previewRows.map((r) => ({
+            ฟาร์ม: r.farm_name,
+            รหัสฟาร์ม: r.farm_code,
+            เล้า: r.house_no,
+            flock: r.flock,
+            เบอร์หมู: r.swine_code,
+            วันเกิด: r.birth_date,
+            birth_lot: r.birth_lot,
+            heat: r.is_heat,
+            total_heat_count: r.total_heat_count,
+            heat_1_date: r.heat_1_date,
+            heat_2_date: r.heat_2_date,
+            heat_3_date: r.heat_3_date,
+            heat_4_date: r.heat_4_date,
+          }));
+
+          const filename = `swine_not_selected_${dateText}_${fromFarmText}_${fromFlockText}.csv`;
+          downloadCsv(filename, exportRows);
+          setMsg(`Export CSV สำเร็จ ${exportRows.length} รายการ`);
           return;
         }
 
-        const exportRows = rows.map((r) => ({
-          ฟาร์ม: r.farm_name,
-          รหัสฟาร์ม: r.farm_code,
-          เล้า: r.house_no,
-          flock: r.flock,
-          เบอร์หมู: r.swine_code,
-          วันเกิด: r.birth_date,
-          birth_lot: r.birth_lot,
-          heat: r.is_heat,
-          total_heat_count: r.total_heat_count,
-          heat_1_date: r.heat_1_date,
-          heat_2_date: r.heat_2_date,
-          heat_3_date: r.heat_3_date,
-          heat_4_date: r.heat_4_date,
-        }));
+        const baseName = `swine_report_${dateText}_${fromFarmText}_${fromFlockText}_${toFarmText}`;
 
-        const fromFarmText =
-          fromFarmOptions.find((x) => x.value === fromFarmCode)?.code ||
-          clean(fromFarmCode) ||
-          "all";
+        if (kind === "csv") {
+          const csvRows = buildRawCsvRows(previewRows, {
+            showDeliveryDate: previewShowDeliveryDate,
+          });
+          downloadCsv(`${baseName}.csv`, csvRows);
+          setMsg(`Export CSV สำเร็จ ${previewRows.length} รายการ`);
+          return;
+        }
 
-        const dateText =
-          effectiveDateFrom === effectiveDateTo
-            ? effectiveDateFrom
-            : `${effectiveDateFrom}_to_${effectiveDateTo}`;
+        if (kind === "excel") {
+          exportExcelReport({
+            flatRows: previewRows,
+            filename: `${baseName}.xlsx`,
+            title: "Swine Report",
+            showDeliveryDate: previewShowDeliveryDate,
+            summaryMeta: previewMeta,
+          });
+          setMsg(`Export Excel สำเร็จ ${previewRows.length} รายการ`);
+          return;
+        }
 
-        const filename = `swine_not_selected_${dateText}_${fromFarmText}.csv`;
+        if (kind === "pdf") {
+          exportPdfReport({
+            flatRows: previewRows,
+            filename: `${baseName}.pdf`,
+            title: "Swine Report",
+            dateText,
+            fromFarmText,
+            fromFlockText,
+            toFarmText,
+            showDeliveryDate: previewShowDeliveryDate,
+            summaryMeta: previewMeta,
+          });
+          setMsg(`Export PDF สำเร็จ ${previewRows.length} รายการ`);
+          return;
+        }
 
-        downloadCsv(filename, exportRows);
-        setMsg(`Export CSV สำเร็จ ${exportRows.length} รายการ`);
-        return;
+        setMsg("ไม่รู้จักประเภท export");
+      } catch (e) {
+        console.error("exportCurrentRows error:", e);
+        setMsg(e?.message || `Export ${kind?.toUpperCase?.() || ""} ไม่สำเร็จ`);
+      } finally {
+        setExporting(false);
+        setActiveExportKind("");
       }
-
-      const { shipments, swineMap, heatMap } = await fetchExportBaseData();
-      const flatRows = buildFlatRows(shipments, swineMap, heatMap, {
-        deliveryDateEnabled: Boolean(toFarmId),
-      });
-
-      if (!flatRows.length) {
-        setMsg("ไม่พบข้อมูลสำหรับ export");
-        return;
-      }
-
-      const fromFarmText =
-        fromFarmOptions.find((x) => x.value === fromFarmCode)?.code ||
-        clean(fromFarmCode) ||
-        "all";
-
-      const toFarmText =
-        toFarmOptions.find((x) => x.value === toFarmId)?.farm_code ||
-        clean(toFarmId) ||
-        "all";
-
-      const dateText = makeExportDateText(effectiveDateFrom, effectiveDateTo);
-      const baseName = `swine_report_${dateText}_${fromFarmText}_${toFarmText}`;
-
-      if (kind === "csv") {
-        const csvRows = buildRawCsvRows(flatRows, { showDeliveryDate });
-        downloadCsv(`${baseName}.csv`, csvRows);
-        setMsg(`Export CSV สำเร็จ ${flatRows.length} รายการ`);
-        return;
-      }
-
-      if (kind === "excel") {
-        exportExcelReport({
-          flatRows,
-          filename: `${baseName}.xlsx`,
-          title: "Swine Report",
-          showDeliveryDate,
-        });
-        setMsg(`Export Excel สำเร็จ ${flatRows.length} รายการ`);
-        return;
-      }
-
-      if (kind === "pdf") {
-        exportPdfReport({
-          flatRows,
-          filename: `${baseName}.pdf`,
-          title: "Swine Report",
-          dateText,
-          fromFarmText,
-          toFarmText,
-          showDeliveryDate,
-        });
-        setMsg(`Export PDF สำเร็จ ${flatRows.length} รายการ`);
-        return;
-      }
-
-      setMsg("ไม่รู้จักประเภท export");
-    } catch (e) {
-      console.error("exportCurrentRows error:", e);
-      setMsg(e?.message || `Export ${kind?.toUpperCase?.() || ""} ไม่สำเร็จ`);
-    } finally {
-      setExporting(false);
-      setActiveExportKind("");
-    }
-  }, [
-    canPreviewExport,
-    reportType,
-    fetchNotSelectedRows,
-    fetchExportBaseData,
-    fromFarmCode,
-    fromFarmOptions,
-    effectiveDateFrom,
-    effectiveDateTo,
-    toFarmId,
-    toFarmOptions,
-    showDeliveryDate,
-  ]);
+    },
+    [canPreviewExport, previewMeta, previewRows, reportType, toFarmOptions]
+  );
 
   const handleExportCsv = useCallback(async () => {
     await exportCurrentRows("csv");
@@ -1977,7 +2050,7 @@ export default function ExportCsvPage() {
           .eq("id", shipment.id)
           .eq("status", "submitted");
 
-          if (e2) throw e2;
+        if (e2) throw e2;
       }
 
       await refreshPreviewRows();
@@ -2014,25 +2087,19 @@ export default function ExportCsvPage() {
   }
 
   function handleFromFarmChange(e) {
-    previewReqRef.current += 1;
     toFarmReqRef.current += 1;
     const value = e.target.value;
-    setFromFarmCode(value);
+    setSelectedScopeKey(value);
     setToFarmId("");
     setToFarmQ("");
     setToFarmOptions([]);
-    setPreviewRows([]);
-    setPreviewShipments([]);
-    setMsg("");
+    resetPreviewState();
   }
 
   function handleToFarmChange(e) {
-    previewReqRef.current += 1;
     const value = e.target.value;
     setToFarmId(value);
-    setPreviewRows([]);
-    setPreviewShipments([]);
-    setMsg("");
+    resetPreviewState();
   }
 
   const filteredFromFarmOptions = useMemo(() => {
@@ -2040,7 +2107,8 @@ export default function ExportCsvPage() {
     if (!q) return fromFarmOptions;
 
     return fromFarmOptions.filter((opt) => {
-      const text = `${opt.code || ""} ${opt.name || ""} ${opt.label || ""}`.toLowerCase();
+      const text =
+        `${opt.farm_code || ""} ${opt.farm_name || ""} ${opt.flock || ""} ${opt.label || ""}`.toLowerCase();
       return text.includes(q);
     });
   }, [fromFarmOptions, fromFarmQ]);
@@ -2050,7 +2118,8 @@ export default function ExportCsvPage() {
     if (!q) return toFarmOptions;
 
     return toFarmOptions.filter((opt) => {
-      const text = `${opt.farm_code || ""} ${opt.farm_name || ""} ${opt.label || ""}`.toLowerCase();
+      const text =
+        `${opt.farm_code || ""} ${opt.farm_name || ""} ${opt.label || ""}`.toLowerCase();
       return text.includes(q);
     });
   }, [toFarmOptions, toFarmQ]);
@@ -2070,36 +2139,6 @@ export default function ExportCsvPage() {
     if (effectiveDateFrom === effectiveDateTo) return effectiveDateFrom;
     return `${effectiveDateFrom} ถึง ${effectiveDateTo}`;
   }, [effectiveDateFrom, effectiveDateTo]);
-
-  useEffect(() => {
-    console.log("[ExportCsvPage] state", {
-      uid: myProfile?.user_id || null,
-      myRole,
-      reportType,
-      fromFarmCode,
-      toFarmId,
-      scopeSize: myScope.length,
-      previewRows: previewRows.length,
-      previewShipments: previewShipments.length,
-      previewItemCountFromShipments: previewShipments.reduce(
-        (sum, shipment) => sum + ((shipment?.items || []).length || 0),
-        0
-      ),
-      fromFarmOptions: fromFarmOptions.length,
-      toFarmOptions: toFarmOptions.length,
-    });
-  }, [
-    myProfile,
-    myRole,
-    reportType,
-    fromFarmCode,
-    toFarmId,
-    myScope,
-    previewRows,
-    previewShipments,
-    fromFarmOptions,
-    toFarmOptions,
-  ]);
 
   if (pageLoading) {
     return (
@@ -2163,13 +2202,13 @@ export default function ExportCsvPage() {
             >
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: isMobile ? 17 : 18, fontWeight: 900 }}>
-                  Export CSV
+                  Export Report
                 </div>
                 <div style={{ marginTop: 6, fontSize: 14, lineHeight: 1.6 }}>
                   Role: <b>{myRole || "-"}</b>
                   {isAdmin
-                    ? " — export ได้ทุกข้อมูล และเลือกช่วงวันที่ได้"
-                    : " — export ได้เฉพาะฟาร์ม + flock ที่เคยคัด"}
+                    ? " — export ได้ทุกข้อมูล แต่ต้องเลือกฟาร์ม+flock ก่อน"
+                    : " — export ได้เฉพาะฟาร์ม+flock ที่เคยคัด"}
                 </div>
                 <div style={{ marginTop: 4, fontSize: 13, opacity: 0.95 }}>
                   ประเภทรายงาน:{" "}
@@ -2288,11 +2327,10 @@ export default function ExportCsvPage() {
                 value={reportType}
                 onChange={(e) => {
                   setReportType(e.target.value);
-                  setPreviewRows([]);
-                  setPreviewShipments([]);
-                  setMsg("");
                   setToFarmId("");
                   setToFarmQ("");
+                  setToFarmOptions([]);
+                  resetPreviewState();
                 }}
                 style={inputStyle}
               >
@@ -2353,38 +2391,34 @@ export default function ExportCsvPage() {
                   color: "#334155",
                 }}
               >
-                ฟาร์มที่คัด {isAdmin && reportType === "raw" ? "(ไม่บังคับ)" : ""}
+                ฟาร์มที่คัด + Flock
               </div>
 
               <input
                 type="text"
                 value={fromFarmQ}
                 onChange={(e) => setFromFarmQ(e.target.value)}
-                placeholder={fromFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
-                disabled={!dateRangeValid || fromFarmLoading}
+                placeholder={fromFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name / flock"}
+                disabled={fromFarmLoading}
                 style={
-                  !dateRangeValid || fromFarmLoading
+                  fromFarmLoading
                     ? { ...disabledInputStyle, marginBottom: 8 }
                     : { ...inputStyle, marginBottom: 8 }
                 }
               />
 
               <select
-                value={fromFarmCode}
+                value={selectedScopeKey}
                 onChange={handleFromFarmChange}
-                disabled={!dateRangeValid || fromFarmLoading}
-                style={!dateRangeValid || fromFarmLoading ? disabledInputStyle : inputStyle}
+                disabled={fromFarmLoading}
+                style={fromFarmLoading ? disabledInputStyle : inputStyle}
               >
                 <option value="">
                   {fromFarmLoading
                     ? "กำลังโหลด..."
                     : filteredFromFarmOptions.length
-                    ? reportType === "not_selected"
-                      ? "เลือกฟาร์มที่คัด"
-                      : isAdmin
-                      ? "ทุกฟาร์มที่คัด / หรือเลือก 1 ฟาร์ม"
-                      : "เลือกฟาร์มที่คัด"
-                    : "ไม่พบฟาร์มที่คัด"}
+                    ? "เลือกฟาร์ม+flock"
+                    : "ไม่พบฟาร์ม+flock"}
                 </option>
                 {filteredFromFarmOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -2416,9 +2450,9 @@ export default function ExportCsvPage() {
                   value={toFarmQ}
                   onChange={(e) => setToFarmQ(e.target.value)}
                   placeholder={toFarmLoading ? "กำลังโหลด..." : "ค้นหา farm code / farm name"}
-                  disabled={!fromFarmCode || toFarmLoading}
+                  disabled={!selectedScopeKey || toFarmLoading}
                   style={
-                    !fromFarmCode || toFarmLoading
+                    !selectedScopeKey || toFarmLoading
                       ? { ...disabledInputStyle, marginBottom: 8 }
                       : { ...inputStyle, marginBottom: 8 }
                   }
@@ -2427,8 +2461,8 @@ export default function ExportCsvPage() {
                 <select
                   value={toFarmId}
                   onChange={handleToFarmChange}
-                  disabled={!fromFarmCode || toFarmLoading}
-                  style={!fromFarmCode || toFarmLoading ? disabledInputStyle : inputStyle}
+                  disabled={!selectedScopeKey || toFarmLoading}
+                  style={!selectedScopeKey || toFarmLoading ? disabledInputStyle : inputStyle}
                 >
                   <option value="">
                     {toFarmLoading
@@ -2457,7 +2491,7 @@ export default function ExportCsvPage() {
                   lineHeight: 1.6,
                 }}
               >
-                รายงานนี้ใช้ฟาร์มที่คัด + ช่วงวันที่
+                รายงานนี้ใช้ฟาร์ม+flock และช่วงวันที่
                 <br />
                 เพื่อตรวจว่าเบอร์หมูใดบ้างยังไม่อยู่ใน shipment สถานะ draft/submitted/issued
               </div>
@@ -2571,15 +2605,15 @@ export default function ExportCsvPage() {
 
           {!isAdmin ? (
             <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
-              User ดูข้อมูลได้ตามฟาร์ม + flock ที่เคยคัด และเลือกช่วงวันที่เพื่อตรวจสอบย้อนหลังได้
+              User ดูข้อมูลได้ตามฟาร์ม+flock ที่เคยคัด และเลือกช่วงวันที่เพื่อตรวจสอบย้อนหลังได้
               <br />
-              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทางกับฟาร์มปลายทาง
+              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
             </div>
           ) : (
             <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
-              Admin ดูข้อมูลได้ทั้งหมด และเลือกช่วงวันที่ได้
+              Admin ดูข้อมูลได้ทั้งหมด แต่ต้องเลือกฟาร์ม+flock ก่อน
               <br />
-              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทางกับฟาร์มปลายทาง
+              และ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
             </div>
           )}
 
@@ -2602,6 +2636,90 @@ export default function ExportCsvPage() {
 
           {msg ? <div style={{ ...msgStyle, marginTop: 14 }}>{msg}</div> : null}
         </div>
+
+        {previewMeta.hasPreviewed ? (
+          <div
+            style={{
+              ...cardStyle,
+              padding: isMobile ? 14 : 18,
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 900, color: "#0f172a" }}>
+              สรุปตามเงื่อนไขที่แสดง
+            </div>
+
+            <div
+              style={{
+                marginTop: 12,
+                display: "grid",
+                gridTemplateColumns: isMobile
+                  ? "1fr"
+                  : "repeat(auto-fit, minmax(180px, 1fr))",
+                gap: 12,
+              }}
+            >
+              <div
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 16,
+                  padding: 14,
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#64748b" }}>Scope</div>
+                <div style={{ marginTop: 6, fontSize: 14, fontWeight: 800, lineHeight: 1.5 }}>
+                  {previewScopeText}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 16,
+                  padding: 14,
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#64748b" }}>จำนวนหมูทั้งหมดใน swines</div>
+                <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
+                  {previewMeta.baseSwinesCount}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 16,
+                  padding: 14,
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {reportType === "not_selected" ? "จำนวนหมูที่ถูกคัด" : "จำนวนหมูที่ถูกคัด"}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
+                  {previewMeta.selectedUniqueCount}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid #e5e7eb",
+                  borderRadius: 16,
+                  padding: 14,
+                  background: "#f8fafc",
+                }}
+              >
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {reportType === "not_selected" ? "จำนวนหมูที่ไม่ถูกคัด" : "จำนวนหมูคงเหลือ"}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
+                  {previewMeta.remainingCount}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {reportType === "raw" && toFarmId ? (
           <div
@@ -2670,17 +2788,26 @@ export default function ExportCsvPage() {
                       const saving = Boolean(savingDeliveryDateMap[shipmentId]);
                       const selectedDate = clean(shipment?.selected_date);
                       const itemCount = Array.isArray(shipment?.items) ? shipment.items.length : 0;
-                      const invalidDate = Boolean(draftValue && selectedDate && draftValue < selectedDate);
+                      const invalidDate = Boolean(
+                        draftValue && selectedDate && draftValue < selectedDate
+                      );
                       const unchanged = clean(draftValue) === currentDeliveryDate;
                       const canSaveRow = Boolean(
-                        shipmentId && clean(shipment?.to_farm_id) && draftValue && !invalidDate && !unchanged && !saving
+                        shipmentId &&
+                          clean(shipment?.to_farm_id) &&
+                          draftValue &&
+                          !invalidDate &&
+                          !unchanged &&
+                          !saving
                       );
 
                       return (
                         <tr key={shipmentId}>
                           <td style={tdStyle}>{shipment.shipment_no || shipmentId}</td>
                           <td style={tdStyle}>
-                            <span style={statusBadgeStyle(shipment.status)}>{formatStatus(shipment.status)}</span>
+                            <span style={statusBadgeStyle(shipment.status)}>
+                              {formatStatus(shipment.status)}
+                            </span>
                           </td>
                           <td style={tdStyle}>{shipment.selected_date || "-"}</td>
                           <td style={tdStyle}>{shipment.to_farm?.farm_name || "-"}</td>
@@ -2692,7 +2819,9 @@ export default function ExportCsvPage() {
                                 type="date"
                                 value={draftValue || ""}
                                 min={selectedDate || undefined}
-                                onChange={(e) => handleDeliveryDateDraftChange(shipmentId, e.target.value)}
+                                onChange={(e) =>
+                                  handleDeliveryDateDraftChange(shipmentId, e.target.value)
+                                }
                                 style={inputStyle}
                               />
                               {invalidDate ? (
@@ -2830,7 +2959,10 @@ export default function ExportCsvPage() {
               <tbody>
                 {previewTop100.length === 0 ? (
                   <tr>
-                    <td colSpan={reportType === "not_selected" ? 13 : showDeliveryDate ? 24 : 23} style={emptyTdStyle}>
+                    <td
+                      colSpan={reportType === "not_selected" ? 13 : showDeliveryDate ? 24 : 23}
+                      style={emptyTdStyle}
+                    >
                       ยังไม่มีข้อมูลแสดง
                     </td>
                   </tr>
