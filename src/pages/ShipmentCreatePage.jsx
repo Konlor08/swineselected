@@ -343,16 +343,18 @@ export default function ShipmentCreatePage() {
   const filteredAvailableSwines = useMemo(() => {
     if (!selectedHouse) return [];
     const q = clean(swineQ).toLowerCase();
+    const targetFlock = clean(fromFarm?.flock);
 
     return (allAvailableSwines || [])
       .filter((x) => clean(x.house_no) === clean(selectedHouse))
+      .filter((x) => !targetFlock || clean(x.flock) === targetFlock)
       .filter((x) => !pickedCodeSet.has(clean(x.swine_code)))
       .filter((x) => {
         if (!q) return true;
         return clean(x.swine_code).toLowerCase().includes(q);
       })
       .slice(0, 100);
-  }, [allAvailableSwines, selectedHouse, pickedCodeSet, swineQ]);
+  }, [allAvailableSwines, selectedHouse, fromFarm?.flock, pickedCodeSet, swineQ]);
 
   useEffect(() => {
     if (!selectedHouse) {
@@ -481,6 +483,7 @@ export default function ShipmentCreatePage() {
   const findReusableDraftHeader = useCallback(async () => {
     if (!clean(currentUserId)) return null;
     if (!clean(fromFarm?.farm_code)) return null;
+    if (!clean(fromFarm?.flock)) return null;
     if (!clean(toFarmId)) return null;
     if (!clean(selectedHouse)) return null;
 
@@ -491,6 +494,7 @@ export default function ShipmentCreatePage() {
       .eq("status", "draft")
       .eq("selected_date", selectedDate)
       .eq("from_farm_code", clean(fromFarm?.farm_code))
+      .eq("from_flock", clean(fromFarm?.flock))
       .eq("to_farm_id", clean(toFarmId))
       .eq("source_house_no", clean(selectedHouse))
       .order("created_at", { ascending: false })
@@ -499,7 +503,7 @@ export default function ShipmentCreatePage() {
     const { data, error } = await query.maybeSingle();
     if (error) throw error;
     return data?.id || null;
-  }, [currentUserId, selectedDate, fromFarm?.farm_code, toFarmId, selectedHouse]);
+  }, [currentUserId, selectedDate, fromFarm?.farm_code, fromFarm?.flock, toFarmId, selectedHouse]);
 
   const deleteEmptyDraftHeader = useCallback(async (shipmentId) => {
     const id = clean(shipmentId);
@@ -545,10 +549,42 @@ export default function ShipmentCreatePage() {
     return data?.[0] || null;
   }, [currentUserId]);
 
+  const findMyDraftContainingSwine = useCallback(async (swineCode) => {
+    if (!clean(currentUserId) || !clean(swineCode)) return null;
+
+    const { data, error } = await supabase
+      .from("swine_shipment_items")
+      .select(`
+        shipment_id,
+        swine_code,
+        swine_shipments!inner (
+          id,
+          created_by,
+          status,
+          selected_date,
+          from_farm_code,
+          from_flock,
+          to_farm_id,
+          source_house_no,
+          created_at
+        )
+      `)
+      .eq("swine_code", clean(swineCode))
+      .eq("swine_shipments.created_by", currentUserId)
+      .eq("swine_shipments.status", "draft")
+      .order("created_at", { ascending: false, foreignTable: "swine_shipments" })
+      .limit(1);
+
+    if (error) throw error;
+    const row = data?.[0];
+    return row?.swine_shipments || null;
+  }, [currentUserId]);
+
   const ensureDraftHeader = useCallback(async () => {
     if (clean(draftShipmentId)) return draftShipmentId;
     if (draftCreating) throw new Error("กำลังสร้าง draft header");
     if (!clean(fromFarm?.farm_code)) throw new Error("กรุณาเลือกฟาร์มต้นทาง");
+    if (!clean(fromFarm?.flock)) throw new Error("กรุณาเลือก flock ต้นทาง");
     if (!clean(toFarmId)) throw new Error("กรุณาเลือกฟาร์มปลายทาง");
     if (!clean(selectedHouse)) throw new Error("กรุณาเลือกเล้า");
     if (!clean(currentUserId)) throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
@@ -601,7 +637,7 @@ export default function ShipmentCreatePage() {
     findReusableDraftHeader,
   ]);
 
-  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode) => {
+  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode, fromFlock = "") => {
     if (!fromFarmCode) {
       setAllAvailableSwines([]);
       setHouseOptions([]);
@@ -613,13 +649,19 @@ export default function ShipmentCreatePage() {
     setMsg("");
 
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("v_swines_available_for_selection")
         .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date")
         .eq("farm_code", fromFarmCode)
         .order("house_no", { ascending: true })
         .order("swine_code", { ascending: true })
         .limit(5000);
+
+      if (clean(fromFlock)) {
+        query = query.eq("flock", clean(fromFlock));
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -669,8 +711,8 @@ export default function ShipmentCreatePage() {
       setSelectedHouse("");
       return;
     }
-    void loadAvailableSwinesOfFarm(fromFarm.farm_code);
-  }, [fromFarm?.farm_code, loadAvailableSwinesOfFarm]);
+    void loadAvailableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
+  }, [fromFarm?.farm_code, fromFarm?.flock, loadAvailableSwinesOfFarm]);
 
   const handleSelectFromFarm = useCallback(
     async (farm) => {
@@ -813,15 +855,22 @@ export default function ShipmentCreatePage() {
 
             setDraftShipmentId(shipmentId);
             resetCandidateForm();
-            await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
+            await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
             setMsg(`เบอร์ ${swineCode} ถูกจองอยู่แล้วใน draft นี้ จึงดึงกลับเข้า list ให้แล้ว`);
             return;
           }
 
+          const myDraftWithSameSwine = await findMyDraftContainingSwine(swineCode);
+          if (clean(myDraftWithSameSwine?.id)) {
+            setDraftShipmentId(clean(myDraftWithSameSwine.id));
+            throw new Error(
+              `เบอร์ ${swineCode} อยู่ใน draft เดิมของคุณแล้ว (${clean(
+                myDraftWithSameSwine.from_farm_code
+              )} / ${clean(myDraftWithSameSwine.from_flock)}) กรุณากลับไปเปิด draft เดิม`
+            );
+          }
+
           if (myActiveReservation?.shipment_id) {
-            if (createdNewHeader && clean(shipmentId)) {
-              await deleteEmptyDraftHeader(shipmentId);
-            }
             setDraftShipmentId(clean(myActiveReservation.shipment_id));
             throw new Error(
               `เบอร์ ${swineCode} ถูกจองอยู่ใน draft เดิมของคุณแล้ว กรุณากลับไปเปิด draft เดิม`
@@ -830,6 +879,9 @@ export default function ShipmentCreatePage() {
 
           if (createdNewHeader && clean(shipmentId)) {
             await deleteEmptyDraftHeader(shipmentId);
+            if (clean(draftShipmentId) === clean(shipmentId)) {
+              setDraftShipmentId("");
+            }
           }
           throw new Error(`เบอร์ ${swineCode} ถูกจองโดยรายการอื่นแล้ว กรุณาเลือกตัวอื่น`);
         }
@@ -852,7 +904,7 @@ export default function ShipmentCreatePage() {
       ]);
 
       resetCandidateForm();
-      await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
+      await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
     } catch (e) {
       console.error("addToPickedList error:", {
         message: e?.message,
@@ -863,7 +915,7 @@ export default function ShipmentCreatePage() {
         raw: e,
       });
       setMsg(extractErrorMessage(e, "บันทึกเข้า list ไม่สำเร็จ"));
-      void loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
+      void loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
     }
   }, [
     canAddToList,
@@ -879,7 +931,9 @@ export default function ShipmentCreatePage() {
     resetCandidateForm,
     loadAvailableSwinesOfFarm,
     fromFarm?.farm_code,
+    fromFarm?.flock,
     findMyActiveReservation,
+    findMyDraftContainingSwine,
     deleteEmptyDraftHeader,
   ]);
 
@@ -900,13 +954,13 @@ export default function ShipmentCreatePage() {
         if (error) throw error;
 
         setPickedRows((prev) => prev.filter((x) => x.temp_id !== tempId));
-        await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code));
+        await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
       } catch (e) {
         console.error("removePickedRow error:", e);
         setMsg(e?.message || "ลบรายการไม่สำเร็จ");
       }
     },
-    [pickedRows, currentUserId, loadAvailableSwinesOfFarm, fromFarm?.farm_code]
+    [pickedRows, currentUserId, loadAvailableSwinesOfFarm, fromFarm?.farm_code, fromFarm?.flock]
   );
 
   const handleBackOrCancel = useCallback(async () => {
