@@ -5,6 +5,11 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { formatDateDisplay } from "../lib/dateFormat";
 
+const ACTIVE_STATUSES = ["draft", "submitted", "issued"];
+const PAGE_SIZE = 1000;
+const SHIPMENT_ID_CHUNK_SIZE = 500;
+const SWINE_CODE_CHUNK_SIZE = 1000;
+
 function clean(v) {
   return String(v ?? "").trim();
 }
@@ -67,10 +72,31 @@ function normalizeBooleanRpcResult(data) {
   return false;
 }
 
-function getSingleRow(data) {
-  if (Array.isArray(data)) return data[0] || null;
-  if (data && typeof data === "object") return data;
-  return null;
+function chunkArray(arr, size = 1000) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+async function fetchAllPages(fetcher, pageSize = PAGE_SIZE) {
+  let from = 0;
+  const rows = [];
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await fetcher(from, to);
+    if (error) throw error;
+
+    const page = Array.isArray(data) ? data : [];
+    rows.push(...page);
+
+    if (page.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
 }
 
 const cardStyle = {
@@ -130,7 +156,6 @@ export default function SummaryPage() {
   const [selectedFlock, setSelectedFlock] = useState("");
 
   const [summaryRows, setSummaryRows] = useState([]);
-  const [kpiRow, setKpiRow] = useState(null);
 
   const [selectedRowKey, setSelectedRowKey] = useState("");
   const [selectedDay, setSelectedDay] = useState("");
@@ -174,37 +199,18 @@ export default function SummaryPage() {
   }, [summaryRows, allowedScopes]);
 
   const kpi = useMemo(() => {
-    if (selectedSummaryRow) {
-      return {
-        totalInitial: Number(selectedSummaryRow.initial_count || 0),
-        totalSelectedRange: Number(selectedSummaryRow.selected_range_count || 0),
-        totalRemaining: Number(selectedSummaryRow.remaining_count || 0),
-        farmCount: clean(selectedSummaryRow.farm_code) ? 1 : 0,
-        flockCount: clean(selectedSummaryRow.flock) ? 1 : 0,
-        scopeCount: 1,
-      };
-    }
-
-    if (kpiRow) {
-      return {
-        totalInitial: Number(kpiRow.total_initial || 0),
-        totalSelectedRange: Number(kpiRow.total_selected_range || 0),
-        totalRemaining: Number(kpiRow.total_remaining || 0),
-        farmCount: Number(kpiRow.farm_count || 0),
-        flockCount: Number(kpiRow.flock_count || 0),
-        scopeCount: Number(kpiRow.scope_count || 0),
-      };
-    }
+    const rows = selectedSummaryRow ? [selectedSummaryRow] : summaryRows;
 
     return {
-      totalInitial: sumBy(summaryRows, "initial_count"),
-      totalSelectedRange: sumBy(summaryRows, "selected_range_count"),
-      totalRemaining: sumBy(summaryRows, "remaining_count"),
-      farmCount: new Set(summaryRows.map((r) => clean(r.farm_code)).filter(Boolean)).size,
-      flockCount: new Set(summaryRows.map((r) => clean(r.flock)).filter(Boolean)).size,
-      scopeCount: summaryRows.length,
+      totalInitial: sumBy(rows, "initial_count"),
+      totalSelectedRange: sumBy(rows, "selected_range_count"),
+      totalSelectedCumulative: sumBy(rows, "cumulative_selected_count"),
+      totalRemaining: sumBy(rows, "remaining_count"),
+      farmCount: new Set(rows.map((r) => clean(r.farm_code)).filter(Boolean)).size,
+      flockCount: new Set(rows.map((r) => clean(r.flock)).filter(Boolean)).size,
+      scopeCount: rows.length,
     };
-  }, [selectedSummaryRow, kpiRow, summaryRows]);
+  }, [selectedSummaryRow, summaryRows]);
 
   const emptyStateText = useMemo(() => {
     if (loading) return "";
@@ -294,34 +300,34 @@ export default function SummaryPage() {
     setRemainingRows([]);
 
     try {
-      const [
-        { data: summaryData, error: summaryError },
-        { data: kpiData, error: kpiError },
-      ] = await Promise.all([
-        supabase.rpc("app_get_swine_summary_rows", {
+      const { data: summaryData, error: summaryError } = await supabase.rpc(
+        "app_get_swine_summary_rows",
+        {
           p_date_from: clean(dateFrom),
           p_date_to: clean(dateTo),
           p_flock: clean(selectedFlock) || null,
-        }),
-        supabase.rpc("app_get_swine_summary_kpi", {
-          p_date_from: clean(dateFrom),
-          p_date_to: clean(dateTo),
-          p_flock: clean(selectedFlock) || null,
-        }),
-      ]);
+        }
+      );
 
       if (summaryError) throw summaryError;
-      if (kpiError) throw kpiError;
 
-      const summary = Array.isArray(summaryData) ? summaryData : [];
-      const kpiSingle = getSingleRow(kpiData);
+      const summary = (Array.isArray(summaryData) ? summaryData : []).map((row) => {
+        const initialCount = Number(row?.initial_count || 0);
+        const cumulativeSelectedCount = Number(row?.cumulative_selected_count || 0);
+
+        return {
+          ...row,
+          initial_count: initialCount,
+          selected_range_count: Number(row?.selected_range_count || 0),
+          cumulative_selected_count: cumulativeSelectedCount,
+          remaining_count: Math.max(initialCount - cumulativeSelectedCount, 0),
+        };
+      });
 
       setSummaryRows(summary);
-      setKpiRow(kpiSingle);
     } catch (error) {
       console.error("loadSummary error:", error);
       setSummaryRows([]);
-      setKpiRow(null);
       setMsg(getRawErrorMessage(error) || "โหลด summary ไม่สำเร็จ");
     } finally {
       setLoading(false);
@@ -436,18 +442,116 @@ export default function SummaryPage() {
           return;
         }
 
-        const { data, error } = await supabase.rpc("app_get_swine_remaining_list", {
-          p_farm_code: farmCode,
-          p_flock: flock,
-          p_house_no: houseNo,
-          p_date_to: clean(dateTo),
-        });
-
-        if (error) throw error;
-
-        const rows = (Array.isArray(data) ? data : []).sort((a, b) =>
-          String(a?.swine_code).localeCompare(String(b?.swine_code), "th")
+        const swineRows = await fetchAllPages((from, to) =>
+          supabase
+            .from("swines")
+            .select("swine_code, birth_date")
+            .eq("farm_code", farmCode)
+            .eq("flock", flock)
+            .eq("house_no", houseNo)
+            .order("swine_code", { ascending: true })
+            .range(from, to)
         );
+
+        const swineMap = new Map();
+        for (const sw of swineRows || []) {
+          const swineCode = clean(sw?.swine_code);
+          if (!swineCode) continue;
+          if (!swineMap.has(swineCode)) {
+            swineMap.set(swineCode, {
+              swine_code: swineCode,
+              birth_date: sw?.birth_date || "",
+            });
+          }
+        }
+
+        const shipmentRows = await fetchAllPages((from, to) =>
+          supabase
+            .from("swine_shipments")
+            .select("id")
+            .eq("from_farm_code", farmCode)
+            .eq("from_flock", flock)
+            .eq("source_house_no", houseNo)
+            .lte("selected_date", clean(dateTo))
+            .in("status", ACTIVE_STATUSES)
+            .order("id", { ascending: true })
+            .range(from, to)
+        );
+
+        const shipmentIds = (shipmentRows || []).map((x) => x.id).filter(Boolean);
+        const cumulativeSelectedCodeSet = new Set();
+
+        for (const shipmentIdChunk of chunkArray(shipmentIds, SHIPMENT_ID_CHUNK_SIZE)) {
+          const itemRows = await fetchAllPages((from, to) =>
+            supabase
+              .from("swine_shipment_items")
+              .select("id, swine_code")
+              .in("shipment_id", shipmentIdChunk)
+              .order("id", { ascending: true })
+              .range(from, to)
+          );
+
+          for (const item of itemRows || []) {
+            const swineCode = clean(item?.swine_code);
+            if (swineCode) cumulativeSelectedCodeSet.add(swineCode);
+          }
+        }
+
+        const remainingBaseRows = Array.from(swineMap.values()).filter(
+          (sw) => !cumulativeSelectedCodeSet.has(clean(sw?.swine_code))
+        );
+
+        const remainingCodes = remainingBaseRows
+          .map((x) => clean(x?.swine_code))
+          .filter(Boolean);
+
+        const heatMap = new Map();
+
+        for (const swineCodeChunk of chunkArray(remainingCodes, SWINE_CODE_CHUNK_SIZE)) {
+          if (!swineCodeChunk.length) continue;
+
+          const { data: heatData, error: heatError } = await supabase
+            .from("swine_heat_report")
+            .select("swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count")
+            .in("swine_code", swineCodeChunk);
+
+          if (heatError) throw heatError;
+
+          for (const row2 of heatData || []) {
+            heatMap.set(clean(row2?.swine_code), row2);
+          }
+        }
+
+        const rows = remainingBaseRows
+          .map((sw) => {
+            const heat = heatMap.get(clean(sw?.swine_code));
+            const latestHeatDate = [
+              clean(heat?.heat_1_date),
+              clean(heat?.heat_2_date),
+              clean(heat?.heat_3_date),
+              clean(heat?.heat_4_date),
+            ]
+              .filter(Boolean)
+              .sort()
+              .at(-1);
+
+            const birthDate = clean(sw?.birth_date);
+            const ageDays = birthDate
+              ? Math.floor(
+                  (new Date(`${today}T00:00:00`) - new Date(`${birthDate}T00:00:00`)) /
+                    (1000 * 60 * 60 * 24)
+                )
+              : "";
+
+            return {
+              swine_code: clean(sw?.swine_code),
+              birth_date: birthDate,
+              age_days: Number.isFinite(ageDays) ? ageDays : "",
+              total_heat_count: Number(heat?.total_heat_count || 0),
+              latest_heat_date: latestHeatDate || "",
+            };
+          })
+          .sort((a, b) => String(a?.swine_code).localeCompare(String(b?.swine_code), "th"));
 
         setRemainingRows(rows);
       } catch (error) {
@@ -458,7 +562,7 @@ export default function SummaryPage() {
         setRemainingLoading(false);
       }
     },
-    [userId, dateTo]
+    [userId, dateTo, today]
   );
 
   useEffect(() => {
@@ -525,7 +629,7 @@ export default function SummaryPage() {
           <div style={{ fontSize: 20, fontWeight: 900 }}>Monitoring</div>
           <div className="small" style={{ color: "#64748b", marginTop: 4, lineHeight: 1.7 }}>
             จำนวนหมูทั้งหมดใน swines ของ farm+flock+เล้า | จำนวนหมูที่คัดในช่วงนี้ |
-            จำนวนคงเหลือที่ยังไม่คัดจาก swine_master ที่เป็น available
+            จำนวนคงเหลือที่ยังไม่คัด = จำนวนหมูทั้งหมด - จำนวนหมูคัดสะสมถึงวันสิ้นสุด
           </div>
         </div>
 
@@ -682,6 +786,13 @@ export default function SummaryPage() {
 
           <div style={cardStyle}>
             <div className="small" style={{ color: "#666" }}>
+              จำนวนหมูคัดสะสมถึงวันสิ้นสุด
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 800 }}>{kpi.totalSelectedCumulative}</div>
+          </div>
+
+          <div style={cardStyle}>
+            <div className="small" style={{ color: "#666" }}>
               จำนวนคงเหลือที่ยังไม่คัด
             </div>
             <div style={{ fontSize: 28, fontWeight: 800 }}>{kpi.totalRemaining}</div>
@@ -729,7 +840,7 @@ export default function SummaryPage() {
           </div>
 
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", minWidth: 1180, borderCollapse: "collapse" }}>
+            <table style={{ width: "100%", minWidth: 1320, borderCollapse: "collapse" }}>
               <thead>
                 <tr>
                   <th style={thStyle}>ฟาร์ม</th>
@@ -738,13 +849,14 @@ export default function SummaryPage() {
                   <th style={thStyle}>วันที่คัดในช่วงที่เลือก</th>
                   <th style={thStyle}>จำนวนหมูทั้งหมดที่มีตั้งต้น</th>
                   <th style={thStyle}>จำนวนหมูที่คัดในช่วงนี้</th>
+                  <th style={thStyle}>จำนวนหมูคัดสะสมถึงวันสิ้นสุด</th>
                   <th style={thStyle}>จำนวนคงเหลือที่ยังไม่คัด</th>
                 </tr>
               </thead>
               <tbody>
                 {visibleSummaryRows.length === 0 ? (
                   <tr>
-                    <td style={tdStyle} colSpan={7}>
+                    <td style={tdStyle} colSpan={8}>
                       {loading ? "กำลังโหลด..." : emptyStateText || "ไม่พบข้อมูล"}
                     </td>
                   </tr>
@@ -772,6 +884,7 @@ export default function SummaryPage() {
                         <td style={tdStyle}>{row.selected_date_range_text || "-"}</td>
                         <td style={tdStyleNumber}>{Number(row.initial_count || 0)}</td>
                         <td style={tdStyleNumber}>{Number(row.selected_range_count || 0)}</td>
+                        <td style={tdStyleNumber}>{Number(row.cumulative_selected_count || 0)}</td>
                         <td style={tdStyleNumber}>{Number(row.remaining_count || 0)}</td>
                       </tr>
                     );
@@ -968,7 +1081,7 @@ export default function SummaryPage() {
               </div>
 
               <div className="small" style={{ color: "#666", marginBottom: 10 }}>
-                แสดงรายการหมูคงเหลือจาก swine_master ที่มีสถานะ available
+                แสดงรายการหมูคงเหลือจากหลัก จำนวนหมูทั้งหมด - จำนวนหมูคัดสะสมถึงวันสิ้นสุด
               </div>
 
               <div style={{ overflowX: "auto" }}>
