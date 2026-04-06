@@ -1,9 +1,13 @@
-
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { formatDateDisplay } from "../lib/dateFormat";
 import FarmPickerInlineAdd from "../components/FarmPickerInlineAdd.jsx";
+
+const ACTIVE_STATUSES = ["draft", "submitted", "issued"];
+const PAGE_SIZE = 1000;
+const CODE_CHUNK_SIZE = 500;
+const ID_CHUNK_SIZE = 500;
 
 function clean(v) {
   return String(v ?? "").trim();
@@ -57,29 +61,37 @@ function extractErrorMessage(error, fallback = "เกิดข้อผิด�
   );
 }
 
-function isConflictError(error) {
-  const message = String(error?.message || "");
-  const details = String(error?.details || "");
-  const hint = String(error?.hint || "");
-  const raw = `${message} ${details} ${hint}`.toLowerCase();
-
-  return (
-    error?.status === 409 ||
-    error?.code === "409" ||
-    error?.code === 409 ||
-    error?.code === "23505" ||
-    error?.code === 23505 ||
-    /409|conflict/.test(raw) ||
-    /duplicate key value/.test(raw) ||
-    /unique constraint/.test(raw) ||
-    /ux_swine_reservations_active_code/.test(raw)
-  );
-}
-
 function qrImageUrl(text) {
   const s = clean(text);
   if (!s) return "";
   return `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(s)}`;
+}
+
+function chunkArray(arr, size = 1000) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}
+
+async function fetchAllPages(fetcher, pageSize = PAGE_SIZE) {
+  let from = 0;
+  const rows = [];
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const { data, error } = await fetcher(from, to);
+    if (error) throw error;
+
+    const page = Array.isArray(data) ? data : [];
+    rows.push(...page);
+
+    if (page.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return rows;
 }
 
 const cardStyle = {
@@ -188,11 +200,10 @@ function QrPreviewBox({ value }) {
 
 export default function ShipmentCreatePage() {
   const nav = useNavigate();
-  const leavingRef = useRef(false);
 
   const [bootLoading, setBootLoading] = useState(true);
   const [savingDraft, setSavingDraft] = useState(false);
-  const [busyRelease, setBusyRelease] = useState(false);
+  const [loadingBlocking, setLoadingBlocking] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [currentUserId, setCurrentUserId] = useState("");
@@ -223,9 +234,6 @@ export default function ShipmentCreatePage() {
 
   const [pickedRows, setPickedRows] = useState([]);
   const [remark, setRemark] = useState("");
-
-  const [draftShipmentId, setDraftShipmentId] = useState("");
-  const [draftCreating, setDraftCreating] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -394,8 +402,7 @@ export default function ShipmentCreatePage() {
       !!selectedCandidateSwine?.id &&
       !availableLoading &&
       !savingDraft &&
-      !busyRelease &&
-      !draftCreating
+      !loadingBlocking
     );
   }, [
     fromFarm?.farm_code,
@@ -405,32 +412,27 @@ export default function ShipmentCreatePage() {
     selectedCandidateSwine,
     availableLoading,
     savingDraft,
-    busyRelease,
-    draftCreating,
+    loadingBlocking,
   ]);
 
   const canSaveDraft = useMemo(() => {
     return (
       !bootLoading &&
       !savingDraft &&
-      !busyRelease &&
       !!clean(fromFarm?.farm_code) &&
       !!clean(fromFarm?.flock) &&
       !!clean(toFarmId) &&
       !!clean(selectedHouse) &&
-      pickedRows.length > 0 &&
-      !!clean(draftShipmentId)
+      pickedRows.length > 0
     );
   }, [
     bootLoading,
     savingDraft,
-    busyRelease,
     fromFarm?.farm_code,
     fromFarm?.flock,
     toFarmId,
     selectedHouse,
     pickedRows.length,
-    draftShipmentId,
   ]);
 
   const resetCandidateForm = useCallback(() => {
@@ -442,49 +444,6 @@ export default function ShipmentCreatePage() {
     setBackfat("");
   }, []);
 
-  const updateDraftReservationStatus = useCallback(async (shipmentId, reservationStatus) => {
-    if (!clean(shipmentId)) return;
-
-    const { error } = await supabase
-      .from("swine_shipments")
-      .update({ reservation_status: reservationStatus })
-      .eq("id", shipmentId);
-
-    if (error) throw error;
-  }, []);
-
-  const releaseCurrentDraftReservations = useCallback(
-    async (reason = "release_current_draft") => {
-      if (!clean(draftShipmentId) || !clean(currentUserId)) {
-        setPickedRows([]);
-        resetCandidateForm();
-        setDraftShipmentId("");
-        return;
-      }
-
-      setBusyRelease(true);
-      try {
-        const { data, error } = await supabase.rpc("release_shipment_reservations", {
-          p_shipment_id: draftShipmentId,
-          p_reserved_by: currentUserId,
-          p_reason: reason,
-        });
-
-        if (error) throw error;
-        await updateDraftReservationStatus(draftShipmentId, "released");
-
-        setPickedRows([]);
-        resetCandidateForm();
-        setDraftShipmentId("");
-
-        return data ?? 0;
-      } finally {
-        setBusyRelease(false);
-      }
-    },
-    [draftShipmentId, currentUserId, resetCandidateForm, updateDraftReservationStatus]
-  );
-
   const findReusableDraftHeader = useCallback(async () => {
     if (!clean(currentUserId)) return null;
     if (!clean(fromFarm?.farm_code)) return null;
@@ -492,7 +451,7 @@ export default function ShipmentCreatePage() {
     if (!clean(toFarmId)) return null;
     if (!clean(selectedHouse)) return null;
 
-    const query = supabase
+    const { data, error } = await supabase
       .from("swine_shipments")
       .select("id")
       .eq("created_by", currentUserId)
@@ -503,9 +462,9 @@ export default function ShipmentCreatePage() {
       .eq("to_farm_id", clean(toFarmId))
       .eq("source_house_no", clean(selectedHouse))
       .order("created_at", { ascending: false })
-      .limit(1);
+      .limit(1)
+      .maybeSingle();
 
-    const { data, error } = await query.maybeSingle();
     if (error) throw error;
     return data?.id || null;
   }, [currentUserId, selectedDate, fromFarm?.farm_code, fromFarm?.flock, toFarmId, selectedHouse]);
@@ -535,114 +494,107 @@ export default function ShipmentCreatePage() {
     }
   }, []);
 
-  const findMyActiveReservation = useCallback(async (swineId, swineCode) => {
-    if (!clean(currentUserId)) return null;
-
-    const q = supabase
-      .from("swine_reservations")
-      .select("id, shipment_id, swine_id, swine_code, status, created_at")
-      .eq("reserved_by", currentUserId)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    const { data, error } = await q.or(
-      `swine_id.eq.${swineId},swine_code.eq.${clean(swineCode)}`
-    );
-
-    if (error) throw error;
-    return data?.[0] || null;
-  }, [currentUserId]);
-
-  const findMyDraftContainingSwine = useCallback(async (swineCode) => {
-    const code = clean(swineCode);
-    if (!clean(currentUserId) || !code) return null;
-
-    const { data: itemRows, error: itemError } = await supabase
-      .from("swine_shipment_items")
-      .select("shipment_id")
-      .eq("swine_code", code)
-      .limit(20);
-
-    if (itemError) throw itemError;
-
-    const shipmentIds = Array.from(
-      new Set((itemRows || []).map((x) => clean(x.shipment_id)).filter(Boolean))
-    );
-
-    if (!shipmentIds.length) return null;
-
-    const { data: shipments, error: shipmentError } = await supabase
-      .from("swine_shipments")
-      .select("id, status, created_by, selected_date, from_farm_code, from_flock, to_farm_id, source_house_no, created_at")
-      .in("id", shipmentIds)
-      .eq("created_by", currentUserId)
-      .eq("status", "draft")
-      .order("created_at", { ascending: false })
-      .limit(1);
-
-    if (shipmentError) throw shipmentError;
-    return shipments?.[0] || null;
-  }, [currentUserId]);
-
   const ensureDraftHeader = useCallback(async () => {
-    if (clean(draftShipmentId)) return draftShipmentId;
-    if (draftCreating) throw new Error("กำลังสร้าง draft header");
     if (!clean(fromFarm?.farm_code)) throw new Error("กรุณาเลือกฟาร์มต้นทาง");
     if (!clean(fromFarm?.flock)) throw new Error("กรุณาเลือก flock ต้นทาง");
     if (!clean(toFarmId)) throw new Error("กรุณาเลือกฟาร์มปลายทาง");
     if (!clean(selectedHouse)) throw new Error("กรุณาเลือกเล้า");
     if (!clean(currentUserId)) throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
 
-    setDraftCreating(true);
-    try {
-      const reusableId = await findReusableDraftHeader();
-      if (clean(reusableId)) {
-        setDraftShipmentId(reusableId);
-        return reusableId;
-      }
-
-      const payload = {
-        selected_date: selectedDate,
-        from_farm_code: clean(fromFarm?.farm_code) || null,
-        from_farm_name: clean(fromFarm?.farm_name) || null,
-        from_flock: clean(fromFarm?.flock) || null,
-        from_branch_id: fromFarm?.branch_id || null,
-        to_farm_id: clean(toFarmId) || null,
-        source_house_no: clean(selectedHouse) || null,
-        remark: clean(remark) || null,
-        status: "draft",
-        reservation_status: "open",
-        created_by: currentUserId,
-      };
-
-      const { data, error } = await supabase
-        .from("swine_shipments")
-        .insert([payload])
-        .select("id")
-        .single();
-
-      if (error) throw error;
-      if (!data?.id) throw new Error("สร้าง draft header ไม่สำเร็จ");
-
-      setDraftShipmentId(data.id);
-      return data.id;
-    } finally {
-      setDraftCreating(false);
+    const reusableId = await findReusableDraftHeader();
+    if (clean(reusableId)) {
+      return { shipmentId: reusableId, createdNewHeader: false };
     }
+
+    const payload = {
+      selected_date: selectedDate,
+      from_farm_code: clean(fromFarm?.farm_code) || null,
+      from_farm_name: clean(fromFarm?.farm_name) || null,
+      from_flock: clean(fromFarm?.flock) || null,
+      from_branch_id: fromFarm?.branch_id || null,
+      to_farm_id: clean(toFarmId) || null,
+      source_house_no: clean(selectedHouse) || null,
+      remark: clean(remark) || null,
+      status: "draft",
+      reservation_status: "consumed",
+      created_by: currentUserId,
+    };
+
+    const { data, error } = await supabase
+      .from("swine_shipments")
+      .insert([payload])
+      .select("id")
+      .single();
+
+    if (error) throw error;
+    if (!data?.id) throw new Error("สร้าง draft header ไม่สำเร็จ");
+
+    return { shipmentId: data.id, createdNewHeader: true };
   }, [
-    draftShipmentId,
-    draftCreating,
+    currentUserId,
+    selectedDate,
     fromFarm,
     toFarmId,
     selectedHouse,
-    currentUserId,
-    selectedDate,
     remark,
     findReusableDraftHeader,
   ]);
 
-  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode, flock) => {
+  const findBlockingShipmentsBySwineCodes = useCallback(async (swineCodes, excludeShipmentId = "") => {
+    const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
+    const blockingMap = new Map();
+
+    for (const codeChunk of chunkArray(cleanCodes, CODE_CHUNK_SIZE)) {
+      const itemRows = await fetchAllPages((from, to) =>
+        supabase
+          .from("swine_shipment_items")
+          .select("shipment_id, swine_code")
+          .in("swine_code", codeChunk)
+          .order("shipment_id", { ascending: true })
+          .range(from, to)
+      );
+
+      const shipmentIds = Array.from(
+        new Set(
+          (itemRows || [])
+            .map((x) => clean(x?.shipment_id))
+            .filter((id) => id && id !== clean(excludeShipmentId))
+        )
+      );
+
+      const shipmentMap = new Map();
+
+      for (const idChunk of chunkArray(shipmentIds, ID_CHUNK_SIZE)) {
+        if (!idChunk.length) continue;
+
+        const { data: shipmentRows, error: shipmentError } = await supabase
+          .from("swine_shipments")
+          .select("id, status, selected_date, created_by, from_farm_code, from_flock, source_house_no")
+          .in("id", idChunk)
+          .in("status", ACTIVE_STATUSES);
+
+        if (shipmentError) throw shipmentError;
+
+        for (const sh of shipmentRows || []) {
+          shipmentMap.set(clean(sh?.id), sh);
+        }
+      }
+
+      for (const item of itemRows || []) {
+        const code = clean(item?.swine_code);
+        const shipmentId = clean(item?.shipment_id);
+        if (!code || !shipmentId || shipmentId === clean(excludeShipmentId)) continue;
+        if (!shipmentMap.has(shipmentId)) continue;
+        if (!blockingMap.has(code)) {
+          blockingMap.set(code, shipmentMap.get(shipmentId));
+        }
+      }
+    }
+
+    return blockingMap;
+  }, []);
+
+  const loadSelectableSwinesOfFarm = useCallback(async (fromFarmCode, flock) => {
     const farmCode = clean(fromFarmCode);
     const sourceFlock = clean(flock);
 
@@ -657,33 +609,41 @@ export default function ShipmentCreatePage() {
     setMsg("");
 
     try {
-      let query = supabase
-        .from("v_swines_available_for_selection")
-        .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date")
-        .eq("farm_code", farmCode)
-        .order("house_no", { ascending: true })
-        .order("swine_code", { ascending: true })
-        .limit(5000);
+      let swineRows = await fetchAllPages((from, to) => {
+        let q = supabase
+          .from("swines")
+          .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date")
+          .eq("farm_code", farmCode)
+          .order("house_no", { ascending: true })
+          .order("swine_code", { ascending: true })
+          .range(from, to);
 
-      if (sourceFlock) {
-        query = query.eq("flock", sourceFlock);
-      }
+        if (sourceFlock) {
+          q = q.eq("flock", sourceFlock);
+        }
 
-      const { data, error } = await query;
+        return q;
+      });
 
-      if (error) throw error;
-
-      const availableOnly = (data || []).map((x) => ({
+      swineRows = (swineRows || []).map((x) => ({
         ...x,
-        swine_code: clean(x.swine_code),
-        farm_code: clean(x.farm_code),
-        farm_name: clean(x.farm_name),
-        house_no: clean(x.house_no),
-        flock: clean(x.flock),
-      }));
+        swine_code: clean(x?.swine_code),
+        farm_code: clean(x?.farm_code),
+        farm_name: clean(x?.farm_name),
+        house_no: clean(x?.house_no),
+        flock: clean(x?.flock),
+      })).filter((x) => clean(x?.swine_code));
+
+      const blockingMap = await findBlockingShipmentsBySwineCodes(
+        swineRows.map((x) => x.swine_code)
+      );
+
+      const selectableRows = swineRows.filter(
+        (x) => !blockingMap.has(clean(x?.swine_code))
+      );
 
       const houseMap = new Map();
-      for (const row of availableOnly) {
+      for (const row of selectableRows) {
         const house = clean(row.house_no);
         if (!house) continue;
         if (!houseMap.has(house)) {
@@ -695,22 +655,22 @@ export default function ShipmentCreatePage() {
         String(a.value).localeCompare(String(b.value), "th", { numeric: true })
       );
 
-      setAllAvailableSwines(availableOnly);
+      setAllAvailableSwines(selectableRows);
       setHouseOptions(houses);
       setSelectedHouse((prev) => {
         if (prev && houses.some((x) => x.value === prev)) return prev;
         return houses[0]?.value || "";
       });
     } catch (e) {
-      console.error("loadAvailableSwinesOfFarm error:", e);
+      console.error("loadSelectableSwinesOfFarm error:", e);
       setAllAvailableSwines([]);
       setHouseOptions([]);
       setSelectedHouse("");
-      setMsg(e?.message || "โหลดรายการหมู available ไม่สำเร็จ");
+      setMsg(e?.message || "โหลดรายการหมูที่คัดได้ไม่สำเร็จ");
     } finally {
       setAvailableLoading(false);
     }
-  }, []);
+  }, [findBlockingShipmentsBySwineCodes]);
 
   useEffect(() => {
     if (!fromFarm?.farm_code) {
@@ -719,58 +679,29 @@ export default function ShipmentCreatePage() {
       setSelectedHouse("");
       return;
     }
-    void loadAvailableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
-  }, [fromFarm?.farm_code, fromFarm?.flock, loadAvailableSwinesOfFarm]);
+    void loadSelectableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
+  }, [fromFarm?.farm_code, fromFarm?.flock, loadSelectableSwinesOfFarm]);
 
-  const handleSelectFromFarm = useCallback(
-    async (farm) => {
-      try {
-        setMsg("");
-        if (clean(draftShipmentId)) {
-          await releaseCurrentDraftReservations("change_from_farm");
-          try {
-            await updateDraftReservationStatus(draftShipmentId, "cancelled");
-          } catch {}
-        } else {
-          setPickedRows([]);
-          resetCandidateForm();
-        }
+  const handleSelectFromFarm = useCallback((farm) => {
+    setMsg("");
+    setPickedRows([]);
+    resetCandidateForm();
+    setFromFarm(farm || null);
+    setFromPickerOpen(!farm);
+    setSelectedHouse("");
+  }, [resetCandidateForm]);
 
-        setFromFarm(farm || null);
-        setFromPickerOpen(!farm);
-        setSelectedHouse("");
-      } catch (e) {
-        console.error("handleSelectFromFarm error:", e);
-        setMsg(e?.message || "เปลี่ยนฟาร์มต้นทางไม่สำเร็จ");
-      }
-    },
-    [draftShipmentId, releaseCurrentDraftReservations, resetCandidateForm, updateDraftReservationStatus]
-  );
-
-  const clearFromFarm = useCallback(async () => {
-    try {
-      setMsg("");
-      if (clean(draftShipmentId)) {
-        await releaseCurrentDraftReservations("clear_from_farm");
-        try {
-          await updateDraftReservationStatus(draftShipmentId, "cancelled");
-        } catch {}
-      } else {
-        setPickedRows([]);
-        resetCandidateForm();
-      }
-
-      setFromFarm(null);
-      setFromQ("");
-      setFromPickerOpen(true);
-      setAllAvailableSwines([]);
-      setHouseOptions([]);
-      setSelectedHouse("");
-    } catch (e) {
-      console.error("clearFromFarm error:", e);
-      setMsg(e?.message || "ล้างฟาร์มต้นทางไม่สำเร็จ");
-    }
-  }, [draftShipmentId, releaseCurrentDraftReservations, resetCandidateForm, updateDraftReservationStatus]);
+  const clearFromFarm = useCallback(() => {
+    setMsg("");
+    setPickedRows([]);
+    resetCandidateForm();
+    setFromFarm(null);
+    setFromQ("");
+    setFromPickerOpen(true);
+    setAllAvailableSwines([]);
+    setHouseOptions([]);
+    setSelectedHouse("");
+  }, [resetCandidateForm]);
 
   const onChangeToFarm = useCallback((id) => {
     setMsg("");
@@ -780,28 +711,12 @@ export default function ShipmentCreatePage() {
     }
   }, []);
 
-  const handleChangeHouse = useCallback(
-    async (nextHouse) => {
-      try {
-        setMsg("");
-        if (clean(draftShipmentId)) {
-          await releaseCurrentDraftReservations("change_house");
-          try {
-            await updateDraftReservationStatus(draftShipmentId, "released");
-          } catch {}
-        } else {
-          setPickedRows([]);
-          resetCandidateForm();
-        }
-
-        setSelectedHouse(nextHouse || "");
-      } catch (e) {
-        console.error("handleChangeHouse error:", e);
-        setMsg(e?.message || "เปลี่ยนเล้าไม่สำเร็จ");
-      }
-    },
-    [draftShipmentId, releaseCurrentDraftReservations, resetCandidateForm, updateDraftReservationStatus]
-  );
+  const handleChangeHouse = useCallback((nextHouse) => {
+    setMsg("");
+    setPickedRows([]);
+    resetCandidateForm();
+    setSelectedHouse(nextHouse || "");
+  }, [resetCandidateForm]);
 
   const addToPickedList = useCallback(async () => {
     if (!canAddToList) {
@@ -809,11 +724,9 @@ export default function ShipmentCreatePage() {
       return;
     }
 
-    let shipmentId = "";
-    let createdNewHeader = false;
-
     try {
       setMsg("");
+      setLoadingBlocking(true);
 
       const swineCode = clean(selectedCandidateSwine?.swine_code);
       const swineId = selectedCandidateSwine?.id || null;
@@ -826,78 +739,13 @@ export default function ShipmentCreatePage() {
         throw new Error("เบอร์หมูนี้อยู่ในรายการที่เลือกแล้ว");
       }
 
-      createdNewHeader = !clean(draftShipmentId);
-      shipmentId = await ensureDraftHeader();
+      const blockingMap = await findBlockingShipmentsBySwineCodes([swineCode]);
+      const blocking = blockingMap.get(swineCode);
 
-      const { error } = await supabase.rpc("reserve_swine_for_shipment", {
-        p_swine_code: swineCode,
-        p_swine_id: swineId,
-        p_shipment_id: shipmentId,
-        p_reserved_by: currentUserId,
-        p_source_page: "create",
-        p_minutes: 30,
-      });
-
-      if (error) {
-        if (isConflictError(error)) {
-          const myActiveReservation = await findMyActiveReservation(swineId, swineCode);
-          const myDraftContainingSwine = await findMyDraftContainingSwine(swineCode);
-
-          if (
-            myActiveReservation?.shipment_id &&
-            clean(myActiveReservation.shipment_id) === clean(shipmentId)
-          ) {
-            setPickedRows((prev) => {
-              if (prev.some((x) => clean(x.swine_code) === swineCode)) return prev;
-              return [
-                ...prev,
-                {
-                  temp_id: `picked-${swineId}-${Date.now()}`,
-                  swine_id: swineId,
-                  swine_code: swineCode,
-                  house_no: clean(selectedCandidateSwine?.house_no),
-                  teats_left: clean(teatsLeft),
-                  teats_right: clean(teatsRight),
-                  weight: clean(weight),
-                  backfat: clean(backfat),
-                },
-              ];
-            });
-
-            setDraftShipmentId(shipmentId);
-            resetCandidateForm();
-            await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
-            setMsg(`เบอร์ ${swineCode} ถูกจองอยู่แล้วใน draft นี้ จึงดึงกลับเข้า list ให้แล้ว`);
-            return;
-          }
-
-          if (myDraftContainingSwine?.id) {
-            if (createdNewHeader && clean(shipmentId)) {
-              await deleteEmptyDraftHeader(shipmentId);
-            }
-            setDraftShipmentId(clean(myDraftContainingSwine.id));
-            throw new Error(
-              `เบอร์ ${swineCode} อยู่ใน draft เดิมของคุณแล้ว กรุณากลับไปเปิด draft เดิมก่อน`
-            );
-          }
-
-          if (myActiveReservation?.shipment_id) {
-            if (createdNewHeader && clean(shipmentId)) {
-              await deleteEmptyDraftHeader(shipmentId);
-            }
-            setDraftShipmentId(clean(myActiveReservation.shipment_id));
-            throw new Error(
-              `เบอร์ ${swineCode} ถูกจองอยู่ใน draft เดิมของคุณแล้ว กรุณากลับไปเปิด draft เดิม`
-            );
-          }
-
-          if (createdNewHeader && clean(shipmentId)) {
-            await deleteEmptyDraftHeader(shipmentId);
-          }
-          throw new Error(`เบอร์ ${swineCode} ถูกจองโดยรายการอื่นแล้ว กรุณาเลือกตัวอื่น`);
-        }
-
-        throw error;
+      if (blocking) {
+        throw new Error(
+          `เบอร์ ${swineCode} อยู่ใน shipment สถานะ ${clean(blocking.status) || "-"} แล้ว`
+        );
       }
 
       setPickedRows((prev) => [
@@ -915,83 +763,37 @@ export default function ShipmentCreatePage() {
       ]);
 
       resetCandidateForm();
-      await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
     } catch (e) {
-      console.error("addToPickedList error:", {
-        message: e?.message,
-        code: e?.code,
-        details: e?.details,
-        hint: e?.hint,
-        status: e?.status,
-        raw: e,
-      });
+      console.error("addToPickedList error:", e);
       setMsg(extractErrorMessage(e, "บันทึกเข้า list ไม่สำเร็จ"));
-      void loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+      void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+    } finally {
+      setLoadingBlocking(false);
     }
   }, [
     canAddToList,
     selectedCandidateSwine,
     pickedCodeSet,
-    draftShipmentId,
-    ensureDraftHeader,
-    currentUserId,
     teatsLeft,
     teatsRight,
     weight,
     backfat,
     resetCandidateForm,
-    loadAvailableSwinesOfFarm,
+    findBlockingShipmentsBySwineCodes,
+    loadSelectableSwinesOfFarm,
     fromFarm?.farm_code,
     fromFarm?.flock,
-    findMyActiveReservation,
-    findMyDraftContainingSwine,
-    deleteEmptyDraftHeader,
   ]);
 
-  const removePickedRow = useCallback(
-    async (tempId) => {
-      const row = pickedRows.find((x) => x.temp_id === tempId);
-      if (!row) return;
+  const removePickedRow = useCallback((tempId) => {
+    setMsg("");
+    setPickedRows((prev) => prev.filter((x) => x.temp_id !== tempId));
+  }, []);
 
-      try {
-        setMsg("");
-
-        const { error } = await supabase.rpc("release_swine_reservation", {
-          p_swine_code: clean(row.swine_code),
-          p_reserved_by: currentUserId,
-          p_reason: "remove_from_create_list",
-        });
-
-        if (error) throw error;
-
-        setPickedRows((prev) => prev.filter((x) => x.temp_id !== tempId));
-        await loadAvailableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
-      } catch (e) {
-        console.error("removePickedRow error:", e);
-        setMsg(e?.message || "ลบรายการไม่สำเร็จ");
-      }
-    },
-    [pickedRows, currentUserId, loadAvailableSwinesOfFarm, fromFarm?.farm_code, fromFarm?.flock]
-  );
-
-  const handleBackOrCancel = useCallback(async () => {
-    try {
-      setMsg("");
-      leavingRef.current = true;
-
-      if (clean(draftShipmentId)) {
-        await releaseCurrentDraftReservations("cancel_create_page");
-        try {
-          await updateDraftReservationStatus(draftShipmentId, "cancelled");
-        } catch {}
-      }
-
-      nav("/user-home", { replace: true });
-    } catch (e) {
-      console.error("handleBackOrCancel error:", e);
-      setMsg(e?.message || "ยกเลิกไม่สำเร็จ");
-    }
-  }, [draftShipmentId, releaseCurrentDraftReservations, updateDraftReservationStatus, nav]);
+  const handleBackOrCancel = useCallback(() => {
+    setMsg("");
+    nav("/user-home", { replace: true });
+  }, [nav]);
 
   const handleSaveDraft = useCallback(async () => {
     if (!canSaveDraft) {
@@ -1002,9 +804,26 @@ export default function ShipmentCreatePage() {
     setSavingDraft(true);
     setMsg("");
 
+    let createdHeaderId = "";
+    let createdNewHeader = false;
+
     try {
-      const shipmentId = clean(draftShipmentId);
+      const pickedCodes = pickedRows.map((row) => clean(row.swine_code)).filter(Boolean);
+
+      const headerResult = await ensureDraftHeader();
+      const shipmentId = clean(headerResult?.shipmentId);
+      createdHeaderId = shipmentId;
+      createdNewHeader = !!headerResult?.createdNewHeader;
+
       if (!shipmentId) throw new Error("ไม่พบ draft shipment");
+
+      const blockingMap = await findBlockingShipmentsBySwineCodes(pickedCodes, shipmentId);
+      if (blockingMap.size > 0) {
+        const [firstCode, firstShipment] = blockingMap.entries().next().value;
+        throw new Error(
+          `เบอร์ ${firstCode} อยู่ใน shipment สถานะ ${clean(firstShipment?.status) || "-"} แล้ว`
+        );
+      }
 
       const { error: headerError } = await supabase
         .from("swine_shipments")
@@ -1018,7 +837,7 @@ export default function ShipmentCreatePage() {
           source_house_no: clean(selectedHouse) || null,
           remark: clean(remark) || null,
           status: "draft",
-          reservation_status: "open",
+          reservation_status: "consumed",
         })
         .eq("id", shipmentId);
 
@@ -1056,20 +875,6 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      const { error: consumeError } = await supabase.rpc("consume_shipment_reservations", {
-        p_shipment_id: shipmentId,
-        p_reserved_by: currentUserId,
-      });
-
-      if (consumeError) throw consumeError;
-
-      const { error: statusError } = await supabase
-        .from("swine_shipments")
-        .update({ reservation_status: "consumed" })
-        .eq("id", shipmentId);
-
-      if (statusError) throw statusError;
-
       const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
         p_selected_date: selectedDate,
         p_from_farm_code: clean(fromFarm?.farm_code) || null,
@@ -1079,7 +884,6 @@ export default function ShipmentCreatePage() {
 
       if (resequenceRes.error) throw resequenceRes.error;
 
-      leavingRef.current = true;
       nav("/user-home", {
         replace: true,
         state: {
@@ -1094,21 +898,29 @@ export default function ShipmentCreatePage() {
         hint: e?.hint,
         raw: e,
       });
+
+      if (createdNewHeader && clean(createdHeaderId)) {
+        await deleteEmptyDraftHeader(createdHeaderId);
+      }
+
       setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
+      void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
     } finally {
       setSavingDraft(false);
     }
   }, [
     canSaveDraft,
-    draftShipmentId,
+    pickedRows,
+    ensureDraftHeader,
+    findBlockingShipmentsBySwineCodes,
     selectedDate,
     fromFarm,
     toFarmId,
     selectedHouse,
     remark,
-    pickedRows,
-    currentUserId,
     nav,
+    deleteEmptyDraftHeader,
+    loadSelectableSwinesOfFarm,
   ]);
 
   if (bootLoading) {
@@ -1136,7 +948,7 @@ export default function ShipmentCreatePage() {
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 20, fontWeight: 900 }}>Create Shipment</div>
           <div style={{ wordBreak: "break-word", color: "#6b7280", fontSize: 13 }}>
-            mobile-first • reservation-based • เลือกเล้าก่อนค่อยเลือกเบอร์หมู
+            mobile-first • status-based • เลือกเล้าก่อนค่อยเลือกเบอร์หมู
           </div>
         </div>
 
@@ -1198,17 +1010,7 @@ export default function ShipmentCreatePage() {
                 <FarmSelectedCard
                   title="ฟาร์มต้นทาง"
                   farm={fromFarm}
-                  subtitle={
-                    fromFarm?.flock
-                      ? `Flock: ${fromFarm.flock}${
-                          Number.isFinite(fromFarm?.swine_count)
-                            ? ` | คัดได้ ${fromFarm.swine_count} ตัว`
-                            : ""
-                        }`
-                      : Number.isFinite(fromFarm?.swine_count)
-                      ? `คัดได้ ${fromFarm.swine_count} ตัว`
-                      : ""
-                  }
+                  subtitle={fromFarm?.flock ? `Flock: ${fromFarm.flock}` : ""}
                   onChange={() => setFromPickerOpen(true)}
                 />
               ) : (
@@ -1272,12 +1074,6 @@ export default function ShipmentCreatePage() {
                           </div>
                           <div style={{ marginTop: 4, fontSize: 12, color: "#666" }}>
                             Flock: <b>{f.flock || "-"}</b>
-                            {Number.isFinite(f.swine_count) ? (
-                              <>
-                                {" "}
-                                | คัดได้ <b>{f.swine_count}</b> ตัว
-                              </>
-                            ) : null}
                           </div>
                         </button>
                       ))
@@ -1348,7 +1144,7 @@ export default function ShipmentCreatePage() {
                 ))}
               </select>
               <div style={{ marginTop: 6, color: "#6b7280", fontSize: 12 }}>
-                ระบบจะเลือกเล้าแรกให้อัตโนมัติถ้ามีข้อมูล
+                ระบบจะแสดงเฉพาะหมูที่ยังไม่อยู่ใน draft / submitted / issued
               </div>
             </div>
           </div>
@@ -1407,7 +1203,7 @@ export default function ShipmentCreatePage() {
                 ) : availableLoading ? (
                   <div style={{ color: "#6b7280", fontSize: 13 }}>กำลังโหลด...</div>
                 ) : filteredAvailableSwines.length === 0 ? (
-                  <div style={{ color: "#6b7280", fontSize: 13 }}>ไม่พบเบอร์หมู</div>
+                  <div style={{ color: "#6b7280", fontSize: 13 }}>ไม่พบเบอร์หมูที่คัดได้</div>
                 ) : (
                   <div
                     style={{
@@ -1537,7 +1333,7 @@ export default function ShipmentCreatePage() {
               disabled={!canAddToList}
               style={{ width: "100%" }}
             >
-              {draftCreating ? "กำลังสร้าง draft..." : "บันทึกเข้า list"}
+              {loadingBlocking ? "กำลังตรวจสอบ..." : "บันทึกเข้า list"}
             </button>
           </div>
         </div>
@@ -1571,7 +1367,7 @@ export default function ShipmentCreatePage() {
                   <button
                     type="button"
                     onClick={() => void removePickedRow(row.temp_id)}
-                    disabled={savingDraft || busyRelease}
+                    disabled={savingDraft}
                   >
                     ลบออก
                   </button>
@@ -1611,7 +1407,7 @@ export default function ShipmentCreatePage() {
           <button
             type="button"
             onClick={() => void handleBackOrCancel()}
-            disabled={savingDraft || busyRelease}
+            disabled={savingDraft}
             style={{ width: "100%" }}
           >
             Cancel
