@@ -1,3 +1,4 @@
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -105,7 +106,7 @@ const inputStyle = {
   background: "#fff",
 };
 
-function FarmSelectedCard({ title, farm, subtitle, onChange }) {
+function FarmSelectedCard({ title, farm, subtitle, onChange, changeLabel = "เปลี่ยนฟาร์ม" }) {
   return (
     <div style={{ ...cardStyle, display: "grid", gap: 8 }}>
       <div style={{ fontWeight: 900 }}>{title}</div>
@@ -124,7 +125,7 @@ function FarmSelectedCard({ title, farm, subtitle, onChange }) {
 
       <div>
         <button type="button" onClick={onChange}>
-          เปลี่ยนฟาร์ม
+          {changeLabel}
         </button>
       </div>
     </div>
@@ -343,11 +344,11 @@ export default function ShipmentCreatePage() {
   const filteredAvailableSwines = useMemo(() => {
     if (!selectedHouse) return [];
     const q = clean(swineQ).toLowerCase();
-    const targetFlock = clean(fromFarm?.flock);
+    const sourceFlock = clean(fromFarm?.flock);
 
     return (allAvailableSwines || [])
       .filter((x) => clean(x.house_no) === clean(selectedHouse))
-      .filter((x) => !targetFlock || clean(x.flock) === targetFlock)
+      .filter((x) => !sourceFlock || clean(x.flock) === sourceFlock)
       .filter((x) => !pickedCodeSet.has(clean(x.swine_code)))
       .filter((x) => {
         if (!q) return true;
@@ -387,6 +388,7 @@ export default function ShipmentCreatePage() {
   const canAddToList = useMemo(() => {
     return (
       !!clean(fromFarm?.farm_code) &&
+      !!clean(fromFarm?.flock) &&
       !!clean(toFarmId) &&
       !!clean(selectedHouse) &&
       !!selectedCandidateSwine?.id &&
@@ -397,6 +399,7 @@ export default function ShipmentCreatePage() {
     );
   }, [
     fromFarm?.farm_code,
+    fromFarm?.flock,
     toFarmId,
     selectedHouse,
     selectedCandidateSwine,
@@ -412,6 +415,7 @@ export default function ShipmentCreatePage() {
       !savingDraft &&
       !busyRelease &&
       !!clean(fromFarm?.farm_code) &&
+      !!clean(fromFarm?.flock) &&
       !!clean(toFarmId) &&
       !!clean(selectedHouse) &&
       pickedRows.length > 0 &&
@@ -422,6 +426,7 @@ export default function ShipmentCreatePage() {
     savingDraft,
     busyRelease,
     fromFarm?.farm_code,
+    fromFarm?.flock,
     toFarmId,
     selectedHouse,
     pickedRows.length,
@@ -550,34 +555,34 @@ export default function ShipmentCreatePage() {
   }, [currentUserId]);
 
   const findMyDraftContainingSwine = useCallback(async (swineCode) => {
-    if (!clean(currentUserId) || !clean(swineCode)) return null;
+    const code = clean(swineCode);
+    if (!clean(currentUserId) || !code) return null;
 
-    const { data, error } = await supabase
+    const { data: itemRows, error: itemError } = await supabase
       .from("swine_shipment_items")
-      .select(`
-        shipment_id,
-        swine_code,
-        swine_shipments!inner (
-          id,
-          created_by,
-          status,
-          selected_date,
-          from_farm_code,
-          from_flock,
-          to_farm_id,
-          source_house_no,
-          created_at
-        )
-      `)
-      .eq("swine_code", clean(swineCode))
-      .eq("swine_shipments.created_by", currentUserId)
-      .eq("swine_shipments.status", "draft")
-      .order("created_at", { ascending: false, foreignTable: "swine_shipments" })
+      .select("shipment_id")
+      .eq("swine_code", code)
+      .limit(20);
+
+    if (itemError) throw itemError;
+
+    const shipmentIds = Array.from(
+      new Set((itemRows || []).map((x) => clean(x.shipment_id)).filter(Boolean))
+    );
+
+    if (!shipmentIds.length) return null;
+
+    const { data: shipments, error: shipmentError } = await supabase
+      .from("swine_shipments")
+      .select("id, status, created_by, selected_date, from_farm_code, from_flock, to_farm_id, source_house_no, created_at")
+      .in("id", shipmentIds)
+      .eq("created_by", currentUserId)
+      .eq("status", "draft")
+      .order("created_at", { ascending: false })
       .limit(1);
 
-    if (error) throw error;
-    const row = data?.[0];
-    return row?.swine_shipments || null;
+    if (shipmentError) throw shipmentError;
+    return shipments?.[0] || null;
   }, [currentUserId]);
 
   const ensureDraftHeader = useCallback(async () => {
@@ -637,8 +642,11 @@ export default function ShipmentCreatePage() {
     findReusableDraftHeader,
   ]);
 
-  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode, fromFlock = "") => {
-    if (!fromFarmCode) {
+  const loadAvailableSwinesOfFarm = useCallback(async (fromFarmCode, flock) => {
+    const farmCode = clean(fromFarmCode);
+    const sourceFlock = clean(flock);
+
+    if (!farmCode) {
       setAllAvailableSwines([]);
       setHouseOptions([]);
       setSelectedHouse("");
@@ -652,13 +660,13 @@ export default function ShipmentCreatePage() {
       let query = supabase
         .from("v_swines_available_for_selection")
         .select("id, swine_code, farm_code, farm_name, house_no, flock, birth_date")
-        .eq("farm_code", fromFarmCode)
+        .eq("farm_code", farmCode)
         .order("house_no", { ascending: true })
         .order("swine_code", { ascending: true })
         .limit(5000);
 
-      if (clean(fromFlock)) {
-        query = query.eq("flock", clean(fromFlock));
+      if (sourceFlock) {
+        query = query.eq("flock", sourceFlock);
       }
 
       const { data, error } = await query;
@@ -767,7 +775,9 @@ export default function ShipmentCreatePage() {
   const onChangeToFarm = useCallback((id) => {
     setMsg("");
     setToFarmId(id || "");
-    if (id) setToPickerOpen(false);
+    if (id) {
+      setToPickerOpen(false);
+    }
   }, []);
 
   const handleChangeHouse = useCallback(
@@ -831,6 +841,7 @@ export default function ShipmentCreatePage() {
       if (error) {
         if (isConflictError(error)) {
           const myActiveReservation = await findMyActiveReservation(swineId, swineCode);
+          const myDraftContainingSwine = await findMyDraftContainingSwine(swineCode);
 
           if (
             myActiveReservation?.shipment_id &&
@@ -860,17 +871,20 @@ export default function ShipmentCreatePage() {
             return;
           }
 
-          const myDraftWithSameSwine = await findMyDraftContainingSwine(swineCode);
-          if (clean(myDraftWithSameSwine?.id)) {
-            setDraftShipmentId(clean(myDraftWithSameSwine.id));
+          if (myDraftContainingSwine?.id) {
+            if (createdNewHeader && clean(shipmentId)) {
+              await deleteEmptyDraftHeader(shipmentId);
+            }
+            setDraftShipmentId(clean(myDraftContainingSwine.id));
             throw new Error(
-              `เบอร์ ${swineCode} อยู่ใน draft เดิมของคุณแล้ว (${clean(
-                myDraftWithSameSwine.from_farm_code
-              )} / ${clean(myDraftWithSameSwine.from_flock)}) กรุณากลับไปเปิด draft เดิม`
+              `เบอร์ ${swineCode} อยู่ใน draft เดิมของคุณแล้ว กรุณากลับไปเปิด draft เดิมก่อน`
             );
           }
 
           if (myActiveReservation?.shipment_id) {
+            if (createdNewHeader && clean(shipmentId)) {
+              await deleteEmptyDraftHeader(shipmentId);
+            }
             setDraftShipmentId(clean(myActiveReservation.shipment_id));
             throw new Error(
               `เบอร์ ${swineCode} ถูกจองอยู่ใน draft เดิมของคุณแล้ว กรุณากลับไปเปิด draft เดิม`
@@ -879,9 +893,6 @@ export default function ShipmentCreatePage() {
 
           if (createdNewHeader && clean(shipmentId)) {
             await deleteEmptyDraftHeader(shipmentId);
-            if (clean(draftShipmentId) === clean(shipmentId)) {
-              setDraftShipmentId("");
-            }
           }
           throw new Error(`เบอร์ ${swineCode} ถูกจองโดยรายการอื่นแล้ว กรุณาเลือกตัวอื่น`);
         }
@@ -1278,21 +1289,40 @@ export default function ShipmentCreatePage() {
               )}
             </div>
 
-            <div>
-              {toFarmId && !toPickerOpen ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              {toFarmId ? (
                 <FarmSelectedCard
-                  title="ฟาร์มปลายทาง"
+                  title="ฟาร์มปลายทางที่เลือกอยู่"
                   farm={toFarm}
-                  onChange={() => setToPickerOpen(true)}
+                  subtitle="ตรวจสอบฟาร์มนี้ก่อน ถ้าถูกต้องค่อยไปขั้นต่อไป ถ้าไม่ถูกต้องค่อยเลือกฟาร์มปลายทางใหม่"
+                  onChange={() => setToPickerOpen((prev) => !prev)}
+                  changeLabel={toPickerOpen ? "ซ่อนรายการฟาร์ม" : "เลือกฟาร์มปลายทางใหม่"}
                 />
+              ) : null}
+
+              {!toFarmId || toPickerOpen ? (
+                <div style={{ ...cardStyle, padding: 12, display: "grid", gap: 10 }}>
+                  <div style={{ fontWeight: 900 }}>
+                    {toFarmId ? "เลือกฟาร์มปลายทางใหม่" : "ฟาร์มปลายทาง"}
+                  </div>
+                  <div style={{ color: "#6b7280", fontSize: 13 }}>
+                    ฟาร์มที่เลือกอยู่จะแสดงด้านบนเสมอ เพื่อให้ตรวจสอบก่อนเปลี่ยน
+                  </div>
+
+                  <FarmPickerInlineAdd
+                    label="ฟาร์มปลายทาง"
+                    value={toFarmId}
+                    excludeId={null}
+                    onChange={onChangeToFarm}
+                    requireBranch={false}
+                  />
+                </div>
               ) : (
-                <FarmPickerInlineAdd
-                  label="ฟาร์มปลายทาง"
-                  value={toFarmId}
-                  excludeId={null}
-                  onChange={onChangeToFarm}
-                  requireBranch={false}
-                />
+                <div>
+                  <button type="button" onClick={() => setToPickerOpen(true)}>
+                    เลือกฟาร์มปลายทางใหม่
+                  </button>
+                </div>
               )}
             </div>
 
