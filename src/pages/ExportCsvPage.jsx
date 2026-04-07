@@ -52,6 +52,8 @@ function createEmptyPreviewMeta() {
     selectedUniqueCount: 0,
     cumulativeSelectedCount: 0,
     remainingCount: 0,
+    shipmentHeadersFound: 0,
+    shipmentHeadersAfterDestinationFilter: 0,
   };
 }
 
@@ -927,6 +929,25 @@ export default function ExportCsvPage() {
       : `${farmCode} | flock: ${flock || "-"}`;
   }, [previewMeta, selectedScopeOption]);
 
+  const selectedToFarmOption = useMemo(() => {
+    return toFarmOptions.find((x) => x.value === toFarmId) || null;
+  }, [toFarmOptions, toFarmId]);
+
+  const activeDestinationBadgeText = useMemo(() => {
+    if (reportType !== "raw") return "";
+    if (!toFarmId) return "กำลังดูทุกปลายทาง";
+    return `กำลังดูปลายทาง: ${selectedToFarmOption?.label || clean(toFarmId)}`;
+  }, [reportType, toFarmId, selectedToFarmOption]);
+
+  const previewDestinationText = useMemo(() => {
+    if (previewMeta?.reportType !== "raw") return "";
+    if (!clean(previewMeta?.toFarmId)) return "ทุกปลายทาง";
+    return (
+      toFarmOptions.find((x) => x.value === previewMeta?.toFarmId)?.label ||
+      clean(previewMeta?.toFarmId)
+    );
+  }, [previewMeta, toFarmOptions]);
+
   const resetRuntimeState = useCallback(({ keepDates = true } = {}) => {
     setMsg("");
     setMyProfile(null);
@@ -1533,7 +1554,7 @@ export default function ExportCsvPage() {
       return { shipments: [], swineMap: {}, heatMap: {}, baseSwinesRows: [], cumulativeSelectedCount: 0 };
     }
 
-    let query = supabase
+    const query = supabase
       .from("swine_shipments")
       .select(`
         id,
@@ -1561,10 +1582,6 @@ export default function ExportCsvPage() {
       .in("status", ["draft", "submitted", "issued"])
       .order("created_at", { ascending: false });
 
-    if (reportType === "raw" && toFarmId) {
-      query = query.eq("to_farm_id", toFarmId);
-    }
-
     const [{ data, error }, baseSwinesRows, cumulativeSnapshot] = await Promise.all([
       query,
       fetchBaseSwinesByScope(selectedFromFarmCode, selectedFromFlock),
@@ -1574,7 +1591,19 @@ export default function ExportCsvPage() {
     if (error) throw error;
 
     const scopedHeaders = filterShipmentsByScope(data || []);
-    const shipments = (isAdmin ? data || [] : scopedHeaders).map((shipment) => ({
+    const shipmentHeaders = isAdmin ? data || [] : scopedHeaders;
+    const shipmentHeadersFound = shipmentHeaders.length;
+
+    const filteredShipmentHeaders =
+      reportType === "raw" && clean(toFarmId)
+        ? shipmentHeaders.filter(
+            (shipment) => clean(shipment?.to_farm_id) === clean(toFarmId)
+          )
+        : shipmentHeaders;
+
+    const shipmentHeadersAfterDestinationFilter = filteredShipmentHeaders.length;
+
+    const shipments = filteredShipmentHeaders.map((shipment) => ({
       ...shipment,
       items: [],
     }));
@@ -1602,6 +1631,8 @@ export default function ExportCsvPage() {
       heatMap,
       baseSwinesRows,
       cumulativeSelectedCount: Number(cumulativeSnapshot?.selectedUniqueCount || 0),
+      shipmentHeadersFound,
+      shipmentHeadersAfterDestinationFilter,
     };
   }, [
     dateRangeValid,
@@ -1781,6 +1812,8 @@ export default function ExportCsvPage() {
           selectedUniqueCount,
           cumulativeSelectedCount,
           remainingCount: rows.length,
+          shipmentHeadersFound: 0,
+          shipmentHeadersAfterDestinationFilter: 0,
         });
       }
       return { shipments, rows };
@@ -1792,6 +1825,8 @@ export default function ExportCsvPage() {
       heatMap,
       baseSwinesRows,
       cumulativeSelectedCount,
+      shipmentHeadersFound,
+      shipmentHeadersAfterDestinationFilter,
     } = await fetchExportBaseData();
 
     const rows = buildFlatRows(shipments, swineMap, heatMap, {
@@ -1816,6 +1851,8 @@ export default function ExportCsvPage() {
         selectedUniqueCount,
         cumulativeSelectedCount,
         remainingCount,
+        shipmentHeadersFound,
+        shipmentHeadersAfterDestinationFilter,
       });
     }
     return { shipments, rows };
@@ -2515,11 +2552,7 @@ export default function ExportCsvPage() {
                   <option value="">
                     {toFarmLoading
                       ? "กำลังโหลด..."
-                      : filteredToFarmOptions.length
-                      ? isAdmin
-                        ? "ทุกฟาร์มปลายทาง / หรือเลือก 1 ฟาร์ม"
-                        : "เลือกฟาร์มปลายทาง"
-                      : "ไม่พบฟาร์มปลายทาง"}
+                      : "ทุกปลายทาง"}
                   </option>
                   {filteredToFarmOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -2650,6 +2683,33 @@ export default function ExportCsvPage() {
               </button>
             ) : null}
           </div>
+
+          {reportType === "raw" ? (
+            <div
+              style={{
+                marginTop: 12,
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: 800,
+                  border: "1px solid #bfdbfe",
+                  background: "#eff6ff",
+                  color: "#1d4ed8",
+                }}
+              >
+                {activeDestinationBadgeText}
+              </span>
+            </div>
+          ) : null}
 
           {!isAdmin ? (
             <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
@@ -2784,6 +2844,32 @@ export default function ExportCsvPage() {
                 </div>
               </div>
             </div>
+
+            {reportType === "raw" ? (
+              <div
+                style={{
+                  marginTop: 12,
+                  borderRadius: 14,
+                  padding: "10px 12px",
+                  border: "1px dashed #cbd5e1",
+                  background: "#f8fafc",
+                  color: "#475569",
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  wordBreak: "break-word",
+                }}
+              >
+                shipment headers found = {previewMeta.shipmentHeadersFound}
+                {" | "}
+                after destination filter = {previewMeta.shipmentHeadersAfterDestinationFilter}
+                {" | "}
+                destination = {previewDestinationText || "ทุกปลายทาง"}
+                {!clean(previewMeta?.toFarmId) && previewMeta.shipmentHeadersFound === 0
+                  ? " | 0 มาจากช่วงวันที่"
+                  : ""}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
