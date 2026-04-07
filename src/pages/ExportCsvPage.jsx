@@ -50,6 +50,7 @@ function createEmptyPreviewMeta() {
     dateTo: "",
     baseSwinesCount: 0,
     selectedUniqueCount: 0,
+    cumulativeSelectedCount: 0,
     remainingCount: 0,
   };
 }
@@ -157,14 +158,20 @@ function countHeatRows(rows) {
 function buildOverallSummaryRows(flatRows, summaryMeta = {}) {
   const selectedUniqueCount =
     Number(summaryMeta?.selectedUniqueCount ?? uniqueCountFromRows(flatRows, "swine_code")) || 0;
+  const cumulativeSelectedCount =
+    Number(summaryMeta?.cumulativeSelectedCount ?? selectedUniqueCount) || 0;
   const baseSwinesCount = Number(summaryMeta?.baseSwinesCount || 0) || 0;
   const remainingCount =
-    Number(summaryMeta?.remainingCount ?? Math.max(baseSwinesCount - selectedUniqueCount, 0)) || 0;
+    Number(
+      summaryMeta?.remainingCount ??
+        Math.max(baseSwinesCount - cumulativeSelectedCount, 0)
+    ) || 0;
 
   return [
     { รายการ: "จำนวน shipment", ค่า: uniqueCountFromRows(flatRows, "shipment_id") },
     { รายการ: "จำนวนหมูทั้งหมดใน swines", ค่า: baseSwinesCount },
-    { รายการ: "จำนวนหมูที่ถูกคัด", ค่า: selectedUniqueCount },
+    { รายการ: "จำนวนหมูที่ถูกคัดในช่วงที่เลือก", ค่า: selectedUniqueCount },
+    { รายการ: "จำนวนหมูคัดสะสมถึงวันสิ้นสุด", ค่า: cumulativeSelectedCount },
     { รายการ: "จำนวนหมูคงเหลือ", ค่า: remainingCount },
     { รายการ: "น้ำหนักรวมทั้งหมด", ค่า: sumFromRows(flatRows, "weight") },
     { รายการ: "น้ำหนักเฉลี่ยทั้งหมด", ค่า: avgFromRows(flatRows, "weight") },
@@ -1472,6 +1479,49 @@ export default function ExportCsvPage() {
     return map;
   }
 
+  const fetchCumulativeSelectedSnapshot = useCallback(async () => {
+    if (!dateRangeValid || !effectiveDateTo || !selectedFromFarmCode || !selectedFromFlock) {
+      return { shipments: [], selectedCodeSet: new Set(), selectedUniqueCount: 0 };
+    }
+
+    const { data: shipmentHeaders, error: shipmentError } = await supabase
+      .from("swine_shipments")
+      .select("id, from_farm_code, from_flock, status, selected_date")
+      .lte("selected_date", effectiveDateTo)
+      .eq("from_farm_code", selectedFromFarmCode)
+      .eq("from_flock", selectedFromFlock)
+      .in("status", ["draft", "submitted", "issued"]);
+
+    if (shipmentError) throw shipmentError;
+
+    const scopedHeaders = filterShipmentsByScope(shipmentHeaders || []);
+    const shipments = isAdmin ? shipmentHeaders || [] : scopedHeaders;
+
+    const itemsMap = await fetchShipmentItemsMap(shipments.map((x) => x.id));
+    const selectedCodeSet = new Set();
+
+    for (const shipment of shipments) {
+      const items = itemsMap[clean(shipment?.id)] || [];
+      for (const item of items) {
+        const code = clean(item?.swine_code);
+        if (code) selectedCodeSet.add(code);
+      }
+    }
+
+    return {
+      shipments,
+      selectedCodeSet,
+      selectedUniqueCount: selectedCodeSet.size,
+    };
+  }, [
+    dateRangeValid,
+    effectiveDateTo,
+    selectedFromFarmCode,
+    selectedFromFlock,
+    filterShipmentsByScope,
+    isAdmin,
+  ]);
+
   const fetchExportBaseData = useCallback(async () => {
     if (
       !dateRangeValid ||
@@ -1480,7 +1530,7 @@ export default function ExportCsvPage() {
       !selectedFromFarmCode ||
       !selectedFromFlock
     ) {
-      return { shipments: [], swineMap: {}, heatMap: {}, baseSwinesRows: [] };
+      return { shipments: [], swineMap: {}, heatMap: {}, baseSwinesRows: [], cumulativeSelectedCount: 0 };
     }
 
     let query = supabase
@@ -1515,9 +1565,10 @@ export default function ExportCsvPage() {
       query = query.eq("to_farm_id", toFarmId);
     }
 
-    const [{ data, error }, baseSwinesRows] = await Promise.all([
+    const [{ data, error }, baseSwinesRows, cumulativeSnapshot] = await Promise.all([
       query,
       fetchBaseSwinesByScope(selectedFromFarmCode, selectedFromFlock),
+      fetchCumulativeSelectedSnapshot(),
     ]);
 
     if (error) throw error;
@@ -1545,7 +1596,13 @@ export default function ExportCsvPage() {
       loadHeatMapByCodes(allCodes),
     ]);
 
-    return { shipments, swineMap, heatMap, baseSwinesRows };
+    return {
+      shipments,
+      swineMap,
+      heatMap,
+      baseSwinesRows,
+      cumulativeSelectedCount: Number(cumulativeSnapshot?.selectedUniqueCount || 0),
+    };
   }, [
     dateRangeValid,
     effectiveDateFrom,
@@ -1555,6 +1612,7 @@ export default function ExportCsvPage() {
     reportType,
     toFarmId,
     fetchBaseSwinesByScope,
+    fetchCumulativeSelectedSnapshot,
     filterShipmentsByScope,
     isAdmin,
   ]);
@@ -1625,36 +1683,21 @@ export default function ExportCsvPage() {
       !selectedFromFarmCode ||
       !selectedFromFlock
     ) {
-      return { rows: [], shipments: [], baseSwinesRows: [], selectedUniqueCount: 0 };
+      return {
+        rows: [],
+        shipments: [],
+        baseSwinesRows: [],
+        selectedUniqueCount: 0,
+        cumulativeSelectedCount: 0,
+      };
     }
 
-    const baseSwinesRows = await fetchBaseSwinesByScope(selectedFromFarmCode, selectedFromFlock);
+    const [baseSwinesRows, cumulativeSnapshot] = await Promise.all([
+      fetchBaseSwinesByScope(selectedFromFarmCode, selectedFromFlock),
+      fetchCumulativeSelectedSnapshot(),
+    ]);
 
-    const { data: shipmentHeaders, error: shipmentError } = await supabase
-      .from("swine_shipments")
-      .select("id, from_farm_code, from_flock, status, selected_date")
-      .gte("selected_date", effectiveDateFrom)
-      .lte("selected_date", effectiveDateTo)
-      .eq("from_farm_code", selectedFromFarmCode)
-      .eq("from_flock", selectedFromFlock)
-      .in("status", ["draft", "submitted", "issued"]);
-
-    if (shipmentError) throw shipmentError;
-
-    const scopedHeaders = filterShipmentsByScope(shipmentHeaders || []);
-    const shipments = isAdmin ? shipmentHeaders || [] : scopedHeaders;
-
-    const itemsMap = await fetchShipmentItemsMap(shipments.map((x) => x.id));
-
-    const selectedCodeSet = new Set();
-
-    for (const shipment of shipments) {
-      const items = itemsMap[clean(shipment?.id)] || [];
-      for (const item of items) {
-        const code = clean(item?.swine_code);
-        if (code) selectedCodeSet.add(code);
-      }
-    }
+    const selectedCodeSet = cumulativeSnapshot?.selectedCodeSet || new Set();
 
     const notSelected = baseSwinesRows.filter((row) => {
       const code = clean(row?.swine_code);
@@ -1694,9 +1737,10 @@ export default function ExportCsvPage() {
 
     return {
       rows,
-      shipments,
+      shipments: cumulativeSnapshot?.shipments || [],
       baseSwinesRows,
-      selectedUniqueCount: selectedCodeSet.size,
+      selectedUniqueCount: cumulativeSnapshot?.selectedUniqueCount || 0,
+      cumulativeSelectedCount: cumulativeSnapshot?.selectedUniqueCount || 0,
     };
   }, [
     dateRangeValid,
@@ -1705,15 +1749,22 @@ export default function ExportCsvPage() {
     selectedFromFarmCode,
     selectedFromFlock,
     fetchBaseSwinesByScope,
-    filterShipmentsByScope,
-    isAdmin,
+    fetchCumulativeSelectedSnapshot,
   ]);
+
 
   const refreshPreviewRows = useCallback(async () => {
     const reqId = ++previewReqRef.current;
 
     if (reportType === "not_selected") {
-      const { rows, shipments, baseSwinesRows, selectedUniqueCount } = await fetchNotSelectedRows();
+      const {
+        rows,
+        shipments,
+        baseSwinesRows,
+        selectedUniqueCount,
+        cumulativeSelectedCount,
+      } = await fetchNotSelectedRows();
+
       if (reqId === previewReqRef.current) {
         setPreviewRows(rows);
         setPreviewShipments(shipments || []);
@@ -1728,18 +1779,26 @@ export default function ExportCsvPage() {
           dateTo: effectiveDateTo,
           baseSwinesCount: baseSwinesRows.length,
           selectedUniqueCount,
+          cumulativeSelectedCount,
           remainingCount: rows.length,
         });
       }
       return { shipments, rows };
     }
 
-    const { shipments, swineMap, heatMap, baseSwinesRows } = await fetchExportBaseData();
+    const {
+      shipments,
+      swineMap,
+      heatMap,
+      baseSwinesRows,
+      cumulativeSelectedCount,
+    } = await fetchExportBaseData();
+
     const rows = buildFlatRows(shipments, swineMap, heatMap, {
       deliveryDateEnabled: Boolean(toFarmId),
     });
     const selectedUniqueCount = uniqueCountFromRows(rows, "swine_code");
-    const remainingCount = Math.max(baseSwinesRows.length - selectedUniqueCount, 0);
+    const remainingCount = Math.max(baseSwinesRows.length - cumulativeSelectedCount, 0);
 
     if (reqId === previewReqRef.current) {
       setPreviewRows(rows);
@@ -1755,6 +1814,7 @@ export default function ExportCsvPage() {
         dateTo: effectiveDateTo,
         baseSwinesCount: baseSwinesRows.length,
         selectedUniqueCount,
+        cumulativeSelectedCount,
         remainingCount,
       });
     }
@@ -1770,6 +1830,7 @@ export default function ExportCsvPage() {
     effectiveDateTo,
     toFarmId,
   ]);
+
 
   const handleSaveDeliveryDate = useCallback(
     async (shipment) => {
@@ -1990,7 +2051,7 @@ export default function ExportCsvPage() {
     if (!canSubmitRows) return;
 
     const ok = window.confirm(
-      "ยืนยัน Submit ใช่หรือไม่\nระบบจะเปลี่ยน shipment ที่เป็น submitted ให้เป็น issued และยืนยันสถานะหมูทั้งหมดเป็น issued"
+      "ยืนยัน Submit ใช่หรือไม่\nระบบจะเปลี่ยนเฉพาะ shipment ที่เป็น submitted ให้เป็น issued"
     );
     if (!ok) return;
 
@@ -2026,20 +2087,6 @@ export default function ExportCsvPage() {
 
         totalSwines += codes.length;
 
-        if (codes.length) {
-          const { error: e1 } = await supabase
-            .from("swine_master")
-            .update({
-              delivery_state: "issued",
-              issued_shipment_id: shipment.id,
-              issued_at: nowIso,
-              issued_by: user.id,
-            })
-            .in("swine_code", codes);
-
-          if (e1) throw e1;
-        }
-
         const { error: e2 } = await supabase
           .from("swine_shipments")
           .update({
@@ -2058,7 +2105,7 @@ export default function ExportCsvPage() {
       await loadToFarmOptions();
 
       setMsg(
-        `Submit สำเร็จ ${submittedShipments.length} shipment และยืนยันสถานะหมู ${totalSwines} ตัว เป็น issued แล้ว`
+        `Submit สำเร็จ ${submittedShipments.length} shipment (${totalSwines} ตัว) และอัปเดตเฉพาะสถานะ shipment เป็น issued แล้ว`
       );
     } catch (e) {
       console.error("handleSubmitConfirm error:", e);
@@ -2073,6 +2120,7 @@ export default function ExportCsvPage() {
     loadToFarmOptions,
     refreshPreviewRows,
   ]);
+
 
   function handleDateFromChange(e) {
     const value = e.target.value;
@@ -2491,9 +2539,9 @@ export default function ExportCsvPage() {
                   lineHeight: 1.6,
                 }}
               >
-                รายงานนี้ใช้ฟาร์ม+flock และช่วงวันที่
+                รายงานนี้ใช้ฟาร์ม+flock และวันที่สิ้นสุด
                 <br />
-                เพื่อตรวจว่าเบอร์หมูใดบ้างยังไม่อยู่ใน shipment สถานะ draft/submitted/issued
+                เพื่อตรวจว่าเบอร์หมูใดบ้างยังไม่อยู่ใน shipment สถานะ draft/submitted/issued ณ วันสิ้นสุดที่เลือก
               </div>
             )}
           </div>
@@ -2613,7 +2661,7 @@ export default function ExportCsvPage() {
             <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
               Admin ดูข้อมูลได้ทั้งหมด แต่ต้องเลือกฟาร์ม+flock ก่อน
               <br />
-              และ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
+              และ Submit จะอัปเดตเฉพาะ shipment จาก submitted เป็น issued เมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
             </div>
           )}
 
@@ -2695,12 +2743,30 @@ export default function ExportCsvPage() {
                 }}
               >
                 <div style={{ fontSize: 12, color: "#64748b" }}>
-                  {reportType === "not_selected" ? "จำนวนหมูที่ถูกคัด" : "จำนวนหมูที่ถูกคัด"}
+                  {reportType === "not_selected" ? "จำนวนหมูคัดสะสมถึงวันสิ้นสุด" : "จำนวนหมูที่ถูกคัดในช่วงที่เลือก"}
                 </div>
                 <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
                   {previewMeta.selectedUniqueCount}
                 </div>
               </div>
+
+              {reportType === "raw" ? (
+                <div
+                  style={{
+                    border: "1px solid #e5e7eb",
+                    borderRadius: 16,
+                    padding: 14,
+                    background: "#f8fafc",
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    จำนวนหมูคัดสะสมถึงวันสิ้นสุด
+                  </div>
+                  <div style={{ marginTop: 6, fontSize: 22, fontWeight: 900, color: "#0f172a" }}>
+                    {previewMeta.cumulativeSelectedCount}
+                  </div>
+                </div>
+              ) : null}
 
               <div
                 style={{
