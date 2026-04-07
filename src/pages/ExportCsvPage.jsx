@@ -519,7 +519,7 @@ function exportPdfReport({
   });
 
   const detailRows = flatRows || [];
-  const pageSize = 40;
+  const pageSize = 30;
 
   for (let i = 0; i < detailRows.length; i += pageSize) {
     const chunk = detailRows.slice(i, i + pageSize);
