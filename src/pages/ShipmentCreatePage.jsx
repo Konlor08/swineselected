@@ -809,30 +809,64 @@ export default function ShipmentCreatePage() {
     setBackfat("");
   }, []);
 
-  const findReusableDraftHeader = useCallback(async () => {
-    if (!clean(currentUserId)) return null;
-    if (!clean(fromFarm?.farm_code)) return null;
-    if (!clean(fromFarm?.flock)) return null;
-    if (!clean(toFarmId)) return null;
-    if (!clean(selectedHouse)) return null;
+  const resetPageAfterSave = useCallback(() => {
+    setSelectedDate(todayYmdLocal());
+    setFromQ("");
+    setFromFarm(null);
+    setFromPickerOpen(true);
+
+    setToFarmId("");
+    setToFarm(null);
+    setToPickerOpen(true);
+
+    setAllAvailableSwines([]);
+    setHouseOptions([]);
+    setSelectedHouse("");
+
+    resetCandidateForm();
+    setPickedRows([]);
+    setRemark("");
+  }, [resetCandidateForm]);
+
+  const createDraftHeader = useCallback(async () => {
+    if (!clean(fromFarm?.farm_code)) throw new Error("กรุณาเลือกฟาร์มต้นทาง");
+    if (!clean(fromFarm?.flock)) throw new Error("กรุณาเลือก flock ต้นทาง");
+    if (!clean(toFarmId)) throw new Error("กรุณาเลือกฟาร์มปลายทาง");
+    if (!clean(selectedHouse)) throw new Error("กรุณาเลือกเล้า");
+    if (!clean(currentUserId)) throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
+
+    const payload = {
+      selected_date: selectedDate,
+      from_farm_code: clean(fromFarm?.farm_code) || null,
+      from_farm_name: clean(fromFarm?.farm_name) || null,
+      from_flock: clean(fromFarm?.flock) || null,
+      from_branch_id: fromFarm?.branch_id || null,
+      to_farm_id: clean(toFarmId) || null,
+      source_house_no: clean(selectedHouse) || null,
+      remark: clean(remark) || null,
+      status: "draft",
+      reservation_status: "consumed",
+      created_by: currentUserId,
+    };
 
     const { data, error } = await supabase
       .from("swine_shipments")
+      .insert([payload])
       .select("id")
-      .eq("created_by", currentUserId)
-      .eq("status", "draft")
-      .eq("selected_date", selectedDate)
-      .eq("from_farm_code", clean(fromFarm?.farm_code))
-      .eq("from_flock", clean(fromFarm?.flock))
-      .eq("to_farm_id", clean(toFarmId))
-      .eq("source_house_no", clean(selectedHouse))
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .single();
 
     if (error) throw error;
-    return data?.id || null;
-  }, [currentUserId, selectedDate, fromFarm?.farm_code, fromFarm?.flock, toFarmId, selectedHouse]);
+    if (!data?.id) throw new Error("สร้าง draft header ไม่สำเร็จ");
+
+    return data.id;
+  }, [
+    currentUserId,
+    selectedDate,
+    fromFarm,
+    toFarmId,
+    selectedHouse,
+    remark,
+  ]);
 
   const deleteEmptyDraftHeader = useCallback(async (shipmentId) => {
     const id = clean(shipmentId);
@@ -858,52 +892,6 @@ export default function ShipmentCreatePage() {
       console.warn("deleteEmptyDraftHeader warning:", cleanupError);
     }
   }, []);
-
-  const ensureDraftHeader = useCallback(async () => {
-    if (!clean(fromFarm?.farm_code)) throw new Error("กรุณาเลือกฟาร์มต้นทาง");
-    if (!clean(fromFarm?.flock)) throw new Error("กรุณาเลือก flock ต้นทาง");
-    if (!clean(toFarmId)) throw new Error("กรุณาเลือกฟาร์มปลายทาง");
-    if (!clean(selectedHouse)) throw new Error("กรุณาเลือกเล้า");
-    if (!clean(currentUserId)) throw new Error("ไม่พบผู้ใช้งานปัจจุบัน");
-
-    const reusableId = await findReusableDraftHeader();
-    if (clean(reusableId)) {
-      return { shipmentId: reusableId, createdNewHeader: false };
-    }
-
-    const payload = {
-      selected_date: selectedDate,
-      from_farm_code: clean(fromFarm?.farm_code) || null,
-      from_farm_name: clean(fromFarm?.farm_name) || null,
-      from_flock: clean(fromFarm?.flock) || null,
-      from_branch_id: fromFarm?.branch_id || null,
-      to_farm_id: clean(toFarmId) || null,
-      source_house_no: clean(selectedHouse) || null,
-      remark: clean(remark) || null,
-      status: "draft",
-      reservation_status: "consumed",
-      created_by: currentUserId,
-    };
-
-    const { data, error } = await supabase
-      .from("swine_shipments")
-      .insert([payload])
-      .select("id")
-      .single();
-
-    if (error) throw error;
-    if (!data?.id) throw new Error("สร้าง draft header ไม่สำเร็จ");
-
-    return { shipmentId: data.id, createdNewHeader: true };
-  }, [
-    currentUserId,
-    selectedDate,
-    fromFarm,
-    toFarmId,
-    selectedHouse,
-    remark,
-    findReusableDraftHeader,
-  ]);
 
   const findBlockingShipmentsBySwineCodes = useCallback(async (swineCodes, excludeShipmentId = "") => {
     const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
@@ -1250,19 +1238,11 @@ export default function ShipmentCreatePage() {
     setMsg("");
 
     let createdHeaderId = "";
-    let createdNewHeader = false;
 
     try {
       const pickedCodes = pickedRows.map((row) => clean(row.swine_code)).filter(Boolean);
 
-      const headerResult = await ensureDraftHeader();
-      const shipmentId = clean(headerResult?.shipmentId);
-      createdHeaderId = shipmentId;
-      createdNewHeader = !!headerResult?.createdNewHeader;
-
-      if (!shipmentId) throw new Error("ไม่พบ draft shipment");
-
-      const blockingMap = await findBlockingShipmentsBySwineCodes(pickedCodes, shipmentId);
+      const blockingMap = await findBlockingShipmentsBySwineCodes(pickedCodes);
       if (blockingMap.size > 0) {
         const [firstCode, firstShipment] = blockingMap.entries().next().value;
         throw new Error(
@@ -1270,30 +1250,12 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      const { error: headerError } = await supabase
-        .from("swine_shipments")
-        .update({
-          selected_date: selectedDate,
-          from_farm_code: clean(fromFarm?.farm_code) || null,
-          from_farm_name: clean(fromFarm?.farm_name) || null,
-          from_flock: clean(fromFarm?.flock) || null,
-          from_branch_id: fromFarm?.branch_id || null,
-          to_farm_id: clean(toFarmId) || null,
-          source_house_no: clean(selectedHouse) || null,
-          remark: clean(remark) || null,
-          status: "draft",
-          reservation_status: "consumed",
-        })
-        .eq("id", shipmentId);
+      const shipmentId = clean(await createDraftHeader());
+      createdHeaderId = shipmentId;
 
-      if (headerError) throw headerError;
-
-      const { error: deleteOldItemsError } = await supabase
-        .from("swine_shipment_items")
-        .delete()
-        .eq("shipment_id", shipmentId);
-
-      if (deleteOldItemsError) throw deleteOldItemsError;
+      if (!shipmentId) {
+        throw new Error("สร้าง draft shipment ไม่สำเร็จ");
+      }
 
       const itemPayload = pickedRows.map((row, idx) => ({
         shipment_id: shipmentId,
@@ -1320,23 +1282,28 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
-        p_selected_date: selectedDate,
-        p_from_farm_code: clean(fromFarm?.farm_code) || null,
-        p_to_farm_id: clean(toFarmId) || null,
-        p_priority_shipment_id: shipmentId,
-      });
+      let resequenceWarning = "";
 
-      if (resequenceRes.error) throw resequenceRes.error;
+      try {
+        const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
+          p_selected_date: selectedDate,
+          p_from_farm_code: clean(fromFarm?.farm_code) || null,
+          p_to_farm_id: clean(toFarmId) || null,
+          p_priority_shipment_id: shipmentId,
+        });
+
+        if (resequenceRes.error) {
+          console.warn("resequence warning:", resequenceRes.error);
+          resequenceWarning = " แต่จัดลำดับกลุ่มไม่สมบูรณ์";
+        }
+      } catch (resequenceErr) {
+        console.warn("resequence exception:", resequenceErr);
+        resequenceWarning = " แต่จัดลำดับกลุ่มไม่สมบูรณ์";
+      }
 
       clearLocalDraft();
-
-      nav("/user-home", {
-        replace: true,
-        state: {
-          msg: `บันทึก Draft สำเร็จ ✅ (${shipmentId})`,
-        },
-      });
+      resetPageAfterSave();
+      setMsg(`บันทึก Draft สำเร็จ ✅ (${shipmentId})${resequenceWarning}`);
     } catch (e) {
       console.error("handleSaveDraft error:", {
         message: e?.message,
@@ -1346,7 +1313,7 @@ export default function ShipmentCreatePage() {
         raw: e,
       });
 
-      if (createdNewHeader && clean(createdHeaderId)) {
+      if (clean(createdHeaderId)) {
         await deleteEmptyDraftHeader(createdHeaderId);
       }
 
@@ -1361,17 +1328,15 @@ export default function ShipmentCreatePage() {
     isOnline,
     canSaveDraft,
     pickedRows,
-    ensureDraftHeader,
     findBlockingShipmentsBySwineCodes,
+    createDraftHeader,
     selectedDate,
     fromFarm,
     toFarmId,
-    selectedHouse,
-    remark,
-    nav,
     deleteEmptyDraftHeader,
     loadSelectableSwinesOfFarm,
     clearLocalDraft,
+    resetPageAfterSave,
   ]);
 
   if (bootLoading || !draftHydrated) {
