@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { formatDateDisplay } from "../lib/dateFormat";
@@ -172,8 +172,11 @@ function hasAnyDraftContent({
   pickedRows,
   remark,
 }) {
+  const dateValue = clean(selectedDate);
+  const hasMeaningfulDate = dateValue && dateValue !== todayYmdLocal();
+
   return Boolean(
-    clean(selectedDate) ||
+    hasMeaningfulDate ||
       clean(fromFarm?.farm_code) ||
       clean(toFarmId) ||
       clean(selectedHouse) ||
@@ -350,6 +353,7 @@ export default function ShipmentCreatePage() {
   const [draftNotice, setDraftNotice] = useState("");
 
   const draftKey = useMemo(() => getLocalDraftKey(currentUserId), [currentUserId]);
+  const skipNextLocalSaveRef = useRef(false);
 
   useEffect(() => {
     function handleOnline() {
@@ -392,12 +396,16 @@ export default function ShipmentCreatePage() {
   }, []);
 
   const clearLocalDraft = useCallback(() => {
-    if (!canUseLocalStorage()) return;
+    skipNextLocalSaveRef.current = true;
+
     try {
-      window.localStorage.removeItem(draftKey);
+      if (canUseLocalStorage()) {
+        window.localStorage.removeItem(draftKey);
+      }
     } catch (e) {
       console.warn("clearLocalDraft warning:", e);
     }
+
     setDraftInfo({
       bytes: 0,
       nearLimit: false,
@@ -483,6 +491,11 @@ export default function ShipmentCreatePage() {
     if (!draftHydrated || !currentUserId) return;
     if (!canUseLocalStorage()) return;
 
+    if (skipNextLocalSaveRef.current) {
+      skipNextLocalSaveRef.current = false;
+      return;
+    }
+
     const payload = {
       version: LOCAL_DRAFT_VERSION,
       savedAt: new Date().toISOString(),
@@ -521,13 +534,13 @@ export default function ShipmentCreatePage() {
     try {
       if (!hasContent) {
         window.localStorage.removeItem(draftKey);
-        setDraftInfo({
+        setDraftInfo((prev) => ({
+          ...prev,
           bytes: 0,
           nearLimit: false,
           quotaExceeded: false,
           lastSavedAt: "",
-          restoredAt: draftInfo.restoredAt,
-        });
+        }));
         setDraftNotice("");
         return;
       }
@@ -593,7 +606,6 @@ export default function ShipmentCreatePage() {
     pickedRows,
     remark,
     draftNotice,
-    draftInfo.restoredAt,
   ]);
 
   const loadFromFarms = useCallback(async () => {
@@ -1198,7 +1210,7 @@ export default function ShipmentCreatePage() {
 
     if (hasContent) {
       const ok = window.confirm(
-        "ยืนยัน Cancel ใช่หรือไม่?\nระบบจะล้างข้อมูลค้างในหน้านี้และกลับไปหน้า Home"
+        "ยืนยัน Back / Cancel ใช่หรือไม่?\nระบบจะล้างข้อมูลค้างในหน้านี้และกลับไปหน้า Home"
       );
       if (!ok) return;
     }
