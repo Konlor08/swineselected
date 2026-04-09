@@ -57,6 +57,17 @@ function createEmptyPreviewMeta() {
   };
 }
 
+function createEmptyHeatSummary() {
+  return {
+    is_heat: "N",
+    total_heat_count: 0,
+    heat_1_date: "",
+    heat_2_date: "",
+    heat_3_date: "",
+    heat_4_date: "",
+  };
+}
+
 function summarizeShipmentStatuses(shipments) {
   const counts = emptyShipmentStatusCounts();
   const seen = new Set();
@@ -1441,31 +1452,45 @@ export default function ExportCsvPage() {
     if (!uniqueCodes.length) return {};
 
     const chunks = chunkArray(uniqueCodes, 200);
-    const allRows = [];
+    const map = {};
 
     for (const chunk of chunks) {
       const { data, error } = await supabase
-        .from("swine_heat_report")
-        .select(
-          "swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count"
-        )
-        .in("swine_code", chunk);
+        .from("swine_heat_events")
+        .select("swine_code, heat_no, corrected_heat_date")
+        .in("swine_code", chunk)
+        .eq("is_active", true)
+        .is("deleted_at", null)
+        .order("swine_code", { ascending: true })
+        .order("heat_no", { ascending: true })
+        .order("corrected_heat_date", { ascending: true });
 
       if (error) throw error;
-      allRows.push(...(data || []));
-    }
 
-    const map = {};
-    for (const row of allRows) {
-      const totalHeat = Number(row?.total_heat_count || 0);
-      map[clean(row.swine_code)] = {
-        is_heat: totalHeat > 0 ? "Y" : "N",
-        total_heat_count: totalHeat,
-        heat_1_date: row?.heat_1_date || "",
-        heat_2_date: row?.heat_2_date || "",
-        heat_3_date: row?.heat_3_date || "",
-        heat_4_date: row?.heat_4_date || "",
-      };
+      for (const row of data || []) {
+        const swineCode = clean(row?.swine_code);
+        const heatNo = Number(row?.heat_no || 0);
+        const heatDate = clean(row?.corrected_heat_date);
+
+        if (!swineCode) continue;
+
+        if (!map[swineCode]) {
+          map[swineCode] = createEmptyHeatSummary();
+        }
+
+        map[swineCode].total_heat_count += 1;
+        map[swineCode].is_heat = "Y";
+
+        if (heatNo === 1) {
+          map[swineCode].heat_1_date = heatDate || map[swineCode].heat_1_date;
+        } else if (heatNo === 2) {
+          map[swineCode].heat_2_date = heatDate || map[swineCode].heat_2_date;
+        } else if (heatNo === 3) {
+          map[swineCode].heat_3_date = heatDate || map[swineCode].heat_3_date;
+        } else if (heatNo === 4) {
+          map[swineCode].heat_4_date = heatDate || map[swineCode].heat_4_date;
+        }
+      }
     }
 
     return map;
@@ -1656,14 +1681,7 @@ export default function ExportCsvPage() {
       for (const item of shipment.items || []) {
         const code = clean(item?.swine_code);
         const swine = swineMap[code] || {};
-        const heat = heatMap[code] || {
-          is_heat: "N",
-          total_heat_count: 0,
-          heat_1_date: "",
-          heat_2_date: "",
-          heat_3_date: "",
-          heat_4_date: "",
-        };
+        const heat = heatMap[code] || createEmptyHeatSummary();
 
         const ageRefDate = clean(shipment?.delivery_date) || clean(shipment?.selected_date);
 
@@ -1740,14 +1758,7 @@ export default function ExportCsvPage() {
 
     const rows = notSelected.map((row) => {
       const code = clean(row?.swine_code);
-      const heat = heatMap[code] || {
-        is_heat: "N",
-        total_heat_count: 0,
-        heat_1_date: "",
-        heat_2_date: "",
-        heat_3_date: "",
-        heat_4_date: "",
-      };
+      const heat = heatMap[code] || createEmptyHeatSummary();
 
       return {
         farm_code: row?.farm_code || "",
@@ -1782,7 +1793,6 @@ export default function ExportCsvPage() {
     fetchBaseSwinesByScope,
     fetchCumulativeSelectedSnapshot,
   ]);
-
 
   const refreshPreviewRows = useCallback(async () => {
     const reqId = ++previewReqRef.current;
@@ -1867,7 +1877,6 @@ export default function ExportCsvPage() {
     effectiveDateTo,
     toFarmId,
   ]);
-
 
   const handleSaveDeliveryDate = useCallback(
     async (shipment) => {
@@ -2157,7 +2166,6 @@ export default function ExportCsvPage() {
     loadToFarmOptions,
     refreshPreviewRows,
   ]);
-
 
   function handleDateFromChange(e) {
     const value = e.target.value;
