@@ -99,6 +99,61 @@ async function fetchAllPages(fetcher, pageSize = PAGE_SIZE) {
   return rows;
 }
 
+async function fetchHeatSummaryMapByCodes(swineCodes = []) {
+  const codes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
+  const heatMap = new Map();
+
+  for (const swineCodeChunk of chunkArray(codes, SWINE_CODE_CHUNK_SIZE)) {
+    if (!swineCodeChunk.length) continue;
+
+    const { data: heatEvents, error: heatError } = await supabase
+      .from("swine_heat_events")
+      .select("swine_code, heat_no, corrected_heat_date")
+      .in("swine_code", swineCodeChunk)
+      .eq("is_active", true)
+      .is("deleted_at", null)
+      .order("swine_code", { ascending: true })
+      .order("heat_no", { ascending: true })
+      .order("corrected_heat_date", { ascending: true });
+
+    if (heatError) throw heatError;
+
+    for (const ev of heatEvents || []) {
+      const swineCode = clean(ev?.swine_code);
+      const heatDate = clean(ev?.corrected_heat_date);
+      const heatNo = Number(ev?.heat_no || 0);
+
+      if (!swineCode) continue;
+
+      if (!heatMap.has(swineCode)) {
+        heatMap.set(swineCode, {
+          swine_code: swineCode,
+          total_heat_count: 0,
+          latest_heat_date: "",
+          heat_1_date: "",
+          heat_2_date: "",
+          heat_3_date: "",
+          heat_4_date: "",
+        });
+      }
+
+      const row = heatMap.get(swineCode);
+      row.total_heat_count += 1;
+
+      if (heatDate && (!row.latest_heat_date || heatDate > row.latest_heat_date)) {
+        row.latest_heat_date = heatDate;
+      }
+
+      if (heatNo === 1) row.heat_1_date = heatDate;
+      else if (heatNo === 2) row.heat_2_date = heatDate;
+      else if (heatNo === 3) row.heat_3_date = heatDate;
+      else if (heatNo === 4) row.heat_4_date = heatDate;
+    }
+  }
+
+  return heatMap;
+}
+
 const cardStyle = {
   border: "1px solid #e5e7eb",
   borderRadius: 14,
@@ -505,36 +560,11 @@ export default function SummaryPage() {
           .map((x) => clean(x?.swine_code))
           .filter(Boolean);
 
-        const heatMap = new Map();
-
-        for (const swineCodeChunk of chunkArray(remainingCodes, SWINE_CODE_CHUNK_SIZE)) {
-          if (!swineCodeChunk.length) continue;
-
-          const { data: heatData, error: heatError } = await supabase
-            .from("swine_heat_report")
-            .select("swine_code, heat_1_date, heat_2_date, heat_3_date, heat_4_date, total_heat_count")
-            .in("swine_code", swineCodeChunk);
-
-          if (heatError) throw heatError;
-
-          for (const row2 of heatData || []) {
-            heatMap.set(clean(row2?.swine_code), row2);
-          }
-        }
+        const heatMap = await fetchHeatSummaryMapByCodes(remainingCodes);
 
         const rows = remainingBaseRows
           .map((sw) => {
             const heat = heatMap.get(clean(sw?.swine_code));
-            const latestHeatDate = [
-              clean(heat?.heat_1_date),
-              clean(heat?.heat_2_date),
-              clean(heat?.heat_3_date),
-              clean(heat?.heat_4_date),
-            ]
-              .filter(Boolean)
-              .sort()
-              .at(-1);
-
             const birthDate = clean(sw?.birth_date);
             const ageDays = birthDate
               ? Math.floor(
@@ -548,7 +578,7 @@ export default function SummaryPage() {
               birth_date: birthDate,
               age_days: Number.isFinite(ageDays) ? ageDays : "",
               total_heat_count: Number(heat?.total_heat_count || 0),
-              latest_heat_date: latestHeatDate || "",
+              latest_heat_date: clean(heat?.latest_heat_date),
             };
           })
           .sort((a, b) => String(a?.swine_code).localeCompare(String(b?.swine_code), "th"));
