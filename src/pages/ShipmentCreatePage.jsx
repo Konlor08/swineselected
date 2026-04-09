@@ -810,19 +810,6 @@ export default function ShipmentCreatePage() {
   }, []);
 
   const resetPageAfterSave = useCallback(() => {
-    setSelectedDate(todayYmdLocal());
-    setFromQ("");
-    setFromFarm(null);
-    setFromPickerOpen(true);
-
-    setToFarmId("");
-    setToFarm(null);
-    setToPickerOpen(true);
-
-    setAllAvailableSwines([]);
-    setHouseOptions([]);
-    setSelectedHouse("");
-
     resetCandidateForm();
     setPickedRows([]);
     setRemark("");
@@ -1303,6 +1290,11 @@ export default function ShipmentCreatePage() {
 
       clearLocalDraft();
       resetPageAfterSave();
+
+      if (isOnline && clean(fromFarm?.farm_code)) {
+        void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+      }
+
       setMsg(`บันทึก Draft สำเร็จ ✅ (${shipmentId})${resequenceWarning}`);
     } catch (e) {
       console.error("handleSaveDraft error:", {
@@ -1958,11 +1950,4 @@ export default function ShipmentCreatePage() {
       </div>
     </div>
   );
-
-
-
-
-
-
-
 }
