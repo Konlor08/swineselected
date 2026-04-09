@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { supabase } from "./lib/supabase";
 import { fetchMyProfile } from "./lib/profile";
@@ -21,6 +21,9 @@ import SummaryPage from "./pages/SummaryPage.jsx";
 const ROLE_ADMIN = ["admin"];
 const ROLE_USER_OR_ADMIN = ["user", "admin"];
 
+const AUTH_RETRY_ATTEMPTS = 2;
+const AUTH_RETRY_DELAY_MS = 800;
+
 function Splash() {
   return (
     <div className="page">
@@ -41,77 +44,187 @@ function Splash() {
   );
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getStableSession({
+  attempts = AUTH_RETRY_ATTEMPTS,
+  delayMs = AUTH_RETRY_DELAY_MS,
+} = {}) {
+  let lastError = null;
+
+  for (let i = 0; i < attempts; i += 1) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      lastError = error;
+    }
+
+    const session = data?.session || null;
+    if (session?.user?.id) {
+      return { session, error: null };
+    }
+
+    if (i < attempts - 1) {
+      await sleep(delayMs);
+    }
+  }
+
+  return { session: null, error: lastError };
+}
+
+async function resolveRequireRoleState(allowSet) {
+  const { session, error } = await getStableSession();
+
+  if (error) {
+    console.warn("resolveRequireRoleState session warning:", error);
+  }
+
+  if (!session?.user?.id) {
+    return { status: "login", redirectTo: "/login" };
+  }
+
+  const profile = await fetchMyProfile(session.user.id);
+
+  if (!profile) {
+    return { status: "no-profile", redirectTo: "/no-profile" };
+  }
+
+  if (profile.is_active === false || String(profile.role || "").toLowerCase() === "disabled") {
+    return { status: "disabled", redirectTo: "/disabled" };
+  }
+
+  const role = String(profile.role || "user").toLowerCase();
+
+  if (allowSet.has(role)) {
+    return { status: "allowed", redirectTo: "" };
+  }
+
+  return {
+    status: "forbidden",
+    redirectTo: role === "admin" ? "/admin" : "/user-home",
+  };
+}
+
+async function resolveRootTarget() {
+  const { session, error } = await getStableSession();
+
+  if (error) {
+    console.warn("resolveRootTarget session warning:", error);
+  }
+
+  if (!session?.user?.id) {
+    return "/login";
+  }
+
+  const profile = await fetchMyProfile(session.user.id);
+
+  if (!profile) {
+    return "/no-profile";
+  }
+
+  if (profile.is_active === false || String(profile.role || "").toLowerCase() === "disabled") {
+    return "/disabled";
+  }
+
+  const role = String(profile.role || "user").toLowerCase();
+  return role === "admin" ? "/admin" : "/user-home";
+}
+
 function RequireRole({ roleAllow, children }) {
-  const [loading, setLoading] = useState(true);
-  const [ok, setOk] = useState(false);
+  const [guardState, setGuardState] = useState({
+    status: "checking",
+    redirectTo: "/login",
+  });
 
   const allowSet = useMemo(() => {
     return new Set(roleAllow.map((r) => String(r).toLowerCase()));
   }, [roleAllow]);
 
+  const seqRef = useRef(0);
+
   useEffect(() => {
     let alive = true;
-    let running = false;
 
-    async function run() {
-      if (running) return;
-      running = true;
+    async function evaluate() {
+      const seq = ++seqRef.current;
+
+      if (alive) {
+        setGuardState((prev) => ({
+          status: "checking",
+          redirectTo: prev?.redirectTo || "/login",
+        }));
+      }
 
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
+        const result = await resolveRequireRoleState(allowSet);
 
-        const session = data?.session;
-        if (!session?.user?.id) {
-          if (alive) {
-            setOk(false);
-            setLoading(false);
-          }
-          return;
-        }
+        if (!alive || seq !== seqRef.current) return;
 
-        const profile = await fetchMyProfile(session.user.id);
-
-        if (!profile || profile.is_active === false) {
-          if (alive) {
-            setOk(false);
-            setLoading(false);
-          }
-          return;
-        }
-
-        const role = String(profile.role || "user").toLowerCase();
-
-        if (alive) {
-          setOk(allowSet.has(role));
-          setLoading(false);
-        }
+        setGuardState(result);
       } catch (err) {
-        console.error("RequireRole error:", err);
-        if (alive) {
-          setOk(false);
-          setLoading(false);
+        console.error("RequireRole evaluate error:", err);
+
+        if (!alive || seq !== seqRef.current) return;
+
+        setGuardState({
+          status: "checking",
+          redirectTo: "/login",
+        });
+
+        try {
+          const retryResult = await resolveRequireRoleState(allowSet);
+
+          if (!alive || seq !== seqRef.current) return;
+
+          setGuardState(retryResult);
+        } catch (retryErr) {
+          console.error("RequireRole retry error:", retryErr);
+
+          if (!alive || seq !== seqRef.current) return;
+
+          setGuardState({
+            status: "login",
+            redirectTo: "/login",
+          });
         }
-      } finally {
-        running = false;
       }
     }
 
-    run();
+    void evaluate();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(() => {
-      run();
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (!alive) return;
+
+      if (event === "SIGNED_OUT") {
+        seqRef.current += 1;
+        setGuardState({
+          status: "login",
+          redirectTo: "/login",
+        });
+        return;
+      }
+
+      void evaluate();
     });
 
     return () => {
       alive = false;
-      sub?.subscription?.unsubscribe?.();
+      subscription?.unsubscribe?.();
     };
   }, [allowSet]);
 
-  if (loading) return <Splash />;
-  if (!ok) return <Navigate to="/login" replace />;
-  return children;
+  if (guardState.status === "checking") return <Splash />;
+  if (guardState.status === "allowed") return children;
+  if (guardState.status === "disabled") return <Navigate to="/disabled" replace />;
+  if (guardState.status === "no-profile") return <Navigate to="/no-profile" replace />;
+  if (guardState.status === "forbidden") {
+    return <Navigate to={guardState.redirectTo || "/"} replace />;
+  }
+
+  return <Navigate to="/login" replace />;
 }
 
 function RootRedirect() {
@@ -123,53 +236,23 @@ function RootRedirect() {
 
     async function run() {
       try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) throw error;
+        const target = await resolveRootTarget();
 
-        const session = data?.session;
+        if (!alive) return;
 
-        if (!session?.user?.id) {
-          if (alive) {
-            setTo("/login");
-            setLoading(false);
-          }
-          return;
-        }
-
-        const profile = await fetchMyProfile(session.user.id);
-
-        if (!profile) {
-          if (alive) {
-            setTo("/no-profile");
-            setLoading(false);
-          }
-          return;
-        }
-
-        if (profile.is_active === false) {
-          if (alive) {
-            setTo("/disabled");
-            setLoading(false);
-          }
-          return;
-        }
-
-        const role = String(profile.role || "user").toLowerCase();
-
-        if (alive) {
-          setTo(role === "admin" ? "/admin" : "/user-home");
-          setLoading(false);
-        }
+        setTo(target);
+        setLoading(false);
       } catch (err) {
         console.error("RootRedirect error:", err);
-        if (alive) {
-          setTo("/login");
-          setLoading(false);
-        }
+
+        if (!alive) return;
+
+        setTo("/login");
+        setLoading(false);
       }
     }
 
-    run();
+    void run();
 
     return () => {
       alive = false;
