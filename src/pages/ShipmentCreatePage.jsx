@@ -1,5 +1,3 @@
-// src/pages/ShipmentCreatePage.jsx
-
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -13,7 +11,7 @@ const ID_CHUNK_SIZE = 500;
 
 const LOCAL_DRAFT_VERSION = 1;
 const LOCAL_DRAFT_PREFIX = "shipment-create-local-draft";
-const LOCAL_DRAFT_SOFT_LIMIT_BYTES = 4 * 1024 * 1024; // เตือนก่อนเต็มจริง
+const LOCAL_DRAFT_SOFT_LIMIT_BYTES = 4 * 1024 * 1024;
 const LOCAL_DRAFT_NEAR_LIMIT_RATIO = 0.8;
 
 function clean(v) {
