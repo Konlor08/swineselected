@@ -10,6 +10,38 @@ import autoTable from "jspdf-autotable";
 import { registerSarabunNormal } from "../lib/pdfFonts/sarabun-normal";
 import { registerSarabunBold } from "../lib/pdfFonts/sarabun-bold";
 
+const AUTH_RETRY_ATTEMPTS = 2;
+const AUTH_RETRY_DELAY_MS = 800;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function getStableSession({
+  attempts = AUTH_RETRY_ATTEMPTS,
+  delayMs = AUTH_RETRY_DELAY_MS,
+} = {}) {
+  let lastError = null;
+
+  for (let i = 0; i < attempts; i += 1) {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      lastError = error;
+    }
+
+    const session = data?.session || null;
+    if (session?.user?.id) {
+      return { session, error: null };
+    }
+
+    if (i < attempts - 1) {
+      await sleep(delayMs);
+    }
+  }
+
+  return { session: null, error: lastError };
+}
+
 function todayYmdLocal() {
   const d = new Date();
   const year = d.getFullYear();
@@ -1064,24 +1096,27 @@ export default function ExportCsvPage() {
   useEffect(() => {
     let alive = true;
 
-    async function initForCurrentSession() {
+    async function initForCurrentSession(options = {}) {
+      const { preserveUi = false } = options;
       const runId = ++authSeqRef.current;
-      setPageLoading(true);
-      setMsg("");
-      setPreviewRows([]);
+
+      if (!preserveUi) {
+        setPageLoading(true);
+        setMsg("");
+        setPreviewRows([]);
+      }
 
       try {
-        const {
-          data: { session },
-          error,
-        } = await supabase.auth.getSession();
+        const { session, error } = await getStableSession();
         if (error) throw error;
 
         const uid = session?.user?.id || null;
+
         if (!uid) {
           if (alive && authSeqRef.current === runId) {
             resetRuntimeState();
             setMsg("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
+            setPageLoading(false);
           }
           return;
         }
@@ -1094,29 +1129,38 @@ export default function ExportCsvPage() {
         setMyRole(role);
 
         if (profile?.is_active === false) {
-          setMyScope([]);
+          if (!preserveUi) {
+            setMyScope([]);
+          }
           setMsg("ผู้ใช้งานถูกปิดสิทธิ์");
+          setPageLoading(false);
           return;
         }
 
         if (role === "admin") {
           setMyScope([]);
+          setPageLoading(false);
           return;
         }
 
         const scope = await loadMyFarmFlockScope(uid);
         if (!alive || authSeqRef.current !== runId) return;
+
         setMyScope(scope);
+        setPageLoading(false);
       } catch (e) {
         console.error("init ExportCsvPage error:", e);
-        if (alive && authSeqRef.current === runId) {
-          resetRuntimeState();
-          setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+
+        if (!alive || authSeqRef.current !== runId) return;
+
+        if (preserveUi) {
+          setMsg((prev) => prev || "session refresh ไม่สำเร็จ แต่ยังคงข้อมูลบนหน้าไว้");
+          return;
         }
-      } finally {
-        if (alive && authSeqRef.current === runId) {
-          setPageLoading(false);
-        }
+
+        resetRuntimeState();
+        setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+        setPageLoading(false);
       }
     }
 
@@ -1124,10 +1168,17 @@ export default function ExportCsvPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      resetRuntimeState();
-      setPageLoading(true);
-      void initForCurrentSession();
+    } = supabase.auth.onAuthStateChange((event) => {
+      if (!alive) return;
+
+      if (event === "SIGNED_OUT") {
+        resetRuntimeState();
+        setPageLoading(false);
+        setMsg("session หมดอายุ กรุณา login ใหม่");
+        return;
+      }
+
+      void initForCurrentSession({ preserveUi: true });
     });
 
     return () => {

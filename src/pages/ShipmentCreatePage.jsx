@@ -1,3 +1,5 @@
+// src/pages/ShipmentCreatePage.jsx
+
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
@@ -8,6 +10,11 @@ const ACTIVE_STATUSES = ["draft", "submitted", "issued"];
 const PAGE_SIZE = 1000;
 const CODE_CHUNK_SIZE = 500;
 const ID_CHUNK_SIZE = 500;
+
+const LOCAL_DRAFT_VERSION = 1;
+const LOCAL_DRAFT_PREFIX = "shipment-create-local-draft";
+const LOCAL_DRAFT_SOFT_LIMIT_BYTES = 4 * 1024 * 1024; // เตือนก่อนเต็มจริง
+const LOCAL_DRAFT_NEAR_LIMIT_RATIO = 0.8;
 
 function clean(v) {
   return String(v ?? "").trim();
@@ -94,31 +101,102 @@ async function fetchAllPages(fetcher, pageSize = PAGE_SIZE) {
   return rows;
 }
 
-const cardStyle = {
-  border: "1px solid #e5e7eb",
-  borderRadius: 16,
-  padding: 14,
-  background: "#fff",
-};
+function canUseLocalStorage() {
+  try {
+    return typeof window !== "undefined" && !!window.localStorage;
+  } catch {
+    return false;
+  }
+}
 
-const labelStyle = {
-  fontSize: 13,
-  fontWeight: 700,
-  marginBottom: 6,
-  color: "#374151",
-};
+function getLocalDraftKey(userId) {
+  return `${LOCAL_DRAFT_PREFIX}:${clean(userId) || "anonymous"}`;
+}
 
-const inputStyle = {
-  width: "100%",
-  padding: 10,
-  borderRadius: 12,
-  border: "1px solid #d1d5db",
-  boxSizing: "border-box",
-  minWidth: 0,
-  background: "#fff",
-};
+function getTextByteSize(text) {
+  try {
+    return new TextEncoder().encode(String(text || "")).length;
+  } catch {
+    return String(text || "").length * 2;
+  }
+}
 
-function FarmSelectedCard({ title, farm, subtitle, onChange, changeLabel = "เปลี่ยนฟาร์ม" }) {
+function formatBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function isQuotaExceededError(error) {
+  if (!error) return false;
+  const name = String(error?.name || "");
+  const code = Number(error?.code || 0);
+  const message = String(error?.message || "").toLowerCase();
+
+  return (
+    name === "QuotaExceededError" ||
+    name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    code === 22 ||
+    code === 1014 ||
+    message.includes("quota") ||
+    message.includes("storage")
+  );
+}
+
+function normalizePickedRows(rows) {
+  if (!Array.isArray(rows)) return [];
+
+  return rows
+    .map((row, idx) => ({
+      temp_id: clean(row?.temp_id) || `picked-restored-${idx}-${Date.now()}`,
+      swine_id: row?.swine_id || null,
+      swine_code: clean(row?.swine_code),
+      house_no: clean(row?.house_no),
+      teats_left: clean(row?.teats_left),
+      teats_right: clean(row?.teats_right),
+      weight: clean(row?.weight),
+      backfat: clean(row?.backfat),
+    }))
+    .filter((row) => row.swine_code);
+}
+
+function hasAnyDraftContent({
+  selectedDate,
+  fromFarm,
+  toFarmId,
+  selectedHouse,
+  swineQ,
+  teatsLeft,
+  teatsRight,
+  weight,
+  backfat,
+  pickedRows,
+  remark,
+}) {
+  return Boolean(
+    clean(selectedDate) ||
+      clean(fromFarm?.farm_code) ||
+      clean(toFarmId) ||
+      clean(selectedHouse) ||
+      clean(swineQ) ||
+      clean(teatsLeft) ||
+      clean(teatsRight) ||
+      clean(weight) ||
+      clean(backfat) ||
+      clean(remark) ||
+      (Array.isArray(pickedRows) && pickedRows.length > 0)
+  );
+}
+
+function FarmSelectedCard({
+  title,
+  farm,
+  subtitle,
+  onChange,
+  changeLabel = "เปลี่ยนฟาร์ม",
+  disabled = false,
+}) {
   return (
     <div style={{ ...cardStyle, display: "grid", gap: 8 }}>
       <div style={{ fontWeight: 900 }}>{title}</div>
@@ -136,7 +214,7 @@ function FarmSelectedCard({ title, farm, subtitle, onChange, changeLabel = "เ�
       )}
 
       <div>
-        <button type="button" onClick={onChange}>
+        <button type="button" onClick={onChange} disabled={disabled}>
           {changeLabel}
         </button>
       </div>
@@ -198,6 +276,30 @@ function QrPreviewBox({ value }) {
   );
 }
 
+const cardStyle = {
+  border: "1px solid #e5e7eb",
+  borderRadius: 16,
+  padding: 14,
+  background: "#fff",
+};
+
+const labelStyle = {
+  fontSize: 13,
+  fontWeight: 700,
+  marginBottom: 6,
+  color: "#374151",
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: 10,
+  borderRadius: 12,
+  border: "1px solid #d1d5db",
+  boxSizing: "border-box",
+  minWidth: 0,
+  background: "#fff",
+};
+
 export default function ShipmentCreatePage() {
   const nav = useNavigate();
 
@@ -205,6 +307,10 @@ export default function ShipmentCreatePage() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [loadingBlocking, setLoadingBlocking] = useState(false);
   const [msg, setMsg] = useState("");
+
+  const [isOnline, setIsOnline] = useState(() =>
+    typeof navigator !== "undefined" ? navigator.onLine : true
+  );
 
   const [currentUserId, setCurrentUserId] = useState("");
   const [selectedDate, setSelectedDate] = useState(todayYmdLocal());
@@ -235,6 +341,35 @@ export default function ShipmentCreatePage() {
   const [pickedRows, setPickedRows] = useState([]);
   const [remark, setRemark] = useState("");
 
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftInfo, setDraftInfo] = useState({
+    bytes: 0,
+    nearLimit: false,
+    quotaExceeded: false,
+    lastSavedAt: "",
+    restoredAt: "",
+  });
+  const [draftNotice, setDraftNotice] = useState("");
+
+  const draftKey = useMemo(() => getLocalDraftKey(currentUserId), [currentUserId]);
+
+  useEffect(() => {
+    function handleOnline() {
+      setIsOnline(true);
+    }
+    function handleOffline() {
+      setIsOnline(false);
+    }
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
 
@@ -258,7 +393,217 @@ export default function ShipmentCreatePage() {
     };
   }, []);
 
+  const clearLocalDraft = useCallback(() => {
+    if (!canUseLocalStorage()) return;
+    try {
+      window.localStorage.removeItem(draftKey);
+    } catch (e) {
+      console.warn("clearLocalDraft warning:", e);
+    }
+    setDraftInfo({
+      bytes: 0,
+      nearLimit: false,
+      quotaExceeded: false,
+      lastSavedAt: "",
+      restoredAt: "",
+    });
+    setDraftNotice("");
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!currentUserId) {
+      setDraftHydrated(true);
+      return;
+    }
+
+    if (!canUseLocalStorage()) {
+      setDraftHydrated(true);
+      setDraftNotice("เบราว์เซอร์นี้ไม่รองรับ localStorage จึงเก็บงานค้างอัตโนมัติไม่ได้");
+      return;
+    }
+
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (!raw) {
+        setDraftHydrated(true);
+        return;
+      }
+
+      const parsed = JSON.parse(raw || "{}");
+      if (Number(parsed?.version || 0) !== LOCAL_DRAFT_VERSION) {
+        setDraftHydrated(true);
+        return;
+      }
+
+      setSelectedDate(clean(parsed?.selectedDate) || todayYmdLocal());
+      setFromQ(clean(parsed?.fromQ));
+      setFromFarm(parsed?.fromFarm || null);
+      setFromPickerOpen(
+        typeof parsed?.fromPickerOpen === "boolean"
+          ? parsed.fromPickerOpen
+          : !parsed?.fromFarm
+      );
+
+      setToFarmId(clean(parsed?.toFarmId));
+      setToFarm(parsed?.toFarm || null);
+      setToPickerOpen(
+        typeof parsed?.toPickerOpen === "boolean"
+          ? parsed.toPickerOpen
+          : !clean(parsed?.toFarmId)
+      );
+
+      setSelectedHouse(clean(parsed?.selectedHouse));
+      setSwineQ(clean(parsed?.swineQ));
+      setSelectedCandidateSwineId(clean(parsed?.selectedCandidateSwineId));
+      setTeatsLeft(clean(parsed?.teatsLeft));
+      setTeatsRight(clean(parsed?.teatsRight));
+      setWeight(clean(parsed?.weight));
+      setBackfat(clean(parsed?.backfat));
+      setPickedRows(normalizePickedRows(parsed?.pickedRows));
+      setRemark(clean(parsed?.remark));
+
+      const bytes = getTextByteSize(raw);
+      setDraftInfo({
+        bytes,
+        nearLimit:
+          bytes >= LOCAL_DRAFT_SOFT_LIMIT_BYTES * LOCAL_DRAFT_NEAR_LIMIT_RATIO,
+        quotaExceeded: false,
+        lastSavedAt: clean(parsed?.savedAt),
+        restoredAt: new Date().toISOString(),
+      });
+
+      setDraftNotice("กู้คืนข้อมูลค้างล่าสุดจากเครื่องนี้แล้ว");
+    } catch (e) {
+      console.error("restore local draft error:", e);
+      setDraftNotice("อ่าน local draft ไม่สำเร็จ ระบบจะเริ่มหน้าใหม่");
+    } finally {
+      setDraftHydrated(true);
+    }
+  }, [currentUserId, draftKey]);
+
+  useEffect(() => {
+    if (!draftHydrated || !currentUserId) return;
+    if (!canUseLocalStorage()) return;
+
+    const payload = {
+      version: LOCAL_DRAFT_VERSION,
+      savedAt: new Date().toISOString(),
+      selectedDate,
+      fromQ,
+      fromFarm,
+      fromPickerOpen,
+      toFarmId,
+      toFarm,
+      toPickerOpen,
+      selectedHouse,
+      swineQ,
+      selectedCandidateSwineId,
+      teatsLeft,
+      teatsRight,
+      weight,
+      backfat,
+      pickedRows: normalizePickedRows(pickedRows),
+      remark,
+    };
+
+    const hasContent = hasAnyDraftContent({
+      selectedDate,
+      fromFarm,
+      toFarmId,
+      selectedHouse,
+      swineQ,
+      teatsLeft,
+      teatsRight,
+      weight,
+      backfat,
+      pickedRows,
+      remark,
+    });
+
+    try {
+      if (!hasContent) {
+        window.localStorage.removeItem(draftKey);
+        setDraftInfo({
+          bytes: 0,
+          nearLimit: false,
+          quotaExceeded: false,
+          lastSavedAt: "",
+          restoredAt: draftInfo.restoredAt,
+        });
+        setDraftNotice("");
+        return;
+      }
+
+      const text = JSON.stringify(payload);
+      const bytes = getTextByteSize(text);
+
+      window.localStorage.setItem(draftKey, text);
+
+      const nearLimit =
+        bytes >= LOCAL_DRAFT_SOFT_LIMIT_BYTES * LOCAL_DRAFT_NEAR_LIMIT_RATIO;
+
+      setDraftInfo((prev) => ({
+        ...prev,
+        bytes,
+        nearLimit,
+        quotaExceeded: false,
+        lastSavedAt: payload.savedAt,
+      }));
+
+      if (nearLimit) {
+        setDraftNotice(
+          `พื้นที่ local draft ใกล้เต็มแล้ว (${formatBytes(
+            bytes
+          )}) กรุณา Save Draft โดยเร็ว`
+        );
+      } else if (draftNotice && draftNotice.includes("local draft")) {
+        setDraftNotice("");
+      }
+    } catch (e) {
+      console.error("save local draft error:", e);
+
+      if (isQuotaExceededError(e)) {
+        setDraftInfo((prev) => ({
+          ...prev,
+          quotaExceeded: true,
+        }));
+        setDraftNotice(
+          "พื้นที่ localStorage ไม่พอแล้ว ระบบอาจเก็บงานค้างเพิ่มไม่ได้ กรุณา Save Draft ทันที"
+        );
+      } else {
+        setDraftNotice("บันทึก local draft อัตโนมัติไม่สำเร็จ");
+      }
+    }
+  }, [
+    draftHydrated,
+    currentUserId,
+    draftKey,
+    selectedDate,
+    fromQ,
+    fromFarm,
+    fromPickerOpen,
+    toFarmId,
+    toFarm,
+    toPickerOpen,
+    selectedHouse,
+    swineQ,
+    selectedCandidateSwineId,
+    teatsLeft,
+    teatsRight,
+    weight,
+    backfat,
+    pickedRows,
+    remark,
+    draftNotice,
+    draftInfo.restoredAt,
+  ]);
+
   const loadFromFarms = useCallback(async () => {
+    if (!isOnline) {
+      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต จึงโหลดฟาร์มต้นทางใหม่ไม่ได้");
+      return;
+    }
+
     setFromLoading(true);
     setMsg("");
 
@@ -292,11 +637,12 @@ export default function ShipmentCreatePage() {
     } finally {
       setFromLoading(false);
     }
-  }, []);
+  }, [isOnline]);
 
   useEffect(() => {
+    if (!isOnline) return;
     void loadFromFarms();
-  }, [loadFromFarms]);
+  }, [loadFromFarms, isOnline]);
 
   useEffect(() => {
     let alive = true;
@@ -304,6 +650,10 @@ export default function ShipmentCreatePage() {
     async function loadToFarm() {
       if (!toFarmId) {
         setToFarm(null);
+        return;
+      }
+
+      if (!isOnline) {
         return;
       }
 
@@ -320,7 +670,7 @@ export default function ShipmentCreatePage() {
       } catch (e) {
         console.error("loadToFarm error:", e);
         if (alive) {
-          setToFarm(null);
+          setToFarm((prev) => prev || null);
           setMsg(e?.message || "โหลดฟาร์มปลายทางไม่สำเร็จ");
         }
       }
@@ -330,7 +680,7 @@ export default function ShipmentCreatePage() {
     return () => {
       alive = false;
     };
-  }, [toFarmId]);
+  }, [toFarmId, isOnline]);
 
   const filteredFromOptions = useMemo(() => {
     const q = clean(fromQ).toLowerCase();
@@ -351,6 +701,7 @@ export default function ShipmentCreatePage() {
 
   const filteredAvailableSwines = useMemo(() => {
     if (!selectedHouse) return [];
+    if (!isOnline) return [];
     const q = clean(swineQ).toLowerCase();
     const sourceFlock = clean(fromFarm?.flock);
 
@@ -363,7 +714,7 @@ export default function ShipmentCreatePage() {
         return clean(x.swine_code).toLowerCase().includes(q);
       })
       .slice(0, 100);
-  }, [allAvailableSwines, selectedHouse, fromFarm?.flock, pickedCodeSet, swineQ]);
+  }, [allAvailableSwines, selectedHouse, fromFarm?.flock, pickedCodeSet, swineQ, isOnline]);
 
   useEffect(() => {
     if (!selectedHouse) {
@@ -395,6 +746,7 @@ export default function ShipmentCreatePage() {
 
   const canAddToList = useMemo(() => {
     return (
+      isOnline &&
       !!clean(fromFarm?.farm_code) &&
       !!clean(fromFarm?.flock) &&
       !!clean(toFarmId) &&
@@ -405,6 +757,7 @@ export default function ShipmentCreatePage() {
       !loadingBlocking
     );
   }, [
+    isOnline,
     fromFarm?.farm_code,
     fromFarm?.flock,
     toFarmId,
@@ -417,6 +770,7 @@ export default function ShipmentCreatePage() {
 
   const canSaveDraft = useMemo(() => {
     return (
+      isOnline &&
       !bootLoading &&
       !savingDraft &&
       !!clean(fromFarm?.farm_code) &&
@@ -426,6 +780,7 @@ export default function ShipmentCreatePage() {
       pickedRows.length > 0
     );
   }, [
+    isOnline,
     bootLoading,
     savingDraft,
     fromFarm?.farm_code,
@@ -605,6 +960,11 @@ export default function ShipmentCreatePage() {
       return;
     }
 
+    if (!isOnline) {
+      setAvailableLoading(false);
+      return;
+    }
+
     setAvailableLoading(true);
     setMsg("");
 
@@ -625,14 +985,16 @@ export default function ShipmentCreatePage() {
         return q;
       });
 
-      swineRows = (swineRows || []).map((x) => ({
-        ...x,
-        swine_code: clean(x?.swine_code),
-        farm_code: clean(x?.farm_code),
-        farm_name: clean(x?.farm_name),
-        house_no: clean(x?.house_no),
-        flock: clean(x?.flock),
-      })).filter((x) => clean(x?.swine_code));
+      swineRows = (swineRows || [])
+        .map((x) => ({
+          ...x,
+          swine_code: clean(x?.swine_code),
+          farm_code: clean(x?.farm_code),
+          farm_name: clean(x?.farm_name),
+          house_no: clean(x?.house_no),
+          flock: clean(x?.flock),
+        }))
+        .filter((x) => clean(x?.swine_code));
 
       const blockingMap = await findBlockingShipmentsBySwineCodes(
         swineRows.map((x) => x.swine_code)
@@ -670,7 +1032,7 @@ export default function ShipmentCreatePage() {
     } finally {
       setAvailableLoading(false);
     }
-  }, [findBlockingShipmentsBySwineCodes]);
+  }, [findBlockingShipmentsBySwineCodes, isOnline]);
 
   useEffect(() => {
     if (!fromFarm?.farm_code) {
@@ -679,17 +1041,28 @@ export default function ShipmentCreatePage() {
       setSelectedHouse("");
       return;
     }
+    if (!isOnline) return;
     void loadSelectableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
-  }, [fromFarm?.farm_code, fromFarm?.flock, loadSelectableSwinesOfFarm]);
+  }, [fromFarm?.farm_code, fromFarm?.flock, loadSelectableSwinesOfFarm, isOnline]);
+
+  useEffect(() => {
+    if (!isOnline || !fromFarm?.farm_code) return;
+    void loadSelectableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
+  }, [isOnline, fromFarm?.farm_code, fromFarm?.flock, loadSelectableSwinesOfFarm]);
 
   const handleSelectFromFarm = useCallback((farm) => {
+    if (!isOnline) {
+      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต จึงเปลี่ยนฟาร์มต้นทางไม่ได้");
+      return;
+    }
+
     setMsg("");
     setPickedRows([]);
     resetCandidateForm();
     setFromFarm(farm || null);
     setFromPickerOpen(!farm);
     setSelectedHouse("");
-  }, [resetCandidateForm]);
+  }, [resetCandidateForm, isOnline]);
 
   const clearFromFarm = useCallback(() => {
     setMsg("");
@@ -704,21 +1077,36 @@ export default function ShipmentCreatePage() {
   }, [resetCandidateForm]);
 
   const onChangeToFarm = useCallback((id) => {
+    if (!isOnline) {
+      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต จึงเลือกฟาร์มปลายทางใหม่ไม่ได้");
+      return;
+    }
+
     setMsg("");
     setToFarmId(id || "");
     if (id) {
       setToPickerOpen(false);
     }
-  }, []);
+  }, [isOnline]);
 
   const handleChangeHouse = useCallback((nextHouse) => {
+    if (!isOnline) {
+      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต จึงเปลี่ยนเล้าเพื่อค้นหาหมูใหม่ไม่ได้");
+      return;
+    }
+
     setMsg("");
     setPickedRows([]);
     resetCandidateForm();
     setSelectedHouse(nextHouse || "");
-  }, [resetCandidateForm]);
+  }, [resetCandidateForm, isOnline]);
 
   const addToPickedList = useCallback(async () => {
+    if (!isOnline) {
+      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต ต้องเชื่อมต่อก่อนจึงจะค้นหาและเพิ่มเบอร์หมูได้");
+      return;
+    }
+
     if (!canAddToList) {
       setMsg("กรุณาเลือกฟาร์มต้นทาง ฟาร์มปลายทาง เล้า และเบอร์หมู");
       return;
@@ -766,11 +1154,14 @@ export default function ShipmentCreatePage() {
     } catch (e) {
       console.error("addToPickedList error:", e);
       setMsg(extractErrorMessage(e, "บันทึกเข้า list ไม่สำเร็จ"));
-      void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+      if (isOnline) {
+        void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+      }
     } finally {
       setLoadingBlocking(false);
     }
   }, [
+    isOnline,
     canAddToList,
     selectedCandidateSwine,
     pickedCodeSet,
@@ -792,10 +1183,54 @@ export default function ShipmentCreatePage() {
 
   const handleBackOrCancel = useCallback(() => {
     setMsg("");
+
+    const hasContent = hasAnyDraftContent({
+      selectedDate,
+      fromFarm,
+      toFarmId,
+      selectedHouse,
+      swineQ,
+      teatsLeft,
+      teatsRight,
+      weight,
+      backfat,
+      pickedRows,
+      remark,
+    });
+
+    if (hasContent) {
+      const ok = window.confirm(
+        "ยืนยัน Cancel ใช่หรือไม่?\nระบบจะล้างข้อมูลค้างในหน้านี้และกลับไปหน้า Home"
+      );
+      if (!ok) return;
+    }
+
+    clearLocalDraft();
     nav("/user-home", { replace: true });
-  }, [nav]);
+  }, [
+    nav,
+    clearLocalDraft,
+    selectedDate,
+    fromFarm,
+    toFarmId,
+    selectedHouse,
+    swineQ,
+    teatsLeft,
+    teatsRight,
+    weight,
+    backfat,
+    pickedRows,
+    remark,
+  ]);
 
   const handleSaveDraft = useCallback(async () => {
+    if (!isOnline) {
+      setDraftNotice(
+        "ขณะนี้ไม่มีอินเทอร์เน็ต จึง Save Draft ไม่ได้ กรุณาเชื่อมต่ออินเทอร์เน็ตก่อน"
+      );
+      return;
+    }
+
     if (!canSaveDraft) {
       setMsg("กรุณาเลือกข้อมูลให้ครบ และต้องมีเบอร์หมูอย่างน้อย 1 ตัว");
       return;
@@ -884,6 +1319,8 @@ export default function ShipmentCreatePage() {
 
       if (resequenceRes.error) throw resequenceRes.error;
 
+      clearLocalDraft();
+
       nav("/user-home", {
         replace: true,
         state: {
@@ -904,11 +1341,14 @@ export default function ShipmentCreatePage() {
       }
 
       setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
-      void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+      if (isOnline) {
+        void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
+      }
     } finally {
       setSavingDraft(false);
     }
   }, [
+    isOnline,
     canSaveDraft,
     pickedRows,
     ensureDraftHeader,
@@ -921,9 +1361,10 @@ export default function ShipmentCreatePage() {
     nav,
     deleteEmptyDraftHeader,
     loadSelectableSwinesOfFarm,
+    clearLocalDraft,
   ]);
 
-  if (bootLoading) {
+  if (bootLoading || !draftHydrated) {
     return (
       <div className="page">
         <div className="card" style={{ maxWidth: 720, margin: "40px auto" }}>
@@ -971,6 +1412,64 @@ export default function ShipmentCreatePage() {
           minWidth: 0,
         }}
       >
+        {!isOnline ? (
+          <div style={{ ...cardStyle, padding: 12, border: "1px solid #f59e0b", background: "#fffbeb" }}>
+            <div style={{ color: "#92400e", fontWeight: 800, lineHeight: 1.7, fontSize: 13 }}>
+              ขณะนี้ไม่มีอินเทอร์เน็ต
+              <br />
+              ข้อมูลที่เลือกไว้ยังอยู่ในเครื่อง แต่จะค้นหา/เพิ่มหมูใหม่ไม่ได้ และ Save Draft ไม่ได้
+              กรุณาเชื่อมต่ออินเทอร์เน็ตก่อนจึงจะค้นหาหมูเพิ่มหรือ Save Draft ได้
+            </div>
+          </div>
+        ) : null}
+
+        {draftNotice ? (
+          <div
+            style={{
+              ...cardStyle,
+              padding: 12,
+              border:
+                draftInfo.quotaExceeded || draftInfo.nearLimit
+                  ? "1px solid #f59e0b"
+                  : "1px solid #bfdbfe",
+              background:
+                draftInfo.quotaExceeded || draftInfo.nearLimit ? "#fffbeb" : "#eff6ff",
+            }}
+          >
+            <div
+              style={{
+                color:
+                  draftInfo.quotaExceeded || draftInfo.nearLimit ? "#92400e" : "#1d4ed8",
+                fontWeight: 700,
+                lineHeight: 1.7,
+                wordBreak: "break-word",
+                fontSize: 13,
+              }}
+            >
+              {draftNotice}
+            </div>
+          </div>
+        ) : null}
+
+        <div style={{ ...cardStyle, padding: 12 }}>
+          <div style={{ fontWeight: 900, marginBottom: 8 }}>สถานะ local draft</div>
+          <div style={{ color: "#374151", fontSize: 13, lineHeight: 1.8 }}>
+            จำนวนหมูใน list ตอนนี้: <b>{pickedRows.length}</b>
+            <br />
+            ขนาด local draft: <b>{formatBytes(draftInfo.bytes)}</b>
+            <br />
+            การเก็บได้กี่ตัวไม่ตายตัว ขึ้นกับ browser และความยาวข้อมูลจริงของแต่ละรายการ
+            <br />
+            {draftInfo.lastSavedAt ? (
+              <>
+                บันทึกล่าสุดในเครื่อง: <b>{new Date(draftInfo.lastSavedAt).toLocaleString()}</b>
+              </>
+            ) : (
+              <>ยังไม่มี local draft ในเครื่อง</>
+            )}
+          </div>
+        </div>
+
         {msg ? (
           <div style={{ ...cardStyle, padding: 12 }}>
             <div
@@ -1011,7 +1510,14 @@ export default function ShipmentCreatePage() {
                   title="ฟาร์มต้นทาง"
                   farm={fromFarm}
                   subtitle={fromFarm?.flock ? `Flock: ${fromFarm.flock}` : ""}
-                  onChange={() => setFromPickerOpen(true)}
+                  onChange={() => {
+                    if (!isOnline) {
+                      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต จึงเปลี่ยนฟาร์มต้นทางไม่ได้");
+                      return;
+                    }
+                    setFromPickerOpen(true);
+                  }}
+                  disabled={!isOnline}
                 />
               ) : (
                 <div style={{ ...cardStyle, padding: 12, display: "grid", gap: 10 }}>
@@ -1026,7 +1532,7 @@ export default function ShipmentCreatePage() {
                   >
                     <div style={{ fontWeight: 900 }}>ฟาร์มต้นทาง</div>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      <button type="button" onClick={loadFromFarms} disabled={fromLoading}>
+                      <button type="button" onClick={loadFromFarms} disabled={fromLoading || !isOnline}>
                         {fromLoading ? "กำลังโหลด..." : "รีเฟรช"}
                       </button>
                       <button type="button" onClick={() => void clearFromFarm()} disabled={fromLoading}>
@@ -1038,8 +1544,13 @@ export default function ShipmentCreatePage() {
                   <input
                     value={fromQ}
                     onChange={(e) => setFromQ(e.target.value)}
-                    placeholder="พิมพ์ค้นหา farm code / farm name / flock…"
+                    placeholder={
+                      !isOnline
+                        ? "ไม่มีอินเทอร์เน็ต"
+                        : "พิมพ์ค้นหา farm code / farm name / flock…"
+                    }
                     style={inputStyle}
+                    disabled={!isOnline}
                   />
 
                   <div
@@ -1051,7 +1562,11 @@ export default function ShipmentCreatePage() {
                       overflowY: "auto",
                     }}
                   >
-                    {fromLoading ? (
+                    {!isOnline ? (
+                      <div style={{ padding: 12, color: "#666" }}>
+                        ไม่มีอินเทอร์เน็ต จึงค้นหาฟาร์มต้นทางใหม่ไม่ได้
+                      </div>
+                    ) : fromLoading ? (
                       <div style={{ padding: 12, color: "#666" }}>กำลังโหลด...</div>
                     ) : filteredFromOptions.length > 0 ? (
                       filteredFromOptions.map((f) => (
@@ -1091,8 +1606,15 @@ export default function ShipmentCreatePage() {
                   title="ฟาร์มปลายทางที่เลือกอยู่"
                   farm={toFarm}
                   subtitle="ตรวจสอบฟาร์มนี้ก่อน ถ้าถูกต้องค่อยไปขั้นต่อไป ถ้าไม่ถูกต้องค่อยเลือกฟาร์มปลายทางใหม่"
-                  onChange={() => setToPickerOpen((prev) => !prev)}
+                  onChange={() => {
+                    if (!isOnline) {
+                      setDraftNotice("ขณะนี้ไม่มีอินเทอร์เน็ต จึงเลือกฟาร์มปลายทางใหม่ไม่ได้");
+                      return;
+                    }
+                    setToPickerOpen((prev) => !prev);
+                  }}
                   changeLabel={toPickerOpen ? "ซ่อนรายการฟาร์ม" : "เลือกฟาร์มปลายทางใหม่"}
+                  disabled={!isOnline}
                 />
               ) : null}
 
@@ -1105,17 +1627,27 @@ export default function ShipmentCreatePage() {
                     ฟาร์มที่เลือกอยู่จะแสดงด้านบนเสมอ เพื่อให้ตรวจสอบก่อนเปลี่ยน
                   </div>
 
-                  <FarmPickerInlineAdd
-                    label="ฟาร์มปลายทาง"
-                    value={toFarmId}
-                    excludeId={null}
-                    onChange={onChangeToFarm}
-                    requireBranch={false}
-                  />
+                  {!isOnline ? (
+                    <div style={{ color: "#6b7280", fontSize: 13 }}>
+                      ไม่มีอินเทอร์เน็ต จึงเลือกฟาร์มปลายทางใหม่ไม่ได้
+                    </div>
+                  ) : (
+                    <FarmPickerInlineAdd
+                      label="ฟาร์มปลายทาง"
+                      value={toFarmId}
+                      excludeId={null}
+                      onChange={onChangeToFarm}
+                      requireBranch={false}
+                    />
+                  )}
                 </div>
               ) : (
                 <div>
-                  <button type="button" onClick={() => setToPickerOpen(true)}>
+                  <button
+                    type="button"
+                    onClick={() => setToPickerOpen(true)}
+                    disabled={!isOnline}
+                  >
                     เลือกฟาร์มปลายทางใหม่
                   </button>
                 </div>
@@ -1127,12 +1659,14 @@ export default function ShipmentCreatePage() {
               <select
                 value={selectedHouse}
                 onChange={(e) => void handleChangeHouse(e.target.value)}
-                disabled={!fromFarm?.farm_code || availableLoading || houseOptions.length === 0}
+                disabled={!fromFarm?.farm_code || availableLoading || houseOptions.length === 0 || !isOnline}
                 style={inputStyle}
               >
                 <option value="">
                   {!fromFarm?.farm_code
                     ? "เลือกฟาร์มต้นทางก่อน"
+                    : !isOnline
+                    ? "ไม่มีอินเทอร์เน็ต"
                     : availableLoading
                     ? "กำลังโหลด..."
                     : "เลือกเล้า"}
@@ -1167,6 +1701,21 @@ export default function ShipmentCreatePage() {
             </div>
           ) : null}
 
+          {!isOnline ? (
+            <div
+              style={{
+                border: "1px dashed #f59e0b",
+                borderRadius: 12,
+                padding: 12,
+                color: "#92400e",
+                fontSize: 13,
+                background: "#fffbeb",
+              }}
+            >
+              ขณะนี้ไม่มีอินเทอร์เน็ต จึงค้นหาเบอร์หมูเพิ่มไม่ได้ ต้องเชื่อมต่ออินเทอร์เน็ตก่อน
+            </div>
+          ) : null}
+
           <div
             style={{
               display: "grid",
@@ -1189,8 +1738,14 @@ export default function ShipmentCreatePage() {
                 <input
                   value={swineQ}
                   onChange={(e) => setSwineQ(e.target.value)}
-                  placeholder={!selectedHouse ? "เลือกเล้าก่อน" : "พิมพ์ swine code..."}
-                  disabled={!selectedHouse || availableLoading}
+                  placeholder={
+                    !selectedHouse
+                      ? "เลือกเล้าก่อน"
+                      : !isOnline
+                      ? "ไม่มีอินเทอร์เน็ต"
+                      : "พิมพ์ swine code..."
+                  }
+                  disabled={!selectedHouse || availableLoading || !isOnline}
                   style={inputStyle}
                 />
               </div>
@@ -1200,6 +1755,10 @@ export default function ShipmentCreatePage() {
 
                 {!selectedHouse ? (
                   <div style={{ color: "#6b7280", fontSize: 13 }}>เลือกเล้าก่อน</div>
+                ) : !isOnline ? (
+                  <div style={{ color: "#6b7280", fontSize: 13 }}>
+                    ไม่มีอินเทอร์เน็ต จึงค้นหาเบอร์หมูเพิ่มไม่ได้
+                  </div>
                 ) : availableLoading ? (
                   <div style={{ color: "#6b7280", fontSize: 13 }}>กำลังโหลด...</div>
                 ) : filteredAvailableSwines.length === 0 ? (
@@ -1333,7 +1892,11 @@ export default function ShipmentCreatePage() {
               disabled={!canAddToList}
               style={{ width: "100%" }}
             >
-              {loadingBlocking ? "กำลังตรวจสอบ..." : "บันทึกเข้า list"}
+              {!isOnline
+                ? "ต้องต่ออินเทอร์เน็ตก่อน"
+                : loadingBlocking
+                ? "กำลังตรวจสอบ..."
+                : "บันทึกเข้า list"}
             </button>
           </div>
         </div>
@@ -1401,7 +1964,11 @@ export default function ShipmentCreatePage() {
             disabled={!canSaveDraft}
             style={{ width: "100%" }}
           >
-            {savingDraft ? "Saving..." : "Save Draft"}
+            {!isOnline
+              ? "ต้องต่ออินเทอร์เน็ตก่อนจึง Save Draft ได้"
+              : savingDraft
+              ? "Saving..."
+              : "Save Draft"}
           </button>
 
           <button
