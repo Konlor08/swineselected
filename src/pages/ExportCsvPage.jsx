@@ -290,6 +290,7 @@ function buildRawCsvRows(flatRows, { showDeliveryDate = false } = {}) {
     ...(showDeliveryDate ? { วันที่จัดส่ง: r.delivery_date || "" } : {}),
     ฟาร์มที่คัด: r.from_farm_name,
     from_flock: r.from_flock,
+    รหัสฟาร์มปลายทาง: r.to_farm_code,
     ฟาร์มปลายทาง: r.to_farm_name,
     โรงเรือน: r.house_no,
     flock: r.flock,
@@ -385,7 +386,10 @@ function buildExcelDetailRows(flatRows, { showDeliveryDate = false } = {}) {
   return (flatRows || []).map((r) => ({
     วันที่คัด: safeCell(r.selected_date),
     ...(showDeliveryDate ? { วันที่จัดส่ง: safeCell(r.delivery_date) } : {}),
+    ฟาร์มที่คัด: safeCell(r.from_farm_name),
     from_flock: safeCell(r.from_flock),
+    รหัสฟาร์มปลายทาง: safeCell(r.to_farm_code),
+    ฟาร์มปลายทาง: safeCell(r.to_farm_name),
     โรงเรือน: safeCell(r.house_no),
     flock: safeCell(r.flock),
     เบอร์หมู: safeCell(r.swine_code),
@@ -577,6 +581,8 @@ function exportPdfReport({
       head: [[
         "วันที่คัด",
         ...(showDeliveryDate ? ["วันที่จัดส่ง"] : []),
+        "รหัสปลายทาง",
+        "ฟาร์มปลายทาง",
         "เบอร์หมู",
         "dam_code",
         "sire_code",
@@ -600,6 +606,8 @@ function exportPdfReport({
       body: chunk.map((r) => [
         safeCell(r.selected_date),
         ...(showDeliveryDate ? [safeCell(r.delivery_date)] : []),
+        safeCell(r.to_farm_code),
+        safeCell(r.to_farm_name),
         safeCell(r.swine_code),
         safeCell(r.dam_code),
         safeCell(r.sire_code),
@@ -620,10 +628,10 @@ function exportPdfReport({
         safeCell(r.heat_3_date),
         safeCell(r.heat_4_date),
       ]),
-      styles: { font: pdfFont, fontSize: 5.8, cellPadding: 0.9, overflow: "linebreak" },
+      styles: { font: pdfFont, fontSize: 5.6, cellPadding: 0.8, overflow: "linebreak" },
       headStyles: { font: pdfFont, fontStyle: "bold", fillColor: [15, 23, 42] },
       theme: "grid",
-      margin: { left: 6, right: 6 },
+      margin: { left: 5, right: 5 },
     });
   }
 
@@ -3143,6 +3151,7 @@ export default function ExportCsvPage() {
                     {showDeliveryDate ? <th style={thStyle}>วันที่จัดส่ง</th> : null}
                     <th style={thStyle}>ฟาร์มที่คัด</th>
                     <th style={thStyle}>from_flock</th>
+                    <th style={thStyle}>รหัสฟาร์มปลายทาง</th>
                     <th style={thStyle}>ฟาร์มปลายทาง</th>
                     <th style={thStyle}>โรงเรือน</th>
                     <th style={thStyle}>flock</th>
@@ -3171,7 +3180,7 @@ export default function ExportCsvPage() {
                 {previewTop100.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={reportType === "not_selected" ? 13 : showDeliveryDate ? 24 : 23}
+                      colSpan={reportType === "not_selected" ? 13 : showDeliveryDate ? 25 : 24}
                       style={emptyTdStyle}
                     >
                       ยังไม่มีข้อมูลแสดง
@@ -3202,6 +3211,7 @@ export default function ExportCsvPage() {
                       {showDeliveryDate ? <td style={tdStyle}>{row.delivery_date}</td> : null}
                       <td style={tdStyle}>{row.from_farm_name}</td>
                       <td style={tdStyle}>{row.from_flock}</td>
+                      <td style={tdStyle}>{row.to_farm_code}</td>
                       <td style={tdStyle}>{row.to_farm_name}</td>
                       <td style={tdStyle}>{row.house_no}</td>
                       <td style={tdStyle}>{row.flock}</td>
