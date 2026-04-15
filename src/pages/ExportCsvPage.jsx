@@ -9,6 +9,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { registerSarabunNormal } from "../lib/pdfFonts/sarabun-normal";
 import { registerSarabunBold } from "../lib/pdfFonts/sarabun-bold";
+import { issueSubmittedShipments } from "../lib/swineShipmentState.js";
 
 const AUTH_RETRY_ATTEMPTS = 2;
 const AUTH_RETRY_DELAY_MS = 800;
@@ -255,14 +256,14 @@ function tryRegisterFont(registerFn, doc) {
   for (const target of candidates) {
     try {
       if (target) registerFn(target);
-    } catch (e) {
+    } catch {
       // ลอง target ถัดไป
     }
 
     try {
       const fontList = doc?.getFontList?.() || {};
       if (fontList?.Sarabun) return true;
-    } catch (e) {
+    } catch {
       // ignore
     }
   }
@@ -2183,34 +2184,19 @@ export default function ExportCsvPage() {
       if (!user?.id) throw new Error("ไม่พบผู้ใช้งาน กรุณา login ใหม่");
 
       const nowIso = new Date().toISOString();
-      let totalSwines = 0;
-
-      for (const shipment of submittedShipments) {
-        const codes = (shipment.items || [])
-          .map((x) => clean(x?.swine_code))
-          .filter(Boolean);
-
-        totalSwines += codes.length;
-
-        const { error: e2 } = await supabase
-          .from("swine_shipments")
-          .update({
-            status: "issued",
-            issued_at: nowIso,
-            issued_by: user.id,
-          })
-          .eq("id", shipment.id)
-          .eq("status", "submitted");
-
-        if (e2) throw e2;
-      }
+      const result = await issueSubmittedShipments({
+        shipments: submittedShipments,
+        actorUserId: user.id,
+        nowIso,
+      });
+      const totalSwines = Number(result?.totalSwines || 0);
 
       await refreshPreviewRows();
       await loadFromFarmOptions();
       await loadToFarmOptions();
 
       setMsg(
-        `Submit สำเร็จ ${submittedShipments.length} shipment (${totalSwines} ตัว) และอัปเดตเฉพาะสถานะ shipment เป็น issued แล้ว`
+        `Submit สำเร็จ ${submittedShipments.length} shipment (${totalSwines} ตัว) และ sync swine_master เป็น issued แล้ว`
       );
     } catch (e) {
       console.error("handleSubmitConfirm error:", e);
@@ -2782,13 +2768,13 @@ export default function ExportCsvPage() {
             <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
               User ดูข้อมูลได้ตามฟาร์ม+flock ที่เคยคัด และเลือกช่วงวันที่เพื่อตรวจสอบย้อนหลังได้
               <br />
-              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
+              แต่ Submit ใช้ได้เฉพาะเมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง โดยระบบจะ sync swine_master ไปพร้อมกัน
             </div>
           ) : (
             <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
               Admin ดูข้อมูลได้ทั้งหมด แต่ต้องเลือกฟาร์ม+flock ก่อน
               <br />
-              และ Submit จะอัปเดตเฉพาะ shipment จาก submitted เป็น issued เมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
+              และ Submit จะอัปเดต shipment จาก submitted เป็น issued พร้อม sync swine_master ให้เป็น issued ด้วย เมื่อเลือกวันเดียวกัน และเลือกทั้งฟาร์มต้นทาง+flock กับฟาร์มปลายทาง
             </div>
           )}
 

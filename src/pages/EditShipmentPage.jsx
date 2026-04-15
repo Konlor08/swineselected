@@ -11,6 +11,9 @@ const LOCAL_DRAFT_VERSION = 1;
 const LOCAL_DRAFT_PREFIX = "edit-shipment-local-draft";
 const LOCAL_DRAFT_SOFT_LIMIT_BYTES = 4 * 1024 * 1024;
 const LOCAL_DRAFT_NEAR_LIMIT_RATIO = 0.8;
+const ACTIVE_SHIPMENT_STATUSES = ["draft", "submitted", "issued"];
+const CODE_CHUNK_SIZE = 200;
+const ID_CHUNK_SIZE = 200;
 
 function clean(v) {
   return String(v ?? "").trim();
@@ -22,6 +25,18 @@ function todayYmdLocal() {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+function chunkArray(list, chunkSize) {
+  const size = Math.max(1, Number(chunkSize) || 1);
+  const source = Array.isArray(list) ? list : [];
+  const chunks = [];
+
+  for (let i = 0; i < source.length; i += size) {
+    chunks.push(source.slice(i, i + size));
+  }
+
+  return chunks;
 }
 
 function withTimeout(promise, ms = 20000, label = "request") {
@@ -203,6 +218,62 @@ function saveStepSelection(selection) {
   } catch {
     // ignore
   }
+}
+
+async function findActiveShipmentBySwineCodes(swineCodes, excludeShipmentId = "") {
+  const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
+  const blockingMap = new Map();
+
+  for (const codeChunk of chunkArray(cleanCodes, CODE_CHUNK_SIZE)) {
+    if (!codeChunk.length) continue;
+
+    const { data: itemRows, error: itemError } = await supabase
+      .from("swine_shipment_items")
+      .select("shipment_id, swine_code")
+      .in("swine_code", codeChunk)
+      .order("shipment_id", { ascending: true });
+
+    if (itemError) throw itemError;
+
+    const shipmentIds = Array.from(
+      new Set(
+        (itemRows || [])
+          .map((row) => clean(row?.shipment_id))
+          .filter((id) => id && id !== clean(excludeShipmentId))
+      )
+    );
+
+    const shipmentMap = new Map();
+
+    for (const idChunk of chunkArray(shipmentIds, ID_CHUNK_SIZE)) {
+      if (!idChunk.length) continue;
+
+      const { data: shipmentRows, error: shipmentError } = await supabase
+        .from("swine_shipments")
+        .select("id, status, shipment_no, selected_date, created_at")
+        .in("id", idChunk)
+        .in("status", ACTIVE_SHIPMENT_STATUSES);
+
+      if (shipmentError) throw shipmentError;
+
+      for (const shipment of shipmentRows || []) {
+        shipmentMap.set(clean(shipment?.id), shipment);
+      }
+    }
+
+    for (const item of itemRows || []) {
+      const swineCode = clean(item?.swine_code);
+      const shipmentId = clean(item?.shipment_id);
+
+      if (!swineCode || !shipmentId || shipmentId === clean(excludeShipmentId)) continue;
+      if (!shipmentMap.has(shipmentId)) continue;
+      if (blockingMap.has(swineCode)) continue;
+
+      blockingMap.set(swineCode, shipmentMap.get(shipmentId));
+    }
+  }
+
+  return blockingMap;
 }
 
 function buildDraftFarmData(rows) {
@@ -1601,21 +1672,15 @@ export default function EditShipmentPage() {
           .filter(Boolean);
 
         if (candidateCodes.length > 0) {
-          const { data: masterRows, error: masterError } = await supabase
-            .from("swine_master")
-            .select("swine_code")
-            .eq("delivery_state", "available")
-            .in("swine_code", candidateCodes);
-
-          if (masterError) throw masterError;
-          if (requestId !== searchRequestRef.current) return;
-
-          const availableCodeSet = new Set(
-            (masterRows || []).map((row) => clean(row?.swine_code)).filter(Boolean)
+          const blockingMap = await findActiveShipmentBySwineCodes(
+            candidateCodes,
+            clean(shipmentHeader?.id)
           );
 
+          if (requestId !== searchRequestRef.current) return;
+
           availableResults = candidateRows
-            .filter((row) => availableCodeSet.has(clean(row?.swine_code)))
+            .filter((row) => !blockingMap.has(clean(row?.swine_code)))
             .map((row) => ({
               key: `available:${clean(row?.id) || clean(row?.swine_code)}`,
               source_type: "available",
@@ -1696,6 +1761,7 @@ export default function EditShipmentPage() {
       isOffline,
       selectedFarmCode,
       selectedFlock,
+      shipmentHeader?.id,
     ]
   );
 
@@ -1865,6 +1931,15 @@ export default function EditShipmentPage() {
 
     try {
       const nowIso = new Date().toISOString();
+      const selectedSwineCode = clean(selectedSwineResult.swine_code);
+      const blockingMap = await findActiveShipmentBySwineCodes([selectedSwineCode]);
+
+      if (blockingMap.has(selectedSwineCode)) {
+        const blockingShipment = blockingMap.get(selectedSwineCode);
+        throw new Error(
+          `เบอร์ ${selectedSwineCode} อยู่ใน shipment สถานะ ${clean(blockingShipment?.status) || "-"} แล้ว`
+        );
+      }
 
       const headerRes = await withTimeout(
         supabase
@@ -1962,23 +2037,29 @@ export default function EditShipmentPage() {
       if (deleteRes.error) throw deleteRes.error;
       ensureAffectedRows(deleteRes.data, "delete selected swine item");
 
-      const releaseRes = await withTimeout(
-        supabase
-          .from("swine_master")
-          .update({
-            delivery_state: "available",
-            reserved_shipment_id: null,
-            reserved_at: null,
-            reserved_by: null,
-          })
-          .eq("swine_code", clean(selectedDraftItem.swine_code))
-          .select("swine_code"),
-        15000,
-        "release swine"
-      );
+      const blockingAfterDelete = await findActiveShipmentBySwineCodes([
+        clean(selectedDraftItem.swine_code),
+      ]);
 
-      if (releaseRes.error) throw releaseRes.error;
-      ensureAffectedRows(releaseRes.data, "release swine");
+      if (!blockingAfterDelete.has(clean(selectedDraftItem.swine_code))) {
+        const releaseRes = await withTimeout(
+          supabase
+            .from("swine_master")
+            .update({
+              delivery_state: "available",
+              reserved_shipment_id: null,
+              reserved_at: null,
+              reserved_by: null,
+            })
+            .eq("swine_code", clean(selectedDraftItem.swine_code))
+            .select("swine_code"),
+          15000,
+          "release swine"
+        );
+
+        if (releaseRes.error) throw releaseRes.error;
+        ensureAffectedRows(releaseRes.data, "release swine");
+      }
 
       clearLocalDraft();
       setMsg("ลบหมูออกจาก shipment สำเร็จ ✅");
@@ -2025,6 +2106,15 @@ export default function EditShipmentPage() {
 
     try {
       const nowIso = new Date().toISOString();
+      const selectedSwineCode = clean(selectedSwineResult.swine_code);
+      const blockingMap = await findActiveShipmentBySwineCodes([selectedSwineCode]);
+
+      if (blockingMap.has(selectedSwineCode)) {
+        const blockingShipment = blockingMap.get(selectedSwineCode);
+        throw new Error(
+          `เบอร์ ${selectedSwineCode} อยู่ใน shipment สถานะ ${clean(blockingShipment?.status) || "-"} แล้ว`
+        );
+      }
 
       const headerRes = await withTimeout(
         supabase
@@ -2084,7 +2174,8 @@ export default function EditShipmentPage() {
             reserved_at: nowIso,
             reserved_by: userId || null,
           })
-          .eq("swine_code", clean(selectedSwineResult.swine_code))
+          .eq("swine_code", selectedSwineCode)
+          .eq("delivery_state", "available")
           .select("swine_code"),
         15000,
         "reserve swine"

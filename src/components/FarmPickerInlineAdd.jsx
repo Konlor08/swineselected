@@ -35,8 +35,9 @@ export default function FarmPickerInlineAdd({
   excludeId = null,
   onChange,
   beforeChange,
-  requireBranch, // keep prop compatibility
+  requireBranch,
 }) {
+  void requireBranch;
   const [farms, setFarms] = useState([]);
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(false);

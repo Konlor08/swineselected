@@ -8,7 +8,7 @@ function clean(v) {
 }
 
 function normalizeHeader(s) {
-  return clean(s).toLowerCase().replace(/[\s#_\-\/().]+/g, "");
+  return clean(s).toLowerCase().replace(/[\s#_\-/().]+/g, "");
 }
 
 function chunkArray(arr, size = 500) {
@@ -46,7 +46,7 @@ function tryParseDateToYmd(value) {
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
-  const dmY = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  const dmY = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmY) {
     const dd = String(dmY[1]).padStart(2, "0");
     const mm = String(dmY[2]).padStart(2, "0");
@@ -54,7 +54,7 @@ function tryParseDateToYmd(value) {
     return `${yyyy}-${mm}-${dd}`;
   }
 
-  const ymD = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  const ymD = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
   if (ymD) {
     const yyyy = ymD[1];
     const mm = String(ymD[2]).padStart(2, "0");

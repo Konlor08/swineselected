@@ -880,6 +880,137 @@ export default function ShipmentCreatePage() {
     }
   }, []);
 
+  const findNonAvailableMasterBySwineCodes = useCallback(async (swineCodes) => {
+    const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
+    const blockedMap = new Map();
+
+    for (const codeChunk of chunkArray(cleanCodes, CODE_CHUNK_SIZE)) {
+      if (!codeChunk.length) continue;
+
+      const { data, error } = await supabase
+        .from("swine_master")
+        .select("swine_code, delivery_state, reserved_shipment_id, issued_shipment_id")
+        .in("swine_code", codeChunk)
+        .neq("delivery_state", "available");
+
+      if (error) throw error;
+
+      for (const row of data || []) {
+        const code = clean(row?.swine_code);
+        if (!code || blockedMap.has(code)) continue;
+        blockedMap.set(code, row);
+      }
+    }
+
+    return blockedMap;
+  }, []);
+
+  const reserveSwineMasterRows = useCallback(async ({ shipmentId, swineCodes, reservedAt, reservedBy }) => {
+    const cleanShipmentId = clean(shipmentId);
+    const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
+
+    if (!cleanShipmentId) throw new Error("ไม่พบ shipment ที่ต้องใช้ reserve");
+    if (!cleanCodes.length) return;
+
+    const updatedCodes = [];
+
+    for (const codeChunk of chunkArray(cleanCodes, CODE_CHUNK_SIZE)) {
+      const { data, error } = await supabase
+        .from("swine_master")
+        .update({
+          delivery_state: "reserved",
+          reserved_shipment_id: cleanShipmentId,
+          reserved_at: reservedAt || new Date().toISOString(),
+          reserved_by: reservedBy || null,
+        })
+        .in("swine_code", codeChunk)
+        .eq("delivery_state", "available")
+        .select("swine_code");
+
+      if (error) throw error;
+      updatedCodes.push(...((data || []).map((row) => clean(row?.swine_code)).filter(Boolean)));
+    }
+
+    const updatedSet = new Set(updatedCodes);
+    const missingCodes = cleanCodes.filter((code) => !updatedSet.has(code));
+
+    if (!missingCodes.length) return;
+
+    const { data: stateRows, error: stateError } = await supabase
+      .from("swine_master")
+      .select("swine_code, delivery_state")
+      .in("swine_code", missingCodes);
+
+    if (stateError) throw stateError;
+
+    const stateMap = new Map((stateRows || []).map((row) => [clean(row?.swine_code), clean(row?.delivery_state)]));
+    const firstCode = missingCodes[0];
+    const firstState = clean(stateMap.get(firstCode));
+
+    if (firstState) {
+      throw new Error(`เบอร์ ${firstCode} อยู่สถานะ ${firstState} แล้ว`);
+    }
+
+    throw new Error(`ไม่พบข้อมูล swine_master ของเบอร์ ${firstCode}`);
+  }, []);
+
+  const releaseReservedSwineMasterRows = useCallback(async (shipmentId, swineCodes = []) => {
+    const cleanShipmentId = clean(shipmentId);
+    const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
+
+    if (!cleanShipmentId || !cleanCodes.length) return;
+
+    for (const codeChunk of chunkArray(cleanCodes, CODE_CHUNK_SIZE)) {
+      const { error } = await supabase
+        .from("swine_master")
+        .update({
+          delivery_state: "available",
+          reserved_shipment_id: null,
+          reserved_at: null,
+          reserved_by: null,
+        })
+        .in("swine_code", codeChunk)
+        .eq("reserved_shipment_id", cleanShipmentId)
+        .eq("delivery_state", "reserved");
+
+      if (error) throw error;
+    }
+  }, []);
+
+  const deleteDraftShipmentCascade = useCallback(async (shipmentId, swineCodes = []) => {
+    const id = clean(shipmentId);
+    if (!id) return;
+
+    try {
+      await releaseReservedSwineMasterRows(id, swineCodes);
+    } catch (releaseError) {
+      console.warn("deleteDraftShipmentCascade release warning:", releaseError);
+    }
+
+    try {
+      const { error: deleteItemsError } = await supabase
+        .from("swine_shipment_items")
+        .delete()
+        .eq("shipment_id", id);
+
+      if (deleteItemsError) throw deleteItemsError;
+    } catch (deleteItemsError) {
+      console.warn("deleteDraftShipmentCascade delete items warning:", deleteItemsError);
+    }
+
+    try {
+      const { error: deleteHeaderError } = await supabase
+        .from("swine_shipments")
+        .delete()
+        .eq("id", id)
+        .eq("status", "draft");
+
+      if (deleteHeaderError) throw deleteHeaderError;
+    } catch (deleteHeaderError) {
+      console.warn("deleteDraftShipmentCascade delete header warning:", deleteHeaderError);
+    }
+  }, [releaseReservedSwineMasterRows]);
+
   const findBlockingShipmentsBySwineCodes = useCallback(async (swineCodes, excludeShipmentId = "") => {
     const cleanCodes = Array.from(new Set((swineCodes || []).map(clean).filter(Boolean)));
     const blockingMap = new Map();
@@ -981,13 +1112,16 @@ export default function ShipmentCreatePage() {
         }))
         .filter((x) => clean(x?.swine_code));
 
-      const blockingMap = await findBlockingShipmentsBySwineCodes(
-        swineRows.map((x) => x.swine_code)
-      );
+      const swineCodes = swineRows.map((x) => x.swine_code);
+      const [blockingMap, nonAvailableMasterMap] = await Promise.all([
+        findBlockingShipmentsBySwineCodes(swineCodes),
+        findNonAvailableMasterBySwineCodes(swineCodes),
+      ]);
 
-      const selectableRows = swineRows.filter(
-        (x) => !blockingMap.has(clean(x?.swine_code))
-      );
+      const selectableRows = swineRows.filter((x) => {
+        const code = clean(x?.swine_code);
+        return !blockingMap.has(code) && !nonAvailableMasterMap.has(code);
+      });
 
       const houseMap = new Map();
       for (const row of selectableRows) {
@@ -1017,7 +1151,7 @@ export default function ShipmentCreatePage() {
     } finally {
       setAvailableLoading(false);
     }
-  }, [findBlockingShipmentsBySwineCodes, isOnline]);
+  }, [findBlockingShipmentsBySwineCodes, findNonAvailableMasterBySwineCodes, isOnline]);
 
   useEffect(() => {
     if (!fromFarm?.farm_code) {
@@ -1029,11 +1163,6 @@ export default function ShipmentCreatePage() {
     if (!isOnline) return;
     void loadSelectableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
   }, [fromFarm?.farm_code, fromFarm?.flock, loadSelectableSwinesOfFarm, isOnline]);
-
-  useEffect(() => {
-    if (!isOnline || !fromFarm?.farm_code) return;
-    void loadSelectableSwinesOfFarm(fromFarm.farm_code, fromFarm.flock);
-  }, [isOnline, fromFarm?.farm_code, fromFarm?.flock, loadSelectableSwinesOfFarm]);
 
   const handleSelectFromFarm = useCallback((farm) => {
     if (!isOnline) {
@@ -1112,12 +1241,22 @@ export default function ShipmentCreatePage() {
         throw new Error("เบอร์หมูนี้อยู่ในรายการที่เลือกแล้ว");
       }
 
-      const blockingMap = await findBlockingShipmentsBySwineCodes([swineCode]);
+      const [blockingMap, nonAvailableMasterMap] = await Promise.all([
+        findBlockingShipmentsBySwineCodes([swineCode]),
+        findNonAvailableMasterBySwineCodes([swineCode]),
+      ]);
       const blocking = blockingMap.get(swineCode);
+      const nonAvailableMaster = nonAvailableMasterMap.get(swineCode);
 
       if (blocking) {
         throw new Error(
           `เบอร์ ${swineCode} อยู่ใน shipment สถานะ ${clean(blocking.status) || "-"} แล้ว`
+        );
+      }
+
+      if (nonAvailableMaster) {
+        throw new Error(
+          `เบอร์ ${swineCode} อยู่สถานะ ${clean(nonAvailableMaster.delivery_state) || "-"} แล้ว`
         );
       }
 
@@ -1156,6 +1295,7 @@ export default function ShipmentCreatePage() {
     backfat,
     resetCandidateForm,
     findBlockingShipmentsBySwineCodes,
+    findNonAvailableMasterBySwineCodes,
     loadSelectableSwinesOfFarm,
     fromFarm?.farm_code,
     fromFarm?.flock,
@@ -1227,13 +1367,27 @@ export default function ShipmentCreatePage() {
     let createdHeaderId = "";
 
     try {
-      const pickedCodes = pickedRows.map((row) => clean(row.swine_code)).filter(Boolean);
+      const pickedCodes = Array.from(
+        new Set(pickedRows.map((row) => clean(row.swine_code)).filter(Boolean))
+      );
+      const nowIso = new Date().toISOString();
 
-      const blockingMap = await findBlockingShipmentsBySwineCodes(pickedCodes);
+      const [blockingMap, nonAvailableMasterMap] = await Promise.all([
+        findBlockingShipmentsBySwineCodes(pickedCodes),
+        findNonAvailableMasterBySwineCodes(pickedCodes),
+      ]);
+
       if (blockingMap.size > 0) {
         const [firstCode, firstShipment] = blockingMap.entries().next().value;
         throw new Error(
           `เบอร์ ${firstCode} อยู่ใน shipment สถานะ ${clean(firstShipment?.status) || "-"} แล้ว`
+        );
+      }
+
+      if (nonAvailableMasterMap.size > 0) {
+        const [firstCode, firstMaster] = nonAvailableMasterMap.entries().next().value;
+        throw new Error(
+          `เบอร์ ${firstCode} อยู่สถานะ ${clean(firstMaster?.delivery_state) || "-"} แล้ว`
         );
       }
 
@@ -1268,6 +1422,13 @@ export default function ShipmentCreatePage() {
           }/${itemPayload.length}`
         );
       }
+
+      await reserveSwineMasterRows({
+        shipmentId,
+        swineCodes: pickedCodes,
+        reservedAt: nowIso,
+        reservedBy: currentUserId || null,
+      });
 
       let resequenceWarning = "";
 
@@ -1306,7 +1467,10 @@ export default function ShipmentCreatePage() {
       });
 
       if (clean(createdHeaderId)) {
-        await deleteEmptyDraftHeader(createdHeaderId);
+        await deleteDraftShipmentCascade(
+          createdHeaderId,
+          pickedRows.map((row) => clean(row.swine_code)).filter(Boolean)
+        );
       }
 
       setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
@@ -1321,11 +1485,14 @@ export default function ShipmentCreatePage() {
     canSaveDraft,
     pickedRows,
     findBlockingShipmentsBySwineCodes,
+    findNonAvailableMasterBySwineCodes,
     createDraftHeader,
+    currentUserId,
     selectedDate,
     fromFarm,
     toFarmId,
-    deleteEmptyDraftHeader,
+    reserveSwineMasterRows,
+    deleteDraftShipmentCascade,
     loadSelectableSwinesOfFarm,
     clearLocalDraft,
     resetPageAfterSave,
