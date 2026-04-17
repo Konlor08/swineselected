@@ -464,9 +464,21 @@ export default function SummaryPage() {
 
         if (error) throw error;
 
-        const rows = (Array.isArray(data) ? data : []).sort((a, b) =>
+        const baseRows = (Array.isArray(data) ? data : []).sort((a, b) =>
           String(a?.swine_code).localeCompare(String(b?.swine_code), "th")
         );
+
+        const detailCodes = baseRows.map((x) => clean(x?.swine_code)).filter(Boolean);
+        const heatMap = await fetchHeatSummaryMapByCodes(detailCodes);
+
+        const rows = baseRows.map((detailRow) => {
+          const heat = heatMap.get(clean(detailRow?.swine_code));
+          return {
+            ...detailRow,
+            total_heat_count: Number(heat?.total_heat_count || 0),
+            latest_heat_date: clean(heat?.latest_heat_date),
+          };
+        });
 
         setDetailRows(rows);
       } catch (error) {
