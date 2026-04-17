@@ -1377,17 +1377,36 @@ export default function ShipmentCreatePage() {
         findNonAvailableMasterBySwineCodes(pickedCodes),
       ]);
 
-      if (blockingMap.size > 0) {
-        const [firstCode, firstShipment] = blockingMap.entries().next().value;
-        throw new Error(
-          `เบอร์ ${firstCode} อยู่ใน shipment สถานะ ${clean(firstShipment?.status) || "-"} แล้ว`
-        );
-      }
+      const invalidPickedCodes = Array.from(
+        new Set([
+          ...Array.from(blockingMap.keys()),
+          ...Array.from(nonAvailableMasterMap.keys()),
+        ])
+      );
 
-      if (nonAvailableMasterMap.size > 0) {
-        const [firstCode, firstMaster] = nonAvailableMasterMap.entries().next().value;
+      if (invalidPickedCodes.length > 0) {
+        const invalidCodeSet = new Set(invalidPickedCodes);
+        setPickedRows((prev) =>
+          prev.filter((row) => !invalidCodeSet.has(clean(row.swine_code)))
+        );
+
+        const blockingCode = Array.from(blockingMap.keys())[0] || "";
+        const blockingShipment = blockingCode ? blockingMap.get(blockingCode) : null;
+        const masterCode = Array.from(nonAvailableMasterMap.keys())[0] || "";
+        const masterRow = masterCode ? nonAvailableMasterMap.get(masterCode) : null;
+
+        if (blockingCode) {
+          throw new Error(
+            `ลบเบอร์ ${blockingCode} ออกจาก list แล้ว เพราะอยู่ใน shipment สถานะ ${
+              clean(blockingShipment?.status) || "-"
+            }`
+          );
+        }
+
         throw new Error(
-          `เบอร์ ${firstCode} อยู่สถานะ ${clean(firstMaster?.delivery_state) || "-"} แล้ว`
+          `ลบเบอร์ ${masterCode} ออกจาก list แล้ว เพราะอยู่สถานะ ${
+            clean(masterRow?.delivery_state) || "-"
+          }`
         );
       }
 
