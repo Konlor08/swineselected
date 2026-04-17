@@ -1,3 +1,5 @@
+
+console.log("ShipmentCreatePage MINFIX 2026-04-17 A");
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
