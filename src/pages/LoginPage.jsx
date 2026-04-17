@@ -4,7 +4,6 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 
-// วางไฟล์ไว้ที่ /public/logo.png
 const LOGO_SRC = "/logo.png";
 
 function clean(v) {
@@ -129,7 +128,7 @@ async function ensureProfileAfterLogin({ userId, email, username, displayName })
 export default function LoginPage() {
   const nav = useNavigate();
 
-  const [tab, setTab] = useState("login"); // "login" | "register"
+  const [tab, setTab] = useState("login");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -308,8 +307,6 @@ export default function LoginPage() {
         const newUser = data?.user || null;
         const newUserId = newUser?.id || null;
 
-        // ให้ DB trigger เป็นตัวหลักในการสร้าง profiles
-        // แต่ยังเรียก ensureProfileAfterLogin เป็น safety net
         if (newUserId) {
           await ensureProfileAfterLogin({
             userId: newUserId,
@@ -332,13 +329,92 @@ export default function LoginPage() {
 
   const activeBtnStyle = (active) => ({
     flex: 1,
-    padding: 12,
+    height: 48,
     borderRadius: 14,
-    border: active ? "2px solid #86efac" : "1px solid #e5e7eb",
+    border: active ? "2px solid #86efac" : "1px solid #dbe4ea",
     background: active ? "#f0fdf4" : "#fff",
     fontWeight: 800,
     cursor: "pointer",
+    color: active ? "#166534" : "#0f172a",
+    boxShadow: active ? "0 0 0 3px rgba(187,247,208,0.35)" : "none",
   });
+
+  const fieldLabelStyle = {
+    marginBottom: 8,
+    fontWeight: 800,
+    color: "#334155",
+    fontSize: 13,
+  };
+
+  const helperTextStyle = {
+    marginTop: 6,
+    color: "#64748b",
+    fontSize: 12,
+    lineHeight: 1.45,
+  };
+
+  const inputStyle = {
+    width: "100%",
+    height: 48,
+    padding: "0 14px",
+    borderRadius: 14,
+    border: "1px solid #dbe4ea",
+    outline: "none",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: 15,
+    boxSizing: "border-box",
+  };
+
+  const inputWrapStyle = {
+    display: "flex",
+    alignItems: "stretch",
+    width: "100%",
+    height: 48,
+    borderRadius: 14,
+    border: "1px solid #dbe4ea",
+    background: "#fff",
+    overflow: "hidden",
+    boxSizing: "border-box",
+  };
+
+  const inputInnerStyle = {
+    flex: 1,
+    minWidth: 0,
+    border: 0,
+    outline: "none",
+    padding: "0 14px",
+    background: "transparent",
+    color: "#0f172a",
+    fontSize: 15,
+  };
+
+  const eyeButtonStyle = {
+    width: 48,
+    border: 0,
+    borderLeft: "1px solid #dbe4ea",
+    background: "#f8fafc",
+    cursor: "pointer",
+    display: "grid",
+    placeItems: "center",
+    color: "#475569",
+    fontSize: 16,
+    flexShrink: 0,
+  };
+
+  const submitButtonStyle = {
+    width: "100%",
+    height: 48,
+    marginTop: 8,
+    borderRadius: 14,
+    border: "none",
+    background: "#4ade80",
+    color: "#064e3b",
+    fontWeight: 900,
+    cursor: "pointer",
+    opacity: busy ? 0.75 : 1,
+    fontSize: 15,
+  };
 
   return (
     <div className="page">
@@ -393,7 +469,7 @@ export default function LoginPage() {
             </span>
           </div>
 
-          <div style={{ display: "flex", gap: 10, marginTop: 12, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 12, marginBottom: 16 }}>
             <button
               type="button"
               onClick={() => setTab("login")}
@@ -413,8 +489,8 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={tab === "login" ? onLogin : onRegister}>
-            <div style={{ marginBottom: 10 }}>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+            <div style={{ marginBottom: 12 }}>
+              <div className="small" style={fieldLabelStyle}>
                 Username
               </div>
               <input
@@ -423,25 +499,18 @@ export default function LoginPage() {
                 placeholder="เช่น chenk_01"
                 autoComplete="username"
                 disabled={busy}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  borderRadius: 12,
-                  border: "1px solid #e5e7eb",
-                  outline: "none",
-                }}
+                style={inputStyle}
               />
-              <div className="small" style={{ marginTop: 6, color: "#64748b" }}>
+              <div className="small" style={helperTextStyle}>
                 เงื่อนไข: 3-20 ตัว (a-z A-Z 0-9 _)
               </div>
             </div>
 
-            <div style={{ marginBottom: 10 }}>
-              <div className="small" style={{ marginBottom: 6, fontWeight: 800 }}>
+            <div style={{ marginBottom: 12 }}>
+              <div className="small" style={fieldLabelStyle}>
                 Password
               </div>
-
-              <div style={{ position: "relative" }}>
+              <div style={inputWrapStyle}>
                 <input
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -449,60 +518,25 @@ export default function LoginPage() {
                   type={showPw ? "text" : "password"}
                   autoComplete={tab === "login" ? "current-password" : "new-password"}
                   disabled={busy}
-                  style={{
-                    width: "100%",
-                    padding: "12px 44px 12px 14px",
-                    borderRadius: 12,
-                    border: "1px solid #e5e7eb",
-                    outline: "none",
-                  }}
+                  style={inputInnerStyle}
                 />
-
                 <button
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
                   disabled={busy}
                   aria-label={showPw ? "Hide password" : "Show password"}
-                  style={{
-                    position: "absolute",
-                    right: 8,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    width: 34,
-                    height: 34,
-                    borderRadius: 10,
-                    border: "1px solid #e5e7eb",
-                    background: "#fff",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 16,
-                  }}
+                  style={eyeButtonStyle}
                   title={showPw ? "ซ่อนรหัสผ่าน" : "ดูรหัสผ่าน"}
                 >
                   {showPw ? "🙈" : "👁️"}
                 </button>
               </div>
+              <div className="small" style={helperTextStyle}>
+                อย่างน้อย 6 ตัวอักษร
+              </div>
             </div>
 
-            <button
-              className="btn"
-              type="submit"
-              disabled={busy}
-              style={{
-                width: "100%",
-                marginTop: 6,
-                padding: "12px 14px",
-                borderRadius: 12,
-                border: "none",
-                background: "#4ade80",
-                color: "#064e3b",
-                fontWeight: 900,
-                cursor: "pointer",
-                opacity: busy ? 0.75 : 1,
-              }}
-            >
+            <button className="btn" type="submit" disabled={busy} style={submitButtonStyle}>
               {busy ? "Working..." : tab === "login" ? "Sign in" : "Create account"}
             </button>
 
