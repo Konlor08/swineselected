@@ -48,11 +48,28 @@ function toNumOrNull(v) {
 
 async function getCurrentUserId() {
   const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser();
-  if (error) throw error;
-  return user?.id || null;
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+
+  if (sessionError) throw sessionError;
+  if (session?.user?.id) return session.user.id;
+
+  return null;
+}
+
+function isAuthSessionError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  const code = String(error?.code || "").toLowerCase();
+
+  return (
+    code === "401" ||
+    code === "403" ||
+    message.includes("auth session missing") ||
+    message.includes("jwt") ||
+    message.includes("forbidden") ||
+    message.includes("not authenticated")
+  );
 }
 
 function extractErrorMessage(error, fallback = "เกิดข้อผิดพลาด") {
@@ -380,10 +397,27 @@ export default function ShipmentCreatePage() {
       try {
         const uid = await getCurrentUserId();
         if (!alive) return;
-        setCurrentUserId(uid || "");
+
+        if (!uid) {
+          setCurrentUserId("");
+          setMsg("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
+          nav("/", { replace: true, state: { msg: "กรุณาเข้าสู่ระบบใหม่" } });
+          return;
+        }
+
+        setCurrentUserId(uid);
       } catch (e) {
         console.error("ShipmentCreatePage init error:", e);
-        if (alive) setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+        if (!alive) return;
+
+        if (isAuthSessionError(e)) {
+          setCurrentUserId("");
+          setMsg("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
+          nav("/", { replace: true, state: { msg: "กรุณาเข้าสู่ระบบใหม่" } });
+          return;
+        }
+
+        setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
       } finally {
         if (alive) setBootLoading(false);
       }
@@ -393,7 +427,7 @@ export default function ShipmentCreatePage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [nav]);
 
   const clearLocalDraft = useCallback(() => {
     skipNextLocalSaveRef.current = true;
@@ -1367,6 +1401,14 @@ export default function ShipmentCreatePage() {
     let createdHeaderId = "";
 
     try {
+      const uid = await getCurrentUserId();
+      if (!uid) {
+        throw new Error("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
+      }
+      if (uid !== clean(currentUserId)) {
+        setCurrentUserId(uid);
+      }
+
       const pickedCodes = Array.from(
         new Set(pickedRows.map((row) => clean(row.swine_code)).filter(Boolean))
       );
@@ -1427,7 +1469,7 @@ export default function ShipmentCreatePage() {
         shipmentId,
         swineCodes: pickedCodes,
         reservedAt: nowIso,
-        reservedBy: currentUserId || null,
+        reservedBy: uid || null,
       });
 
       let resequenceWarning = "";
@@ -1473,7 +1515,12 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
+      if (isAuthSessionError(e) || clean(e?.message) === "ไม่พบ session กรุณาเข้าสู่ระบบใหม่") {
+        setMsg("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
+        nav("/", { replace: true, state: { msg: "กรุณาเข้าสู่ระบบใหม่" } });
+      } else {
+        setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
+      }
       if (isOnline) {
         void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
       }
@@ -1496,6 +1543,7 @@ export default function ShipmentCreatePage() {
     loadSelectableSwinesOfFarm,
     clearLocalDraft,
     resetPageAfterSave,
+    nav,
   ]);
 
   if (bootLoading || !draftHydrated) {
