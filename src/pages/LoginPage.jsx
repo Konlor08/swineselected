@@ -450,7 +450,7 @@ export default function LoginPage() {
 
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 22, fontWeight: 900 }}>SwineSelected</div>
-              <div className="small">Login ด้วย Username • เวลาก่อน + เขียงกลาง</div>
+              <div className="small">Login ด้วย Username</div>
             </div>
 
             <span
