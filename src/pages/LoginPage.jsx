@@ -540,10 +540,7 @@ export default function LoginPage() {
               {busy ? "Working..." : tab === "login" ? "Sign in" : "Create account"}
             </button>
 
-            <div className="small" style={{ marginTop: 10, color: "#64748b" }}>
-              * ใช้ <b>username@swine.local</b> เป็นอีเมลจำลอง
-            </div>
-
+            
             {msg ? (
               <div
                 className="small"
