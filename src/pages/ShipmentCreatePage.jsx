@@ -1911,6 +1911,14 @@ export default function ShipmentCreatePage() {
                     {filteredAvailableSwines.map((swine) => {
                       const active = String(selectedCandidateSwineId) === String(swine.id);
 
+
+
+
+
+
+
+                      
+
                       return (
                         <button
                           key={swine.id}
