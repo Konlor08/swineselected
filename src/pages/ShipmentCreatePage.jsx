@@ -14,6 +14,14 @@ const LOCAL_DRAFT_PREFIX = "shipment-create-local-draft";
 const LOCAL_DRAFT_SOFT_LIMIT_BYTES = 4 * 1024 * 1024;
 const LOCAL_DRAFT_NEAR_LIMIT_RATIO = 0.8;
 
+// TEST 2: ทดสอบเฉพาะการสร้าง header + items
+// - ข้ามการเช็ก swine_master ก่อน save
+// - ข้ามการ reserve swine_master หลัง save
+// - ไม่ cleanup draft อัตโนมัติเมื่อ save fail เพื่อให้ตรวจ DB ได้ง่าย
+const TEST2_DISABLE_MASTER_PRECHECK = true;
+const TEST2_DISABLE_MASTER_RESERVE = true;
+const TEST2_DISABLE_DRAFT_CLEANUP = true;
+
 function clean(v) {
   return String(v ?? "").trim();
 }
@@ -49,27 +57,10 @@ function toNumOrNull(v) {
 async function getCurrentUserId() {
   const {
     data: { session },
-    error: sessionError,
+    error,
   } = await supabase.auth.getSession();
-
-  if (sessionError) throw sessionError;
-  if (session?.user?.id) return session.user.id;
-
-  return null;
-}
-
-function isAuthSessionError(error) {
-  const message = String(error?.message || "").toLowerCase();
-  const code = String(error?.code || "").toLowerCase();
-
-  return (
-    code === "401" ||
-    code === "403" ||
-    message.includes("auth session missing") ||
-    message.includes("jwt") ||
-    message.includes("forbidden") ||
-    message.includes("not authenticated")
-  );
+  if (error) throw error;
+  return session?.user?.id || null;
 }
 
 function extractErrorMessage(error, fallback = "เกิดข้อผิดพลาด") {
@@ -397,27 +388,10 @@ export default function ShipmentCreatePage() {
       try {
         const uid = await getCurrentUserId();
         if (!alive) return;
-
-        if (!uid) {
-          setCurrentUserId("");
-          setMsg("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
-          nav("/", { replace: true, state: { msg: "กรุณาเข้าสู่ระบบใหม่" } });
-          return;
-        }
-
-        setCurrentUserId(uid);
+        setCurrentUserId(uid || "");
       } catch (e) {
         console.error("ShipmentCreatePage init error:", e);
-        if (!alive) return;
-
-        if (isAuthSessionError(e)) {
-          setCurrentUserId("");
-          setMsg("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
-          nav("/", { replace: true, state: { msg: "กรุณาเข้าสู่ระบบใหม่" } });
-          return;
-        }
-
-        setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
+        if (alive) setMsg(e?.message || "โหลดข้อมูลเริ่มต้นไม่สำเร็จ");
       } finally {
         if (alive) setBootLoading(false);
       }
@@ -427,7 +401,7 @@ export default function ShipmentCreatePage() {
     return () => {
       alive = false;
     };
-  }, [nav]);
+  }, []);
 
   const clearLocalDraft = useCallback(() => {
     skipNextLocalSaveRef.current = true;
@@ -1401,23 +1375,12 @@ export default function ShipmentCreatePage() {
     let createdHeaderId = "";
 
     try {
-      const uid = await getCurrentUserId();
-      if (!uid) {
-        throw new Error("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
-      }
-      if (uid !== clean(currentUserId)) {
-        setCurrentUserId(uid);
-      }
-
       const pickedCodes = Array.from(
         new Set(pickedRows.map((row) => clean(row.swine_code)).filter(Boolean))
       );
       const nowIso = new Date().toISOString();
 
-      const [blockingMap, nonAvailableMasterMap] = await Promise.all([
-        findBlockingShipmentsBySwineCodes(pickedCodes),
-        findNonAvailableMasterBySwineCodes(pickedCodes),
-      ]);
+      const blockingMap = await findBlockingShipmentsBySwineCodes(pickedCodes);
 
       if (blockingMap.size > 0) {
         const [firstCode, firstShipment] = blockingMap.entries().next().value;
@@ -1426,11 +1389,14 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      if (nonAvailableMasterMap.size > 0) {
-        const [firstCode, firstMaster] = nonAvailableMasterMap.entries().next().value;
-        throw new Error(
-          `เบอร์ ${firstCode} อยู่สถานะ ${clean(firstMaster?.delivery_state) || "-"} แล้ว`
-        );
+      if (!TEST2_DISABLE_MASTER_PRECHECK) {
+        const nonAvailableMasterMap = await findNonAvailableMasterBySwineCodes(pickedCodes);
+        if (nonAvailableMasterMap.size > 0) {
+          const [firstCode, firstMaster] = nonAvailableMasterMap.entries().next().value;
+          throw new Error(
+            `เบอร์ ${firstCode} อยู่สถานะ ${clean(firstMaster?.delivery_state) || "-"} แล้ว`
+          );
+        }
       }
 
       const shipmentId = clean(await createDraftHeader());
@@ -1465,14 +1431,18 @@ export default function ShipmentCreatePage() {
         );
       }
 
-      await reserveSwineMasterRows({
-        shipmentId,
-        swineCodes: pickedCodes,
-        reservedAt: nowIso,
-        reservedBy: uid || null,
-      });
+      if (!TEST2_DISABLE_MASTER_RESERVE) {
+        await reserveSwineMasterRows({
+          shipmentId,
+          swineCodes: pickedCodes,
+          reservedAt: nowIso,
+          reservedBy: currentUserId || null,
+        });
+      }
 
-      let resequenceWarning = "";
+      let resequenceWarning = TEST2_DISABLE_MASTER_RESERVE
+        ? " [TEST2: ยังไม่ reserve swine_master]"
+        : "";
 
       try {
         const resequenceRes = await supabase.rpc("resequence_shipment_group_append_end", {
@@ -1508,19 +1478,14 @@ export default function ShipmentCreatePage() {
         raw: e,
       });
 
-      if (clean(createdHeaderId)) {
+      if (clean(createdHeaderId) && !TEST2_DISABLE_DRAFT_CLEANUP) {
         await deleteDraftShipmentCascade(
           createdHeaderId,
           pickedRows.map((row) => clean(row.swine_code)).filter(Boolean)
         );
       }
 
-      if (isAuthSessionError(e) || clean(e?.message) === "ไม่พบ session กรุณาเข้าสู่ระบบใหม่") {
-        setMsg("ไม่พบ session กรุณาเข้าสู่ระบบใหม่");
-        nav("/", { replace: true, state: { msg: "กรุณาเข้าสู่ระบบใหม่" } });
-      } else {
-        setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
-      }
+      setMsg(e?.message || e?.details || e?.hint || "บันทึก draft ไม่สำเร็จ");
       if (isOnline) {
         void loadSelectableSwinesOfFarm(clean(fromFarm?.farm_code), clean(fromFarm?.flock));
       }
@@ -1543,7 +1508,6 @@ export default function ShipmentCreatePage() {
     loadSelectableSwinesOfFarm,
     clearLocalDraft,
     resetPageAfterSave,
-    nav,
   ]);
 
   if (bootLoading || !draftHydrated) {
